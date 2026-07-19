@@ -1,0 +1,12 @@
+xlsxedit
+Copyright 2026 Jonas Ruilong Kupferschmid
+
+This product includes software developed by Steve Canny (https://github.com/scanny).
+
+The Open Packaging Convention (OPC) layer in this project
+(src/xlsxedit/opc/** and src/xlsxedit/oxml/parser.py) is adapted from
+python-docx and python-pptx by Steve Canny, which are licensed under the
+MIT License (Copyright (c) 2013 Steve Canny).
+
+The full text of that MIT License is reproduced in the THIRD_PARTY_LICENSES
+file distributed with this project.

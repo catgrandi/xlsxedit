@@ -1,0 +1,6 @@
+include README.md
+include CHANGELOG.md
+include LICENSE
+include NOTICE
+include THIRD_PARTY_LICENSES
+graft src/xlsxedit/templates

@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xlsxedit"
+dynamic = ["version"]
+description = "Surgical .xlsx editing that preserves formatting"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_LICENSES"]
+authors = [
+    { name = "Jonas Ruilong Kupferschmid" },
+]
+keywords = ["excel", "xlsx", "openxml", "template", "spreadsheet", "lxml"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Spreadsheet",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = [
+    "lxml>=4.9",
+]
+
+[project.urls]
+Homepage = "https://xlsxedit.jonasruilong.com"
+Documentation = "https://xlsxedit.jonasruilong.com/docs"
+Changelog = "https://xlsxedit.jonasruilong.com/changelog"
+Funding = "https://xlsxedit.jonasruilong.com/sponsor"
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+pandas = ["pandas>=2.0"]
+
+[tool.setuptools.dynamic]
+version = { attr = "xlsxedit.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+xlsxedit = ["py.typed", "templates/*", "templates/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "bench: large-data export benchmarks (optional, set BENCH_ROWS)",
+]
