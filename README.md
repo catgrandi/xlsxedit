@@ -193,11 +193,11 @@ If xlsxedit saves you or your company real time, consider sponsoring it — it's
 
 ## Acknowledgments
 
-The OPC package layer in xlsxedit (`src/xlsxedit/opc/**` and `src/xlsxedit/oxml/parser.py`) is **adapted from** [python-docx](https://github.com/python-docx/python-docx) and [python-pptx](https://github.com/python-pptx/python-pptx) by [Steve Canny (scanny)](https://github.com/scanny), which are MIT licensed (Copyright (c) 2013 Steve Canny). That MIT notice is reproduced in [`NOTICE`](NOTICE) and [`THIRD_PARTY_LICENSES`](THIRD_PARTY_LICENSES). xlsxedit is independent and not affiliated with those projects.
+The OPC package layer in xlsxedit (`src/xlsxedit/opc/**` and `src/xlsxedit/oxml/parser.py`) is **adapted from** [python-docx](https://github.com/python-docx/python-docx) and [python-pptx](https://github.com/python-pptx/python-pptx) by [Steve Canny (scanny)](https://github.com/scanny), which are MIT licensed (Copyright (c) 2013 Steve Canny). That MIT notice is reproduced in [`NOTICE`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/NOTICE) and [`THIRD_PARTY_LICENSES`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/THIRD_PARTY_LICENSES). xlsxedit is independent and not affiliated with those projects.
 
 ## License
 
-xlsxedit is licensed under the [Apache License 2.0](LICENSE). Portions adapted from python-docx / python-pptx remain under their original MIT license; see [`NOTICE`](NOTICE) and [`THIRD_PARTY_LICENSES`](THIRD_PARTY_LICENSES). Contributions are accepted under the [Contributor License Agreement](CLA.md) — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+xlsxedit is licensed under the [Apache License 2.0](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/LICENSE). Portions adapted from python-docx / python-pptx remain under their original MIT license; see [`NOTICE`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/NOTICE) and [`THIRD_PARTY_LICENSES`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/THIRD_PARTY_LICENSES). Contributions are accepted under the [Contributor License Agreement](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/CLA.md) — see [`CONTRIBUTING.md`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/CONTRIBUTING.md).
 
 ## Documentation
 
@@ -208,4 +208,4 @@ xlsxedit is licensed under the [Apache License 2.0](LICENSE). Portions adapted f
 - [Pandas engine](https://xlsxedit.jonasruilong.com/docs/pandas)
 - [Excel `.xlsx` structure](https://xlsxedit.jonasruilong.com/docs/excel-structure)
 
-In-repo copies: [`docs/`](docs/)
+In-repo copies: [`docs/`](https://github.com/jonas-kupferschmid/xlsxedit/tree/main/docs)

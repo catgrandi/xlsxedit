@@ -62,8 +62,8 @@ The template is a valid minimal workbook: one empty sheet, styles, theme, empty 
 ```mermaid
 flowchart LR
   xlsx[".xlsx ZIP"] --> reader[PackageReader]
-  reader --> graph[Relationship walk]
-  graph --> factory[PartFactory]
+  reader --> relwalk[Relationship walk]
+  relwalk --> factory[PartFactory]
   factory --> opaque[Part opaque blob]
   factory --> xml[XmlPart live lxml]
   xml --> wb[WorkbookPart]
