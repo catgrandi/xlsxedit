@@ -2,7 +2,7 @@
 
 An `.xlsx` file is not a single spreadsheet document. It is a **ZIP archive** of XML (and sometimes binary) parts that follow the **Open Packaging Conventions (OPC)**. Excel (and libraries like `xlsxedit`) open that ZIP, follow **relationships** between parts, and read SpreadsheetML XML.
 
-Use [`xlsx-inspect`](../xlsx-inspect) to unpack a workbook and look at the same files this document describes.
+Use [xlsx-inspect](https://github.com/jonas-kupferschmid/xlsx-inspect) to unpack a workbook and look at the same files this document describes.
 
 ---
 
@@ -364,7 +364,7 @@ $$
 
 Office Open XML (`.xlsx`, `.docx`, etc.) shares the same OPC rules: ZIP archive, relationships, and live XML parts. SpreadsheetML is Excel’s sheet vocabulary on top of that package model.
 
-**Inspect fixtures:** unpack any workbook with [`xlsx-inspect`](../xlsx-inspect/unpack_xlsx.py) — see `xlsx-inspect/output/<name>/` for real XML examples cited in sections 10–18 below.
+**Inspect fixtures:** unpack any workbook with [xlsx-inspect](https://github.com/jonas-kupferschmid/xlsx-inspect/blob/main/unpack_xlsx.py) — see `xlsx-inspect/output/<name>/` for real XML examples cited in sections 10–18 below.
 
 ---
 
@@ -815,7 +815,7 @@ Tables overlay formatting and filters on a cell range. The cell values still liv
 
 ## 19. Practical tips while inspecting
 
-1. Unpack with `xlsx-inspect`, open `workbook.xml` + `workbook.xml.rels` first to map sheets.  
+1. Unpack with [xlsx-inspect](https://github.com/jonas-kupferschmid/xlsx-inspect), open `workbook.xml` + `workbook.xml.rels` first to map sheets.  
 2. For a cell’s text: sheet XML → if `t="s"`, use `<v>` as SST index.  
 3. For a cell’s look: read `s`, open `styles.xml` `cellXfs` → `numFmtId`.  
 4. For a date: read numeric `<v>`, then check if `numFmtId` is date-like — there is no `t="date"`.  

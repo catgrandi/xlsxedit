@@ -133,7 +133,7 @@ wb.replace("{qty}", 888, value_type="number")
 wb.save("out.xlsx")
 ```
 
-See `tutorial/run_tutorial.py` for a full walkthrough.
+See [`tutorial/run_tutorial.py`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/tutorial/run_tutorial.py) for a full walkthrough.
 
 ## Bulk export (many rows)
 
@@ -149,7 +149,7 @@ wb.write_dataframe(
 wb.save("report.xlsx")
 ```
 
-Tutorials: `tutorial/pandas_tutorial.py` (pandas engine), `tutorial/run_tutorial.py`, `tutorial/export_pandas_example.py` (advanced bulk), `tutorial/bench_large_export.py`
+Tutorials: [`tutorial/pandas_tutorial.py`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/tutorial/pandas_tutorial.py) (pandas engine), [`tutorial/run_tutorial.py`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/tutorial/run_tutorial.py), [`tutorial/export_pandas_example.py`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/tutorial/export_pandas_example.py) (advanced bulk), [`tutorial/bench_large_export.py`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/tutorial/bench_large_export.py)
 
 ## Pandas quick start
 
@@ -167,7 +167,7 @@ with pd.ExcelWriter("out.xlsx", engine="xlsxedit") as writer:
 got = pd.read_excel("out.xlsx", engine="xlsxedit")
 ```
 
-Opt-in engine today (`register()`); a future pandas PR may add official reader registration. Full docs: [Pandas engine](https://xlsxedit.jonasruilong.com/docs/pandas). Tutorial: `python tutorial/pandas_tutorial.py`.
+Opt-in engine today (`register()`); a future pandas PR may add official reader registration. Full docs: [Pandas engine](https://xlsxedit.jonasruilong.com/docs/pandas). Tutorial: [`tutorial/pandas_tutorial.py`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/tutorial/pandas_tutorial.py).
 
 ## When to use / when not
 
@@ -204,6 +204,13 @@ The OPC package layer (`src/xlsxedit/opc/**` and `src/xlsxedit/oxml/parser.py`) 
 ## License
 
 xlsxedit is licensed under the [Apache License 2.0](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/LICENSE). Portions adapted from python-docx / python-pptx remain under their original MIT license; see [`NOTICE`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/NOTICE) and [`THIRD_PARTY_LICENSES`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/THIRD_PARTY_LICENSES). Contributions are accepted under the [Contributor License Agreement](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/CLA.md) — see [`CONTRIBUTING.md`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/CONTRIBUTING.md).
+
+## Example projects
+
+Small companion repos for common workflows:
+
+- **[xlsx-sar-test](https://github.com/jonas-kupferschmid/xlsx-sar-test)** — YAML-driven search-and-replace: drop `.xlsx` files in `input/`, edit `sar.yaml`, run `apply_sar.py` to fill placeholders with xlsxedit (text, typed numbers/dates, images)
+- **[xlsx-inspect](https://github.com/jonas-kupferschmid/xlsx-inspect)** — unpack `.xlsx` files into pretty-printed XML folders and pack them back; useful to see what is inside a workbook on disk
 
 ## Documentation
 
