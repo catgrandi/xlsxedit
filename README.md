@@ -1,26 +1,28 @@
 # xlsxedit
 
-Surgical `.xlsx` editing for Python — change only what you ask for and leave styles, themes, charts, and other package parts intact.
+Edit Excel files from Python without breaking layout, formatting, or file compatibility.
+
+Loads the `.xlsx` as an OPC package and surgically patches XML with lxml — only what you change gets rewritten.
 
 **Website:** [xlsxedit.jonasruilong.com](https://xlsxedit.jonasruilong.com)
 
 ## The problem
 
-You have a styled Excel report: merged headers, brand colors, a chart, maybe images. A Python script opens it, updates the data, saves. Excel then warns the file is damaged, or the chart disappeared, or formatting shifted.
+Styled `.xlsx` files saved through typical Python Excel libraries often come back broken — repair dialogs, shifted layout, lost formatting.
 
-Most libraries rebuild the workbook from a Python object model. Anything that model does not know about is often **dropped on save**.
+These libraries **rebuild** the workbook from an object model. Anything they do not fully implement — styles, merges, drawings, other OOXML — is **dropped on save**.
 
-**xlsxedit** loads the file as an OPC package, patches targeted XML, and writes back — so templates survive.
+**xlsxedit** keeps the file as an OPC package, patches only the XML you change, and writes it back — layout, formatting, and the rest of the design survive.
 
 ## Why xlsxedit
 
-- **Template fidelity** — charts, drawings, themes, and unknown OOXML round-trip when you do not touch them
+- **Fill templates** — `Workbook.open("invoice.xlsx")`, typed `replace("{date}", …, value_type="date")`, save; merges, themes, and conditional formatting stay put
+- **Search & replace** — text placeholders across sheets; swap pictures with `replace_image` or `{logo}` → `insert_image_at_placeholder`
+- **Export into a designed layout** — `write_dataframe` drops rows into a report slot with `row_styles` / `column_styles` (no rebuild-from-scratch)
+- **Template fidelity** — charts, drawings, tables, and unknown OOXML round-trip when you do not touch them
 - **Headless** — no Excel app; runs on servers, CI, and cron jobs
-- **Fast file I/O** — direct `.xlsx` editing; ~20k rows/s bulk export in benchmarks
-- **Search-and-replace** — `replace`, `replace_image`, typed placeholders
-- **Bulk export** — `write_dataframe` into a designed layout with row/column styles
-- **Pandas** — optional `engine="xlsxedit"` for `ExcelWriter` and `read_excel` (template-friendly I/O)
 - **Familiar API** — `Workbook.open` → mutate → `save`
+- **Also:** fast direct file I/O, optional pandas `engine="xlsxedit"` for `read_excel` / `ExcelWriter`
 
 ## Features
 
@@ -181,6 +183,8 @@ Opt-in engine today (`register()`); a future pandas PR may add official reader r
 - You only create new workbooks from scratch → **xlsxwriter**
 - You need pivot editing or every openpyxl feature today → **openpyxl** (xlsxedit API is still growing)
 
+**Missing something?** [Open an issue](https://github.com/jonas-kupferschmid/xlsxedit/issues) — the API grows from real use cases. Chart *creation* is thin on purpose: existing charts round-trip when you edit data, but I haven't needed to build charts from scratch in my own work, so that area stayed minimal.
+
 ## Support & sponsorship
 
 xlsxedit is free and open source under the Apache License 2.0 — you can use it anywhere, including in commercial and closed-source products, at no cost.
@@ -193,7 +197,9 @@ If xlsxedit saves you or your company real time, consider sponsoring it — it's
 
 ## Acknowledgments
 
-The OPC package layer in xlsxedit (`src/xlsxedit/opc/**` and `src/xlsxedit/oxml/parser.py`) is **adapted from** [python-docx](https://github.com/python-docx/python-docx) and [python-pptx](https://github.com/python-pptx/python-pptx) by [Steve Canny (scanny)](https://github.com/scanny), which are MIT licensed (Copyright (c) 2013 Steve Canny). That MIT notice is reproduced in [`NOTICE`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/NOTICE) and [`THIRD_PARTY_LICENSES`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/THIRD_PARTY_LICENSES). xlsxedit is independent and not affiliated with those projects.
+xlsxedit owes a lot to [Steve Canny (scanny)](https://github.com/scanny) and [python-docx](https://github.com/python-docx/python-docx). I loved his idea of editing Word documents surgically — patch the package, leave the design intact — and wanted the same thing for Excel. That inspiration is why xlsxedit exists.
+
+The OPC package layer (`src/xlsxedit/opc/**` and `src/xlsxedit/oxml/parser.py`) is adapted from python-docx and [python-pptx](https://github.com/python-pptx/python-pptx) (MIT licensed, Copyright (c) 2013 Steve Canny). That notice is in [`NOTICE`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/NOTICE) and [`THIRD_PARTY_LICENSES`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/THIRD_PARTY_LICENSES). xlsxedit is independent and not affiliated with those projects — but thank you, Steve, for the foundation.
 
 ## License
 

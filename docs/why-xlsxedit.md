@@ -1,10 +1,16 @@
 # Why xlsxedit?
 
-You designed a report in Excel — logos, charts, conditional formatting, merged headers. Your Python script opens it, fills in the numbers, saves. Then Excel warns the file is corrupted, or the chart vanished, or the theme reset.
+Edit Excel files from Python without breaking layout, formatting, or file compatibility.
 
-That usually happens because most libraries **rebuild** the workbook from a Python object model. Anything the model does not know about gets dropped on save.
+Loads the `.xlsx` as an OPC package and surgically patches XML with lxml — only what you change gets rewritten.
 
-**xlsxedit** takes a different path: load the `.xlsx` as an OPC package, patch only the XML nodes you change, and write the file back. Styles, drawings, charts, and unknown parts stay intact.
+## The problem
+
+Styled `.xlsx` files saved through typical Python Excel libraries often come back broken — repair dialogs, shifted layout, lost formatting.
+
+These libraries **rebuild** the workbook from an object model. Anything they do not fully implement — styles, merges, drawings, other OOXML — is **dropped on save**.
+
+**xlsxedit** keeps the file as an OPC package, patches only the XML you change, and writes it back — layout, formatting, and the rest of the design survive.
 
 Docs: [xlsxedit.jonasruilong.com](https://xlsxedit.jonasruilong.com)
 
@@ -88,6 +94,8 @@ See [features.md](features.md) for the full API list.
 - You are creating a workbook from scratch with no template → **xlsxwriter** or openpyxl may be simpler
 - You need full authoring coverage (every chart type, pivot editing, etc.) → openpyxl’s broader API may fit better today; xlsxedit’s API is still growing
 
+**Missing something?** [Open an issue](https://github.com/jonas-kupferschmid/xlsxedit/issues) — the API grows from real use cases. Chart *creation* is thin on purpose: existing charts round-trip when you edit data, but I haven't needed to build charts from scratch in my own work, so that area stayed minimal.
+
 ---
 
 ## Limitations
@@ -101,4 +109,6 @@ See [features.md](features.md) for the full API list.
 
 ## Acknowledgments
 
-The OPC package layout and surgical `lxml` editing pattern follow work by [Steve Canny (scanny)](https://github.com/scanny) on [python-docx](https://github.com/python-docx/python-docx) and [python-pptx](https://github.com/python-pptx/python-pptx). xlsxedit is independent and not affiliated with those projects.
+xlsxedit owes a lot to [Steve Canny (scanny)](https://github.com/scanny) and [python-docx](https://github.com/python-docx/python-docx). I loved his idea of editing Word documents surgically — patch the package, leave the design intact — and wanted the same thing for Excel.
+
+The OPC package layout and surgical `lxml` editing pattern follow python-docx and [python-pptx](https://github.com/python-pptx/python-pptx). xlsxedit is independent and not affiliated with those projects — but thank you, Steve, for the inspiration.
