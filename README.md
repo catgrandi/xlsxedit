@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/xlsxedit)](https://pypi.org/project/xlsxedit/)
 [![License](https://img.shields.io/pypi/l/xlsxedit)](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/LICENSE)
 
-Edit Excel files from Python **without breaking layout, formatting, or file compatibility.**
+Edit Excel files from Python **without breaking layout**, **formatting**, or **file compatibility**.
 
 Loads the `.xlsx` as an OPC package and **surgically** patches XML with lxml — **only what you change gets rewritten**.
 
