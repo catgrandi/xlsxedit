@@ -5,6 +5,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-07-27
+
+### Added
+
+- **Charts** — `to_anchor` on `add_chart` / `Chart` (optional end cell for chart box size).
+- **Charts & images** — `offset_x` / `offset_y` on `Picture` and `Chart` (post-create placement tweaks).
+- **Templates** — `parse_template_xml` strips indent from bundled templates so serialized chart/table parts stay compact even when template sources are pretty-printed.
+
+### Fixed
+
+- **Worksheet XML order** — table, conditional formatting, drawing, merge, and hyperlink inserts now follow ECMA-376 child sequence (`worksheet_order.py`); fixes Excel repair when those features share one sheet.
+- **Charts** — `add_chart` preserves `from`/`to` span when anchoring below the template default (no inverted box); default anchor offsets are flush (`colOff`/`rowOff` zero).
+- **Bulk export** — `write_dataframe(..., header=False)` keeps the table header row when resizing the table range.
+- **Conditional formatting** — `expand_conditional_formatting` only grows multi-row ranges; single-cell rules (e.g. a KPI cell) are no longer stretched down the column.
+
+### Changed
+
+- README hero image and [xlsx-sar-test](https://github.com/jonas-kupferschmid/xlsx-sar-test) companion-repo description.
+
 ## [1.0.0] - 2026-07-19
 
 First public release.
@@ -41,4 +60,5 @@ First public release.
   `InvalidImageError`, and `MissingPartError` (each also subclasses the builtin
   it replaces).
 
+[1.0.1]: https://github.com/jonas-kupferschmid/xlsxedit/compare/v1.0.0...v1.0.1
 [1.0.0]: https://xlsxedit.jonasruilong.com/changelog
