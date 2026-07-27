@@ -1,8 +1,14 @@
 # xlsxedit
 
+[![PyPI version](https://img.shields.io/pypi/v/xlsxedit)](https://pypi.org/project/xlsxedit/)
+[![Python](https://img.shields.io/pypi/pyversions/xlsxedit)](https://pypi.org/project/xlsxedit/)
+[![License](https://img.shields.io/pypi/l/xlsxedit)](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/LICENSE)
+
 Edit Excel files from Python without breaking layout, formatting, or file compatibility.
 
 Loads the `.xlsx` as an OPC package and surgically patches XML with lxml — only what you change gets rewritten.
+
+![Weekly Download Report — template and filled output](https://raw.githubusercontent.com/jonas-kupferschmid/xlsxedit/main/assets/XlsxEdit-Demo.jpg)
 
 **Website:** [xlsxedit.jonasruilong.com](https://xlsxedit.jonasruilong.com)
 
@@ -38,7 +44,7 @@ These libraries **rebuild** the workbook from an object model. Anything they do 
 
 **Images** — `add_image`, `images`, `Picture.replace`, `replace_image`, `insert_image_at_placeholder`
 
-**Charts** — `add_chart`, `charts`, read/set `title`, `set_series_formula`
+**Charts** — `add_chart`, `charts`, `to_anchor`, `offset_x`/`offset_y` (post-create), read/set `title`, `set_series_formula`
 
 **Tables** — `add_table`, `tables`, `Table.resize`
 
@@ -122,6 +128,8 @@ ws["D1"].hyperlink.url = "https://xlsxedit.jonasruilong.com"
 
 ws.add_image("logo.jpg", anchor="E2", width=180, height=135)
 ws.add_chart("bar", anchor="G2", data_range="A1:B5", title="Sales")
+# optional end cell (default = template span):
+# ws.add_chart("bar", anchor="C19", to_anchor="H32", data_range="A1:B5")
 ws.add_table("A1:B10", ["Item", "Qty"], name="Items")
 ws.add_conditional_formatting("A2:A20", operator="greaterThan", formula="0")
 

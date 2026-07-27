@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "xlsxedit"
 dynamic = ["version"]
-description = "Surgical .xlsx editing that preserves formatting"
+description = "Edit Excel files from Python without breaking layout, formatting, or file compatibility."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -33,7 +33,9 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://xlsxedit.jonasruilong.com"
+Repository = "https://github.com/jonas-kupferschmid/xlsxedit"
 Documentation = "https://xlsxedit.jonasruilong.com/docs"
+Issues = "https://github.com/jonas-kupferschmid/xlsxedit/issues"
 Changelog = "https://xlsxedit.jonasruilong.com/changelog"
 Funding = "https://xlsxedit.jonasruilong.com/sponsor"
 

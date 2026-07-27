@@ -187,6 +187,166 @@ def test_add_chart_and_set_title(tmp_path: Path):
     assert num_ref.find(f"{ns}numCache/{ns}ptCount").get("val") == "2"
 
 
+def test_add_chart_anchor_to_below_from(tmp_path: Path):
+    """Anchoring below the template's default ``to`` row must not invert the box."""
+    from xlsxedit.drawing import XDR_NS
+
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A1"].value = "Day"
+    ws["B1"].value = "N"
+    ws["A2"].value = "Mon"
+    ws["B2"].value = 1
+    ws.add_chart("bar", anchor="A18", data_range="A1:B2", title="Late")
+    out = tmp_path / "chart_anchor.xlsx"
+    wb.save(out)
+
+    import zipfile
+
+    with zipfile.ZipFile(out) as z:
+        drawing = etree.fromstring(z.read("xl/drawings/drawing1.xml"))
+    from_row = int(drawing.find(f".//{{{XDR_NS}}}from/{{{XDR_NS}}}row").text)
+    to_row = int(drawing.find(f".//{{{XDR_NS}}}to/{{{XDR_NS}}}row").text)
+    from_col = int(drawing.find(f".//{{{XDR_NS}}}from/{{{XDR_NS}}}col").text)
+    to_col = int(drawing.find(f".//{{{XDR_NS}}}to/{{{XDR_NS}}}col").text)
+    assert from_row == 17
+    assert to_row > from_row
+    assert to_col > from_col
+
+
+def test_add_chart_default_flush_offsets(tmp_path: Path):
+    from xlsxedit.drawing import XDR_NS
+
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A1"].value = "Day"
+    ws["B1"].value = "N"
+    ws["A2"].value = "Mon"
+    ws["B2"].value = 1
+    chart = ws.add_chart("bar", anchor="C19", data_range="A1:B2", title="Flush")
+    assert chart.offset_x == 0
+    assert chart.offset_y == 0
+    assert chart.anchor == "C19"
+
+    out = tmp_path / "chart_flush.xlsx"
+    wb.save(out)
+
+    import zipfile
+
+    with zipfile.ZipFile(out) as z:
+        drawing = etree.fromstring(z.read("xl/drawings/drawing1.xml"))
+    fr = drawing.find(f".//{{{XDR_NS}}}from")
+    to = drawing.find(f".//{{{XDR_NS}}}to")
+    assert int(fr.find(f"{{{XDR_NS}}}col").text) == 2
+    assert int(fr.find(f"{{{XDR_NS}}}row").text) == 18
+    assert int(fr.find(f"{{{XDR_NS}}}colOff").text) == 0
+    assert int(fr.find(f"{{{XDR_NS}}}rowOff").text) == 0
+    assert int(to.find(f"{{{XDR_NS}}}col").text) == 2 + 6
+    assert int(to.find(f"{{{XDR_NS}}}row").text) == 18 + 13
+    assert int(to.find(f"{{{XDR_NS}}}colOff").text) == 0
+    assert int(to.find(f"{{{XDR_NS}}}rowOff").text) == 0
+
+
+def test_chart_offset_post_create_roundtrip(tmp_path: Path):
+    from xlsxedit.drawing import EMU_PER_PIXEL, XDR_NS
+
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A1"].value = "Day"
+    ws["B1"].value = "N"
+    ws["A2"].value = "Mon"
+    ws["B2"].value = 1
+    chart = ws.add_chart("bar", anchor="C19", data_range="A1:B2", title="Inset")
+    assert chart.offset_x == 0
+    assert chart.offset_y == 0
+    chart.offset_x = 10
+    chart.offset_y = 8
+    chart.anchor = "D20"
+    assert chart.anchor == "D20"
+    assert chart.offset_x == 10
+    assert chart.offset_y == 8
+
+    out = tmp_path / "chart_offset.xlsx"
+    wb.save(out)
+    wb2 = Workbook.open(out)
+    chart2 = wb2["Sheet1"].charts[0]
+    assert chart2.anchor == "D20"
+    assert chart2.offset_x == 10
+    assert chart2.offset_y == 8
+
+    import zipfile
+
+    with zipfile.ZipFile(out) as z:
+        drawing = etree.fromstring(z.read("xl/drawings/drawing1.xml"))
+    fr = drawing.find(f".//{{{XDR_NS}}}from")
+    to = drawing.find(f".//{{{XDR_NS}}}to")
+    assert int(fr.find(f"{{{XDR_NS}}}colOff").text) == 10 * EMU_PER_PIXEL
+    assert int(fr.find(f"{{{XDR_NS}}}rowOff").text) == 8 * EMU_PER_PIXEL
+    # span preserved when moving anchor C19→D20
+    assert int(to.find(f"{{{XDR_NS}}}col").text) - int(fr.find(f"{{{XDR_NS}}}col").text) == 6
+    assert int(to.find(f"{{{XDR_NS}}}row").text) - int(fr.find(f"{{{XDR_NS}}}row").text) == 13
+
+
+def test_add_chart_to_anchor(tmp_path: Path):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A1"].value = "Day"
+    ws["B1"].value = "N"
+    ws["A2"].value = "Mon"
+    ws["B2"].value = 1
+    chart = ws.add_chart(
+        "bar",
+        anchor="C19",
+        to_anchor="G32",
+        data_range="A1:B2",
+        title="Sized",
+    )
+    assert chart.anchor == "C19"
+    assert chart.to_anchor == "G32"
+    chart.to_anchor = "F30"
+    assert chart.to_anchor == "F30"
+
+    out = tmp_path / "chart_to.xlsx"
+    wb.save(out)
+    wb2 = Workbook.open(out)
+    assert wb2["Sheet1"].charts[0].to_anchor == "F30"
+
+
+def test_add_image_offset(tmp_path: Path):
+    from xlsxedit.drawing import EMU_PER_PIXEL, XDR_NS
+
+    # 1x1 PNG
+    png = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00"
+        b"\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    img = tmp_path / "dot.png"
+    img.write_bytes(png)
+
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    pic = ws.add_image(img, anchor="H1", width=90, height=90, offset_x=5, offset_y=2)
+    assert pic.offset_x == 5
+    assert pic.offset_y == 2
+    pic.offset_x = 7
+
+    out = tmp_path / "img_offset.xlsx"
+    wb.save(out)
+    wb2 = Workbook.open(out)
+    pic2 = wb2["Sheet1"].images[0]
+    assert pic2.offset_x == 7
+    assert pic2.offset_y == 2
+
+    import zipfile
+
+    with zipfile.ZipFile(out) as z:
+        drawing = etree.fromstring(z.read("xl/drawings/drawing1.xml"))
+    fr = drawing.find(f".//{{{XDR_NS}}}from")
+    assert int(fr.find(f"{{{XDR_NS}}}colOff").text) == 7 * EMU_PER_PIXEL
+    assert int(fr.find(f"{{{XDR_NS}}}rowOff").text) == 2 * EMU_PER_PIXEL
+
+
 def test_add_table_and_resize(tmp_path: Path):
     wb = Workbook.create()
     ws = wb["Sheet1"]

@@ -80,6 +80,52 @@ EMU_PER_INCH = 914400
 EMU_PER_PIXEL = 9525  # 96 dpi approximation
 
 
+def _px_to_emu(pixels: int) -> int:
+    return int(pixels * EMU_PER_PIXEL)
+
+
+def _emu_to_px(emu: int) -> int:
+    return max(0, round(emu / EMU_PER_PIXEL))
+
+
+def _validate_offset_px(pixels: int) -> int:
+    if not isinstance(pixels, int) or isinstance(pixels, bool):
+        raise TypeError("offset must be an int")
+    if pixels < 0:
+        raise ValueError("offset must be non-negative")
+    return pixels
+
+
+def _get_from_offset_emu(anchor: _Element) -> tuple[int, int]:
+    from_elm = anchor.find(_XDR_FROM)
+    if from_elm is None:
+        return 0, 0
+    return (
+        int(from_elm.findtext(_XDR_COLOFF, "0") or "0"),
+        int(from_elm.findtext(_XDR_ROWOFF, "0") or "0"),
+    )
+
+
+def _set_corner_offset_emu(corner: _Element, col_off: int, row_off: int) -> None:
+    col_off_elm = corner.find(_XDR_COLOFF)
+    row_off_elm = corner.find(_XDR_ROWOFF)
+    if col_off_elm is not None:
+        col_off_elm.text = str(col_off)
+    if row_off_elm is not None:
+        row_off_elm.text = str(row_off)
+
+
+def _set_from_offset_emu(anchor: _Element, col_off: int, row_off: int) -> None:
+    from_elm = anchor.find(_XDR_FROM)
+    if from_elm is not None:
+        _set_corner_offset_emu(from_elm, col_off, row_off)
+
+
+def _sync_drawing_part(drawing_part: Part, anchor_elm: _Element) -> None:
+    root = anchor_elm.getroottree().getroot()
+    drawing_part._blob = serialize_xml(root)
+
+
 def _title_text_from_tx(tx: _Element) -> str | None:
     rich = tx.find(_C_RICH)
     if rich is not None:
@@ -270,6 +316,31 @@ class Picture:
             col_elm.text = str(col_to_index(col))
         if row_elm is not None:
             row_elm.text = str(row - 1)
+        _sync_drawing_part(self._drawing_part, self._anchor)
+
+    @property
+    def offset_x(self) -> int:
+        """Horizontal inset from the anchor cell, in pixels."""
+        return _emu_to_px(_get_from_offset_emu(self._anchor)[0])
+
+    @offset_x.setter
+    def offset_x(self, pixels: int) -> None:
+        pixels = _validate_offset_px(pixels)
+        _, row_off = _get_from_offset_emu(self._anchor)
+        _set_from_offset_emu(self._anchor, _px_to_emu(pixels), row_off)
+        _sync_drawing_part(self._drawing_part, self._anchor)
+
+    @property
+    def offset_y(self) -> int:
+        """Vertical inset from the anchor cell, in pixels."""
+        return _emu_to_px(_get_from_offset_emu(self._anchor)[1])
+
+    @offset_y.setter
+    def offset_y(self, pixels: int) -> None:
+        pixels = _validate_offset_px(pixels)
+        col_off, _ = _get_from_offset_emu(self._anchor)
+        _set_from_offset_emu(self._anchor, col_off, _px_to_emu(pixels))
+        _sync_drawing_part(self._drawing_part, self._anchor)
 
     @property
     def width_emu(self) -> int:
@@ -305,6 +376,11 @@ class Picture:
                 ext = etree.SubElement(sp_pr, _A_EXT)
             ext.set("cx", str(cx))
             ext.set("cy", str(cy))
+        ext_elm = self._anchor.find(_XDR_EXT)
+        if ext_elm is not None:
+            ext_elm.set("cx", str(cx))
+            ext_elm.set("cy", str(cy))
+        _sync_drawing_part(self._drawing_part, self._anchor)
 
     @property
     def media_path(self) -> str | None:
@@ -408,6 +484,86 @@ class Chart:
         if from_elm is None:
             return ""
         return _anchor_address(from_elm)
+
+    @anchor.setter
+    def anchor(self, address: str) -> None:
+        """Move the chart's top-left cell; preserve offsets and to-span."""
+        from xlsxedit.oxml.address import split_address, col_to_index
+
+        col, row = split_address(address)
+        from_elm = self._anchor.find(_XDR_FROM)
+        to_elm = self._anchor.find(_XDR_TO)
+        if from_elm is None:
+            return
+        from_col_elm = from_elm.find(_XDR_COL)
+        from_row_elm = from_elm.find(_XDR_ROW)
+        if from_col_elm is None or from_row_elm is None:
+            return
+        old_col = int(from_col_elm.text or "0")
+        old_row = int(from_row_elm.text or "0")
+        new_col = col_to_index(col)
+        new_row = row - 1
+        d_col = new_col - old_col
+        d_row = new_row - old_row
+        from_col_elm.text = str(new_col)
+        from_row_elm.text = str(new_row)
+        if to_elm is not None and (d_col or d_row):
+            to_col_elm = to_elm.find(_XDR_COL)
+            to_row_elm = to_elm.find(_XDR_ROW)
+            if to_col_elm is not None:
+                to_col_elm.text = str(int(to_col_elm.text or "0") + d_col)
+            if to_row_elm is not None:
+                to_row_elm.text = str(int(to_row_elm.text or "0") + d_row)
+        _sync_drawing_part(self._drawing_part, self._anchor)
+
+    @property
+    def to_anchor(self) -> str:
+        """Bottom-right corner cell of the chart box."""
+        to_elm = self._anchor.find(_XDR_TO)
+        if to_elm is None:
+            return ""
+        return _anchor_address(to_elm)
+
+    @to_anchor.setter
+    def to_anchor(self, address: str) -> None:
+        """Set the bottom-right corner cell (does not move ``anchor``)."""
+        from xlsxedit.oxml.address import split_address, col_to_index
+
+        col, row = split_address(address)
+        to_elm = self._anchor.find(_XDR_TO)
+        if to_elm is None:
+            return
+        to_col_elm = to_elm.find(_XDR_COL)
+        to_row_elm = to_elm.find(_XDR_ROW)
+        if to_col_elm is not None:
+            to_col_elm.text = str(col_to_index(col))
+        if to_row_elm is not None:
+            to_row_elm.text = str(row - 1)
+        _sync_drawing_part(self._drawing_part, self._anchor)
+
+    @property
+    def offset_x(self) -> int:
+        """Horizontal inset from the anchor cell, in pixels."""
+        return _emu_to_px(_get_from_offset_emu(self._anchor)[0])
+
+    @offset_x.setter
+    def offset_x(self, pixels: int) -> None:
+        pixels = _validate_offset_px(pixels)
+        _, row_off = _get_from_offset_emu(self._anchor)
+        _set_from_offset_emu(self._anchor, _px_to_emu(pixels), row_off)
+        _sync_drawing_part(self._drawing_part, self._anchor)
+
+    @property
+    def offset_y(self) -> int:
+        """Vertical inset from the anchor cell, in pixels."""
+        return _emu_to_px(_get_from_offset_emu(self._anchor)[1])
+
+    @offset_y.setter
+    def offset_y(self, pixels: int) -> None:
+        pixels = _validate_offset_px(pixels)
+        col_off, _ = _get_from_offset_emu(self._anchor)
+        _set_from_offset_emu(self._anchor, col_off, _px_to_emu(pixels))
+        _sync_drawing_part(self._drawing_part, self._anchor)
 
     @property
     def partname(self) -> str | None:

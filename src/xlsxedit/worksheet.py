@@ -740,8 +740,10 @@ class Worksheet:
                 raise ValueError(f"merge range {ref!r} overlaps existing {existing!r}")
         block = self._part.element.find(_MERGE_CELLS)
         if block is None:
+            from xlsxedit.worksheet_order import insert_worksheet_child
+
             block = etree.Element(_MERGE_CELLS)
-            self._part.element.append(block)
+            insert_worksheet_child(self._part.element, block)
         merge_elm = etree.SubElement(block, _MERGE_CELL)
         merge_elm.set("ref", ref)
         block.set("count", str(len(block.findall(_MERGE_CELL))))
@@ -814,8 +816,13 @@ class Worksheet:
         max_width: int = 200,
         max_height: int = 200,
         name: str | None = None,
+        offset_x: int = 0,
+        offset_y: int = 0,
     ) -> Picture:
-        """Insert an image anchored at ``anchor`` (clones template drawing subgraph)."""
+        """Insert an image anchored at ``anchor`` (clones template drawing subgraph).
+
+        ``offset_x`` / ``offset_y`` are pixel insets within the anchor cell (default 0 = flush).
+        """
         return self._workbook._add_image_to_sheet(
             self,
             image_path,
@@ -825,6 +832,8 @@ class Worksheet:
             max_width,
             max_height,
             name,
+            offset_x=offset_x,
+            offset_y=offset_y,
         )
 
     def add_chart(
@@ -835,10 +844,21 @@ class Worksheet:
         data_range: str = "A1:B5",
         title: str | None = None,
         name: str | None = None,
+        to_anchor: str | None = None,
     ) -> Chart:
-        """Add a chart from the bundled template subgraph."""
+        """Add a chart from the bundled template subgraph.
+
+        Placement is cell-based (``anchor``, optional ``to_anchor``). Offsets come from
+        the template (flush). Tweak later via ``chart.offset_x`` / ``chart.offset_y`` if needed.
+        """
         return self._workbook._add_chart_to_sheet(
-            self, chart_type, anchor=anchor, data_range=data_range, title=title, name=name
+            self,
+            chart_type,
+            anchor=anchor,
+            data_range=data_range,
+            title=title,
+            name=name,
+            to_anchor=to_anchor,
         )
 
     def add_table(

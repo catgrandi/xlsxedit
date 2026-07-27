@@ -11,7 +11,17 @@ from lxml import etree
 
 from xlsxedit.api import _default_xlsx_path
 from xlsxedit.exceptions import DuplicateWorksheetError, WorksheetNotFoundError
-from xlsxedit.drawing import EMU_PER_PIXEL, Picture, Chart, drawing_parts_for_worksheet, iter_charts, iter_pictures
+from xlsxedit.drawing import (
+    EMU_PER_PIXEL,
+    Picture,
+    Chart,
+    drawing_parts_for_worksheet,
+    iter_charts,
+    iter_pictures,
+    _px_to_emu,
+    _set_from_offset_emu,
+    _validate_offset_px,
+)
 from xlsxedit.image_size import resolve_display_size
 from xlsxedit.merge import merge_anchor, parse_range
 from xlsxedit.opc.constants import CT, OFFICE_REL_NS, RT, SML_NS
@@ -37,6 +47,7 @@ _C_CHART = f"{{http://schemas.openxmlformats.org/drawingml/2006/chart}}chart"
 _TABLE_PARTS = f"{{{SML_NS}}}tableParts"
 _TABLE_PART = f"{{{SML_NS}}}tablePart"
 _XDR_FROM = f"{{{_XDR_NS}}}from"
+_XDR_TO = f"{{{_XDR_NS}}}to"
 _XDR_COL = f"{{{_XDR_NS}}}col"
 _XDR_ROW = f"{{{_XDR_NS}}}row"
 _XDR_EXT = f"{{{_XDR_NS}}}ext"
@@ -292,11 +303,30 @@ class Workbook:
                 else join_address(start_col, end_row)
             )
             if resize_table and ws.tables:
-                ws.tables[0].resize(
-                    f"{join_address(start_col, start_row)}:{join_address(end_col_letter, end_row)}"
-                    if header and hasattr(df, "columns")
-                    else data_ref
-                )
+                table = ws.tables[0]
+                if header and hasattr(df, "columns"):
+                    table_ref = (
+                        f"{join_address(start_col, start_row)}:"
+                        f"{join_address(end_col_letter, end_row)}"
+                    )
+                else:
+                    # Keep existing table header row when writing body only
+                    # (header=False). Shrinking to data_ref alone drops the
+                    # header and Excel repairs the table part.
+                    try:
+                        _, table_top, _, _ = parse_range(table.ref or data_ref)
+                    except Exception:
+                        table_top = data_start_row
+                    top_row = (
+                        table_top
+                        if table_top < data_start_row
+                        else data_start_row
+                    )
+                    table_ref = (
+                        f"{join_address(start_col, top_row)}:"
+                        f"{join_address(end_col_letter, end_row)}"
+                    )
+                table.resize(table_ref)
             if expand_conditional_formatting:
                 ws.expand_conditional_formatting(end_row)
         elif data_rows_written > 0 and mode == "insert" and expand_conditional_formatting:
@@ -515,7 +545,11 @@ class Workbook:
         max_width: int,
         max_height: int,
         name: str | None,
+        offset_x: int = 0,
+        offset_y: int = 0,
     ) -> Picture:
+        offset_x = _validate_offset_px(offset_x)
+        offset_y = _validate_offset_px(offset_y)
         path = Path(image_path)
         display_w, display_h = resolve_display_size(
             path,
@@ -552,9 +586,11 @@ class Workbook:
             drawing_part = Part(drawing_partname, CT.DRAWING, b"", self._package)
             self._package._add_part(drawing_part)
             r_id = ws._part.relate_to(drawing_part, RT.DRAWING)
+            from xlsxedit.worksheet_order import insert_worksheet_child
+
             drawing_elm = etree.Element(_WS_DRAWING)
             drawing_elm.set(f"{{{OFFICE_REL_NS}}}id", r_id)
-            ws._part.element.append(drawing_elm)
+            insert_worksheet_child(ws._part.element, drawing_elm)
 
         if anchor_elm is None:
             raise ValueError("picture anchor template missing")
@@ -564,6 +600,7 @@ class Workbook:
         if from_elm is not None:
             from_elm.find(_XDR_COL).text = str(col_to_index(col))
             from_elm.find(_XDR_ROW).text = str(row - 1)
+        _set_from_offset_emu(anchor_elm, _px_to_emu(offset_x), _px_to_emu(offset_y))
 
         cx, cy = int(display_w * EMU_PER_PIXEL), int(display_h * EMU_PER_PIXEL)
         ext_elm = anchor_elm.find(_XDR_EXT)
@@ -602,6 +639,7 @@ class Workbook:
         data_range: str,
         title: str | None,
         name: str | None,
+        to_anchor: str | None = None,
     ) -> Chart:
         if chart_type != "bar":
             raise ValueError(f"unsupported chart_type: {chart_type!r}")
@@ -636,19 +674,44 @@ class Workbook:
             drawing_part = Part(drawing_partname, CT.DRAWING, b"", self._package)
             self._package._add_part(drawing_part)
             r_id = ws._part.relate_to(drawing_part, RT.DRAWING)
+            from xlsxedit.worksheet_order import insert_worksheet_child
+
             drawing_elm = etree.Element(_WS_DRAWING)
             drawing_elm.set(f"{{{OFFICE_REL_NS}}}id", r_id)
-            ws._part.element.append(drawing_elm)
+            insert_worksheet_child(ws._part.element, drawing_elm)
 
         col, row = split_address(anchor)
         from_elm = anchor_elm.find(_XDR_FROM)
+        to_elm = anchor_elm.find(_XDR_TO)
         if from_elm is not None:
-            col_elm = from_elm.find(_XDR_COL)
-            row_elm = from_elm.find(_XDR_ROW)
-            if col_elm is not None:
-                col_elm.text = str(col_to_index(col))
-            if row_elm is not None:
-                row_elm.text = str(row - 1)
+            from_col_elm = from_elm.find(_XDR_COL)
+            from_row_elm = from_elm.find(_XDR_ROW)
+            to_col_elm = to_elm.find(_XDR_COL) if to_elm is not None else None
+            to_row_elm = to_elm.find(_XDR_ROW) if to_elm is not None else None
+
+            # Preserve template span so ``to`` stays below/right of ``from``.
+            # (Only updating ``from`` left inverted boxes when anchor row >
+            # template ``to`` row — Excel then repairs the drawing.)
+            old_from_col = int(from_col_elm.text or "0")
+            old_from_row = int(from_row_elm.text or "0")
+            if to_col_elm is not None and to_row_elm is not None:
+                d_col = max(1, int(to_col_elm.text or "0") - old_from_col)
+                d_row = max(1, int(to_row_elm.text or "0") - old_from_row)
+            else:
+                d_col, d_row = 6, 13
+
+            new_from_col = col_to_index(col)
+            new_from_row = row - 1
+            from_col_elm.text = str(new_from_col)
+            from_row_elm.text = str(new_from_row)
+            if to_col_elm is not None and to_row_elm is not None:
+                if to_anchor is not None:
+                    to_col, to_row = split_address(to_anchor)
+                    to_col_elm.text = str(col_to_index(to_col))
+                    to_row_elm.text = str(to_row - 1)
+                else:
+                    to_col_elm.text = str(new_from_col + d_col)
+                    to_row_elm.text = str(new_from_row + d_row)
 
         chart_name = name or "Chart 1"
         frame = anchor_elm.find(_XDR_GRAPHIC_FRAME)
@@ -738,10 +801,14 @@ class Workbook:
         table_part = Part(table_partname, CT.TABLE, serialize_xml(table_elm), self._package)
         self._package._add_part(table_part)
 
+        from xlsxedit.worksheet_order import insert_worksheet_child, reposition_worksheet_child
+
         tp = ws._part.element.find(_TABLE_PARTS)
         if tp is None:
             tp = etree.Element(_TABLE_PARTS)
-            ws._part.element.append(tp)
+            insert_worksheet_child(ws._part.element, tp)
+        else:
+            reposition_worksheet_child(ws._part.element, tp)
         count = int(tp.get("count", "0")) + 1
         tp.set("count", str(count))
         rel_elm = etree.SubElement(tp, _TABLE_PART)

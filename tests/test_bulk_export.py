@@ -94,6 +94,38 @@ def test_expand_conditional_formatting(tmp_path: Path):
     assert ws.conditional_formatting[0].cell_range == "B2:B100"
 
 
+def test_expand_conditional_formatting_skips_single_cell():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws.add_conditional_formatting("D7", operator="greaterThan", formula="80")
+    ws.add_color_scale_formatting("C10:C12")
+    updated = ws.expand_conditional_formatting(16)
+    assert updated == 1  # only the multi-row color scale
+    ranges = {b.cell_range for b in ws.conditional_formatting}
+    assert "D7" in ranges
+    assert "C10:C16" in ranges
+
+
+def test_table_resize_preserves_header_when_header_false():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A1"].value = "Item"
+    ws["B1"].value = "Qty"
+    for i in range(2, 9):
+        ws[f"A{i}"].value = f"r{i}"
+        ws[f"B{i}"].value = i
+    ws.add_table("A1:B8", ["Item", "Qty"], name="TBody")
+    rows = [(f"n{i}", i * 10) for i in range(1, 8)]
+    wb.write_dataframe(
+        rows,
+        at_cell="A2",
+        header=False,
+        mode="overwrite",
+        resize_table=True,
+    )
+    assert ws.tables[0].ref == "A1:B8"
+
+
 def test_large_mode_deferred_worksheet_parse(tmp_path: Path):
     wb = Workbook.create()
     wb.add_worksheet("Data")

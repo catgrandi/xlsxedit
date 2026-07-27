@@ -119,7 +119,9 @@ def add_cell_is_rule(
     dxf_id = styles.ensure_dxf(font_color=font_color, bg_color=bg_color, bold=bold)
     rule_elm.set("dxfId", str(dxf_id))
 
-    root.append(cf_elm)
+    from xlsxedit.worksheet_order import insert_worksheet_child
+
+    insert_worksheet_child(root, cf_elm)
     return ConditionalFormatting(cf_elm)
 
 
@@ -127,12 +129,14 @@ def clone_color_scale_rule(
     worksheet: Worksheet, cell_range: str, template: etree._Element | None = None
 ) -> ConditionalFormatting:
     """Clone a ``colorScale`` rule from a template ``conditionalFormatting`` element."""
+    from xlsxedit.worksheet_order import insert_worksheet_child
+
     root = worksheet._part.element
     cf_elm = deepcopy(template if template is not None else _color_scale_template())
     cf_elm.set("sqref", cell_range)
     for rule in cf_elm.findall(_CF_RULE):
         rule.set("priority", str(_next_priority(worksheet)))
-    root.append(cf_elm)
+    insert_worksheet_child(root, cf_elm)
     return ConditionalFormatting(cf_elm)
 
 
@@ -147,14 +151,16 @@ def _expand_sqref_range(sqref: str, end_row: int) -> str:
         except ValueError:
             parts.append(ref)
             continue
-        if c1 == c2 and r2 < end_row:
+        # Only grow ranges that already span multiple rows. Single-cell CF
+        # (e.g. a KPI on D7) must not expand down the column.
+        if c1 == c2 and r2 > r1 and r2 < end_row:
             ref = f"{join_address(c1, r1)}:{join_address(c2, end_row)}"
         parts.append(ref)
     return " ".join(parts)
 
 
 def expand_conditional_formatting_to_row(worksheet: Worksheet, end_row: int) -> int:
-    """Extend single-column CF ``sqref`` ranges down to ``end_row`` if needed."""
+    """Extend multi-row single-column CF ``sqref`` ranges down to ``end_row``."""
     updated = 0
     for block in iter_conditional_formatting(worksheet):
         sqref = block.cell_range

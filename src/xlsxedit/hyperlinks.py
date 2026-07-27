@@ -7,68 +7,22 @@ from typing import TYPE_CHECKING
 from lxml import etree
 
 from xlsxedit.opc.constants import OFFICE_REL_NS, RT, SML_NS
+from xlsxedit.worksheet_order import insert_worksheet_child, reposition_worksheet_child
 
 if TYPE_CHECKING:
     from xlsxedit.cell import Cell
 
 _HYPERLINKS = f"{{{SML_NS}}}hyperlinks"
 _HYPERLINK = f"{{{SML_NS}}}hyperlink"
-_SHEET_DATA = f"{{{SML_NS}}}sheetData"
-
-# OOXML: these elements must appear before <hyperlinks> on a worksheet.
-_BEFORE_HYPERLINKS = frozenset({
-    "sheetPr",
-    "dimension",
-    "sheetViews",
-    "sheetFormatPr",
-    "cols",
-    "sheetData",
-    "sheetCalcPr",
-    "sheetProtection",
-    "protectedRanges",
-    "scenarios",
-    "autoFilter",
-    "sortState",
-    "dataConsolidate",
-    "customSheetViews",
-    "mergeCells",
-    "phoneticPr",
-    "conditionalFormatting",
-    "dataValidations",
-})
-
-
-def _hyperlinks_insert_index(ws_elm: etree._Element) -> int:
-    """Return the child index where a new ``<hyperlinks>`` block belongs."""
-    insert_at = len(list(ws_elm))
-    for i, child in enumerate(ws_elm):
-        local = etree.QName(child).localname
-        if local == "hyperlinks":
-            return i
-        if local in _BEFORE_HYPERLINKS:
-            insert_at = i + 1
-    return insert_at
-
-
-def _fix_hyperlinks_position(ws_elm: etree._Element, block: etree._Element) -> None:
-    """Move ``<hyperlinks>`` after ``<sheetData>`` if it was inserted too early."""
-    sheet_data = ws_elm.find(_SHEET_DATA)
-    if sheet_data is None:
-        return
-    block_idx = list(ws_elm).index(block)
-    target_idx = _hyperlinks_insert_index(ws_elm)
-    if block_idx != target_idx:
-        ws_elm.remove(block)
-        ws_elm.insert(target_idx, block)
 
 
 def _ensure_hyperlinks_block(ws_elm: etree._Element) -> etree._Element:
     block = ws_elm.find(_HYPERLINKS)
     if block is None:
         block = etree.Element(_HYPERLINKS)
-        ws_elm.insert(_hyperlinks_insert_index(ws_elm), block)
+        insert_worksheet_child(ws_elm, block)
     else:
-        _fix_hyperlinks_position(ws_elm, block)
+        reposition_worksheet_child(ws_elm, block)
     return block
 
 

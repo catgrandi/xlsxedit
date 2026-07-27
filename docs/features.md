@@ -67,9 +67,9 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | `ws.find(value)` | First cell with exact ``value`` | Skips formulas; ``None`` if missing |
 | `ws.findall(value)` | All matching cells as `list[Cell]` | `[]` if none |
 | `ws.images` | List of `Picture` | Read existing drawings |
-| `ws.add_image(path, *, anchor, width, height, name)` | Insert image | Template-based drawing |
+| `ws.add_image(path, *, anchor, width, height, name, offset_x, offset_y)` | Insert image | Pixel offsets within anchor cell (default 0) |
 | `ws.charts` | List of `Chart` | |
-| `ws.add_chart(type, *, anchor, data_range, title, name)` | Add bar chart | `chart_type="bar"` today |
+| `ws.add_chart(type, *, anchor, data_range, title, name, to_anchor)` | Add bar chart | `chart_type="bar"` today; flush from template; ``to_anchor`` optional end cell |
 | `ws.tables` | List of `Table` | |
 | `ws.add_table(cell_range, columns, *, name)` | Add Excel table | |
 | `ws.conditional_formatting` | Read CF blocks | colorScale, dataBar, cellIs, … |
@@ -113,6 +113,7 @@ From `ws.images` or `ws.add_image(...)`.
 |-----|---------|
 | `pic.name` | Drawing name get/set |
 | `pic.anchor` | Top-left anchor cell get/set |
+| `pic.offset_x`, `pic.offset_y` | Inset within anchor cell (pixels; default 0 = flush) |
 | `pic.width`, `pic.height` | Size in pixels get/set |
 | `pic.media_path` | Path inside package, e.g. `xl/media/image1.jpeg` |
 | `pic.replace(image_path)` | Swap image bytes |
@@ -126,7 +127,9 @@ From `ws.charts` or `ws.add_chart(...)`.
 | API | Summary |
 |-----|---------|
 | `chart.name` | Drawing name get/set |
-| `chart.anchor` | Anchor cell |
+| `chart.anchor` | Top-left anchor cell get/set (preserves size span) |
+| `chart.to_anchor` | Bottom-right corner cell get/set |
+| `chart.offset_x`, `chart.offset_y` | Pixel inset within anchor cell (post-create tweak; add is flush) |
 | `chart.title` | Chart title get/set |
 | `chart.partname` | Chart part path |
 | `chart.set_series_formula(...)` | Update series range |
