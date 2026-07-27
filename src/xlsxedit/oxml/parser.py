@@ -10,12 +10,20 @@ from __future__ import annotations
 from lxml import etree
 
 _PARSER = etree.XMLParser(remove_blank_text=False, huge_tree=True)
+_TEMPLATE_PARSER = etree.XMLParser(remove_blank_text=True, huge_tree=True)
 
 
 def parse_xml(xml: bytes | str) -> etree._Element:
     if isinstance(xml, str):
         xml = xml.encode("utf-8")
     return etree.fromstring(xml, parser=_PARSER)
+
+
+def parse_template_xml(xml: bytes | str) -> etree._Element:
+    """Parse a bundled template fragment; strip indent so saved parts stay compact."""
+    if isinstance(xml, str):
+        xml = xml.encode("utf-8")
+    return etree.fromstring(xml, parser=_TEMPLATE_PARSER)
 
 
 def serialize_xml(element: etree._Element) -> bytes:

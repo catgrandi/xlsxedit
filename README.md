@@ -16,7 +16,7 @@ Loads the `.xlsx` as an OPC package and surgically patches XML with lxml — onl
 
 Styled `.xlsx` files saved through typical Python Excel libraries often come back broken — repair dialogs, shifted layout, lost formatting.
 
-These libraries **rebuild** the workbook from an object model. Anything they do not fully implement — styles, merges, drawings, other OOXML — is **dropped on save**.
+These libraries **rebuild** the workbook from an object model. Anything they do not fully implement — styles, merges, images, charts, other OOXML — is **dropped on save**.
 
 **xlsxedit** keeps the file as an OPC package, patches only the XML you change, and writes it back — layout, formatting, and the rest of the design survive.
 
@@ -102,19 +102,21 @@ from datetime import datetime
 from xlsxedit import Workbook
 
 wb = Workbook()  # new blank workbook; same as Workbook.create()
-ws = wb["Sheet1"]
+ws = wb["Sheet1"] # get worksheet by name
 
-ws["A1"].value = "hello"
-ws["A2"].value = 42
-ws["A3"].value = datetime(2025, 8, 7)
-ws["A3"].apply_date_format()
-ws["B1"].formula = "=A2*2"
+# set cell values
+ws["A1"].value = "hello" # set cell value
+ws["A2"].value = 42 # set cell value
+ws["A3"].value = datetime(2025, 8, 7) # set cell value
+ws["A3"].apply_date_format() # apply date format
+ws["B1"].formula = "=A2*2" # set cell formula
 
+# set column width and row height of worksheet
 ws.column_dimensions["C"].width = 20.0
 ws.row_dimensions[4].height = 30.0
-ws.merge_cells("A1:C1")
+ws.merge_cells("A1:C1") # merge cells
 
-# insert_rows: insert one row at row 10 — writes A10="New line", B10=100; existing row 10+ moves down
+# insert_rows: insert one row at row 10 — writes A10="New line", B10=100; existing row 10+ shifts down
 ws.insert_rows([["New line", 100]], at_cell="A10")
 
 # insert_columns: insert one column at C — values top→bottom; existing C+ move right
@@ -123,12 +125,13 @@ ws.insert_columns([("Note", "detail")], at_col="C")
 # write_rows: write at fixed rows without shifting (overwrites cells in that range)
 ws.write_rows([["Total", 520]], at_cell="A20")
 
+# add hyperlink
 ws["D1"].value = "Docs"
 ws["D1"].hyperlink.url = "https://xlsxedit.jonasruilong.com"
 
 ws.add_image("logo.jpg", anchor="E2", width=180, height=135)
 ws.add_chart("bar", anchor="G2", data_range="A1:B5", title="Sales")
-# optional end cell (default = template span):
+# optional to_anchor (default: anchor + 6 cols × 13 rows, e.g. C19 → I32):
 # ws.add_chart("bar", anchor="C19", to_anchor="H32", data_range="A1:B5")
 ws.add_table("A1:B10", ["Item", "Qty"], name="Items")
 ws.add_conditional_formatting("A2:A20", operator="greaterThan", formula="0")
@@ -191,7 +194,11 @@ Opt-in engine today (`register()`); a future pandas PR may add official reader r
 - You only create new workbooks from scratch → **xlsxwriter**
 - You need pivot editing or every openpyxl feature today → **openpyxl** (xlsxedit API is still growing)
 
-**Missing something?** [Open an issue](https://github.com/jonas-kupferschmid/xlsxedit/issues) — the API grows from real use cases. Chart *creation* is thin on purpose: existing charts round-trip when you edit data, but I haven't needed to build charts from scratch in my own work, so that area stayed minimal.
+**Missing something?** [Open an issue](https://github.com/jonas-kupferschmid/xlsxedit/issues) — the API grows from real use cases. 
+
+I made this library for my use cases, I didn't need to create new charts or conditional formatting from scratch, so that area stayed minimal. It should still work with existing charts and conditional formatting in the template. Excel has many features and it would be too much to implement all of them, but if you need something that is not supported, please open an issue and I can implement it. 
+
+If you every come across a bug or if it says file is corrupted, please let me know and I will fix it as well.
 
 ## Support & sponsorship
 
@@ -205,7 +212,7 @@ If xlsxedit saves you or your company real time, consider sponsoring it — it's
 
 ## Acknowledgments
 
-xlsxedit owes a lot to [Steve Canny (scanny)](https://github.com/scanny) and [python-docx](https://github.com/python-docx/python-docx). I loved his idea of editing Word documents surgically — patch the package, leave the design intact — and wanted the same thing for Excel. That inspiration is why xlsxedit exists.
+xlsxedit owes a lot to [Steve Canny (scanny)](https://github.com/scanny) and [python-docx](https://github.com/python-docx/python-docx). I loved his idea of editing Word documents surgically — patch the package, leave the design intact — and wanted the same thing for Excel. (When I started to use python-docx, I researched it extensively to understand how it works) That inspiration is why xlsxedit exists.
 
 The OPC package layer (`src/xlsxedit/opc/**` and `src/xlsxedit/oxml/parser.py`) is adapted from python-docx and [python-pptx](https://github.com/python-pptx/python-pptx) (MIT licensed, Copyright (c) 2013 Steve Canny). That notice is in [`NOTICE`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/NOTICE) and [`THIRD_PARTY_LICENSES`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/THIRD_PARTY_LICENSES). xlsxedit is independent and not affiliated with those projects — but thank you, Steve, for the foundation.
 
@@ -217,7 +224,7 @@ xlsxedit is licensed under the [Apache License 2.0](https://github.com/jonas-kup
 
 Small companion repos for common workflows:
 
-- **[xlsx-sar-test](https://github.com/jonas-kupferschmid/xlsx-sar-test)** — YAML-driven search-and-replace: drop `.xlsx` files in `input/`, edit `sar.yaml`, run `apply_sar.py` to fill placeholders with xlsxedit (text, typed numbers/dates, images)
+- **[xlsx-sar-test](https://github.com/jonas-kupferschmid/xlsx-sar-test)** — **Weekly Download Report** hero demo: `build_template.py` builds a styled template (logo, table, chart, CF); `run_demo.py` fills header/KPI placeholders from `sar.yaml` and bulk-inserts the daily table from CSV — chart and layout survive. SAR-only: `apply_sar.py`
 - **[xlsx-inspect](https://github.com/jonas-kupferschmid/xlsx-inspect)** — unpack `.xlsx` files into pretty-printed XML folders and pack them back; useful to see what is inside a workbook on disk
 
 ## Documentation

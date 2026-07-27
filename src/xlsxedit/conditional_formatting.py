@@ -10,6 +10,7 @@ from lxml import etree
 
 from xlsxedit.api import _default_xlsx_path
 from xlsxedit.opc.constants import SML_NS
+from xlsxedit.oxml.parser import parse_template_xml
 
 if TYPE_CHECKING:
     from xlsxedit.worksheet import Worksheet
@@ -26,7 +27,7 @@ def _color_scale_template() -> etree._Element:
     global _COLOR_SCALE_TEMPLATE
     if _COLOR_SCALE_TEMPLATE is None:
         path = _default_xlsx_path().parent / "default-cf-colorscale.xml"
-        _COLOR_SCALE_TEMPLATE = etree.fromstring(path.read_bytes())
+        _COLOR_SCALE_TEMPLATE = parse_template_xml(path.read_bytes())
     return deepcopy(_COLOR_SCALE_TEMPLATE)
 
 

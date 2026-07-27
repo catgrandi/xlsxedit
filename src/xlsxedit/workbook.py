@@ -29,7 +29,7 @@ from xlsxedit.opc.package import OpcPackage
 from xlsxedit.opc.part import Part
 from xlsxedit.opc.packuri import PackURI
 from xlsxedit.oxml.address import col_to_index, index_to_col, join_address, split_address
-from xlsxedit.oxml.parser import parse_xml, serialize_xml
+from xlsxedit.oxml.parser import parse_template_xml, parse_xml, serialize_xml
 from xlsxedit.parts import WorkbookPart, WorksheetPart, register_part_types
 from xlsxedit.shared_strings import SharedStringTable
 from xlsxedit.styles import Styles, datetime_to_serial
@@ -523,7 +523,7 @@ class Workbook:
             raise DuplicateWorksheetError(f"worksheet {name!r} already exists")
 
         template_path = _default_xlsx_path().parent / "default-worksheet.xml"
-        element = parse_xml(template_path.read_bytes())
+        element = parse_template_xml(template_path.read_bytes())
         partname = self._package.next_partname("/xl/worksheets/sheet%d.xml")
         part = WorksheetPart(partname, CT.WORKSHEET, element, self._package)
         self._package._add_part(part)
@@ -567,7 +567,7 @@ class Workbook:
         self._package._add_part(media_part)
 
         template_path = _default_xlsx_path().parent / "default-picture-anchor.xml"
-        anchor_template = parse_xml(template_path.read_bytes()).find(_XDR_ONE_CELL)
+        anchor_template = parse_template_xml(template_path.read_bytes()).find(_XDR_ONE_CELL)
 
         drawing_parts = drawing_parts_for_worksheet(ws)
         if drawing_parts:
@@ -645,8 +645,12 @@ class Workbook:
             raise ValueError(f"unsupported chart_type: {chart_type!r}")
 
         templates = _default_xlsx_path().parent
-        drawing_template = parse_xml((templates / "default-chart-anchor.xml").read_bytes())
-        chart_template = parse_xml((templates / "default-bar-chart.xml").read_bytes())
+        drawing_template = parse_template_xml(
+            (templates / "default-chart-anchor.xml").read_bytes()
+        )
+        chart_template = parse_template_xml(
+            (templates / "default-bar-chart.xml").read_bytes()
+        )
 
         chart_partname = self._package.next_partname("/xl/charts/chart%d.xml")
         chart_part = Part(chart_partname, CT.CHART, serialize_xml(chart_template), self._package)
@@ -765,7 +769,7 @@ class Workbook:
             raise ValueError("columns must not be empty")
 
         templates = _default_xlsx_path().parent
-        table_elm = parse_xml((templates / "default-table.xml").read_bytes())
+        table_elm = parse_template_xml((templates / "default-table.xml").read_bytes())
 
         table_name = name or "Table1"
         disp = display_name or table_name
