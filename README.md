@@ -77,6 +77,14 @@ pip install xlsxedit
 pip install xlsxedit[pandas]   # optional: ExcelWriter / read_excel engine
 ```
 
+**AI coding agents** — installable skill (Cursor / compatible agents):
+
+```bash
+npx skills add jonas-kupferschmid/xlsxedit --skill xlsxedit
+```
+
+Source: [`skills/xlsxedit/SKILL.md`](skills/xlsxedit/SKILL.md)
+
 Development:
 
 ```bash
