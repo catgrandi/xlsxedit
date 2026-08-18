@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import re
+
 from lxml import etree
 
+from xlsxedit.exceptions import InvalidRangeError
 from xlsxedit.merge import parse_range
 from xlsxedit.opc.constants import OFFICE_REL_NS, SML_NS
 from xlsxedit.oxml.address import col_to_index, index_to_col, join_address, split_address
@@ -19,6 +22,22 @@ _CF = f"{{{SML_NS}}}conditionalFormatting"
 _TABLE_PARTS = f"{{{SML_NS}}}tableParts"
 _TABLE_PART = f"{{{SML_NS}}}tablePart"
 _AUTO_FILTER = f"{{{SML_NS}}}autoFilter"
+_HYPERLINKS = f"{{{SML_NS}}}hyperlinks"
+_HYPERLINK = f"{{{SML_NS}}}hyperlink"
+_DATA_VALIDATIONS = f"{{{SML_NS}}}dataValidations"
+_DATA_VALIDATION = f"{{{SML_NS}}}dataValidation"
+_DEFINED_NAMES = f"{{{SML_NS}}}definedNames"
+_DEFINED_NAME = f"{{{SML_NS}}}definedName"
+
+_CELL_TOKEN_RE = re.compile(r"^(\$?)([A-Za-z]+)(\$?)(\d+)$")
+_A1_RANGE_RE = re.compile(
+    r"\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?"
+)
+_QUALIFIED_REF_RE = re.compile(
+    r"(?P<sheet>'(?:[^']|'')+'|[^'!\s]+)"
+    r"!"
+    r"(?P<ref>\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?)"
+)
 
 
 def shift_row_number(row: int, at_row: int, delta: int) -> int:
@@ -68,8 +87,39 @@ def shift_sqref_cols(sqref: str, at_col: int, delta: int) -> str:
     return " ".join(shift_range_ref_cols(part, at_col, delta) for part in sqref.split())
 
 
+def _shift_attr_ref(ref: str, at: int, delta: int, *, cols: bool) -> str:
+    bare = ref.replace("$", "")
+    try:
+        if cols:
+            return shift_range_ref_cols(bare, at, delta)
+        return shift_range_ref(bare, at, delta)
+    except InvalidRangeError:
+        return ref
+
+
+def _shift_sqref_attr(sqref: str, at: int, delta: int, *, cols: bool) -> str:
+    return " ".join(_shift_attr_ref(part, at, delta, cols=cols) for part in sqref.split())
+
+
+def _shift_hyperlinks_and_validations(
+    ws_element: etree._Element, at: int, delta: int, *, cols: bool
+) -> None:
+    block = ws_element.find(_HYPERLINKS)
+    if block is not None:
+        for hl in block.findall(_HYPERLINK):
+            ref = hl.get("ref")
+            if ref:
+                hl.set("ref", _shift_sqref_attr(ref, at, delta, cols=cols))
+    dvs = ws_element.find(_DATA_VALIDATIONS)
+    if dvs is not None:
+        for dv in dvs.findall(_DATA_VALIDATION):
+            sqref = dv.get("sqref")
+            if sqref:
+                dv.set("sqref", _shift_sqref_attr(sqref, at, delta, cols=cols))
+
+
 def shift_sheet_row_references(ws_element: etree._Element, at_row: int, delta: int) -> None:
-    """Shift merge and CF references after row insertion."""
+    """Shift merge, CF, hyperlink, and dataValidation references after row insertion."""
     merge_block = ws_element.find(_MERGE_CELLS)
     if merge_block is not None:
         for merge_elm in merge_block.findall(_MERGE_CELL):
@@ -82,9 +132,11 @@ def shift_sheet_row_references(ws_element: etree._Element, at_row: int, delta: i
         if sqref:
             cf_elm.set("sqref", shift_sqref(sqref, at_row, delta))
 
+    _shift_hyperlinks_and_validations(ws_element, at_row, delta, cols=False)
+
 
 def shift_sheet_col_references(ws_element: etree._Element, at_col: int, delta: int) -> None:
-    """Shift merge and CF references after column insertion."""
+    """Shift merge, CF, hyperlink, and dataValidation references after column insertion."""
     merge_block = ws_element.find(_MERGE_CELLS)
     if merge_block is not None:
         for merge_elm in merge_block.findall(_MERGE_CELL):
@@ -96,6 +148,8 @@ def shift_sheet_col_references(ws_element: etree._Element, at_col: int, delta: i
         sqref = cf_elm.get("sqref")
         if sqref:
             cf_elm.set("sqref", shift_sqref_cols(sqref, at_col, delta))
+
+    _shift_hyperlinks_and_validations(ws_element, at_col, delta, cols=True)
 
 
 def shift_table_parts(worksheet, at_row: int, delta: int) -> None:
@@ -202,3 +256,135 @@ def shift_col_dimensions(ws_element: etree._Element, at_col: int, delta: int) ->
         new_max = max_c + delta if max_c >= at_excel else max_c
         col_elm.set("min", str(new_min))
         col_elm.set("max", str(new_max))
+
+
+def _unquote_sheet_name(prefix: str) -> str:
+    if prefix.startswith("'") and prefix.endswith("'") and len(prefix) >= 2:
+        return prefix[1:-1].replace("''", "'")
+    return prefix
+
+
+def _sheet_prefix_matches(prefix: str, sheet_name: str) -> bool:
+    if ":" in prefix and not (prefix.startswith("'") and prefix.endswith("'")):
+        return False
+    return _unquote_sheet_name(prefix) == sheet_name
+
+
+def _parse_dollar_cell(token: str) -> tuple[bool, str, bool, int] | None:
+    m = _CELL_TOKEN_RE.fullmatch(token)
+    if not m:
+        return None
+    return bool(m.group(1)), m.group(2).upper(), bool(m.group(3)), int(m.group(4))
+
+
+def _format_dollar_cell(abs_col: bool, col: str, abs_row: bool, row: int) -> str:
+    return f"{'$' if abs_col else ''}{col}{'$' if abs_row else ''}{row}"
+
+
+def shift_dollar_ref(ref: str, at_row: int, delta: int) -> str:
+    """Shift rows in an A1 ref, preserving ``$``."""
+    parts = ref.split(":")
+    cells = [_parse_dollar_cell(p) for p in parts]
+    if any(c is None for c in cells):
+        return ref
+    r2 = cells[-1][3]
+    if r2 < at_row:
+        return ref
+    out = []
+    for abs_c, col, abs_r, row in cells:
+        out.append(
+            _format_dollar_cell(abs_c, col, abs_r, shift_row_number(row, at_row, delta))
+        )
+    return ":".join(out)
+
+
+def shift_dollar_ref_cols(ref: str, at_col: int, delta: int) -> str:
+    """Shift columns in an A1 ref, preserving ``$`` (``at_col`` is 0-based)."""
+    parts = ref.split(":")
+    cells = [_parse_dollar_cell(p) for p in parts]
+    if any(c is None for c in cells):
+        return ref
+    c2i = col_to_index(cells[-1][1])
+    if c2i < at_col:
+        return ref
+    out = []
+    for abs_c, col, abs_r, row in cells:
+        new_idx = shift_col_index(col_to_index(col), at_col, delta)
+        out.append(_format_dollar_cell(abs_c, index_to_col(new_idx), abs_r, row))
+    return ":".join(out)
+
+
+def _shift_defined_name_text(
+    text: str,
+    sheet_name: str,
+    local: bool,
+    at: int,
+    delta: int,
+    *,
+    cols: bool,
+) -> str:
+    shifter = shift_dollar_ref_cols if cols else shift_dollar_ref
+
+    def repl_qualified(match: re.Match[str]) -> str:
+        prefix = match.group("sheet")
+        if not _sheet_prefix_matches(prefix, sheet_name):
+            return match.group(0)
+        return f"{prefix}!{shifter(match.group('ref'), at, delta)}"
+
+    text = _QUALIFIED_REF_RE.sub(repl_qualified, text)
+    if not local:
+        return text
+
+    def repl_unqualified(match: re.Match[str]) -> str:
+        return shifter(match.group(0), at, delta)
+
+    out = []
+    last = 0
+    for match in _A1_RANGE_RE.finditer(text):
+        start = match.start()
+        if start > 0 and text[start - 1] == "!":
+            out.append(text[last : match.end()])
+            last = match.end()
+            continue
+        out.append(text[last:start])
+        out.append(repl_unqualified(match))
+        last = match.end()
+    out.append(text[last:])
+    return "".join(out)
+
+
+def _sheet_index(workbook, sheet_name: str) -> int:
+    names = list(workbook.sheetnames)
+    return names.index(sheet_name)
+
+
+def shift_defined_names(workbook, sheet_name: str, at_row: int, delta: int) -> None:
+    """Shift A1 rows in definedNames that refer to ``sheet_name``."""
+    _shift_defined_names(workbook, sheet_name, at_row, delta, cols=False)
+
+
+def shift_defined_names_cols(workbook, sheet_name: str, at_col: int, delta: int) -> None:
+    """Shift A1 columns in definedNames that refer to ``sheet_name``."""
+    _shift_defined_names(workbook, sheet_name, at_col, delta, cols=True)
+
+
+def _shift_defined_names(
+    workbook, sheet_name: str, at: int, delta: int, *, cols: bool
+) -> None:
+    wb_elm = workbook._workbook_part.element
+    block = wb_elm.find(_DEFINED_NAMES)
+    if block is None:
+        return
+    try:
+        index = _sheet_index(workbook, sheet_name)
+    except ValueError:
+        return
+    for elm in block.findall(_DEFINED_NAME):
+        local_id = elm.get("localSheetId")
+        local = local_id is not None and int(local_id) == index
+        text = elm.text
+        if not text:
+            continue
+        elm.text = _shift_defined_name_text(
+            text, sheet_name, local, at, delta, cols=cols
+        )

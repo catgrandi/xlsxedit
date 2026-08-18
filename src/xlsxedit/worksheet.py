@@ -35,6 +35,8 @@ from xlsxedit.drawing import (
 )
 from xlsxedit.row_shift import (
     shift_col_dimensions,
+    shift_defined_names,
+    shift_defined_names_cols,
     shift_sheet_col_references,
     shift_sheet_data_cols,
     shift_sheet_data_rows,
@@ -530,10 +532,12 @@ class Worksheet:
             return 0
 
         count = len(row_list)
+        template_merge_bands = self._snapshot_template_row_merges(template_rows)
         sheet_data = self._sheet_data()
         shift_sheet_data_rows(sheet_data, at_row, count)
         shift_sheet_row_references(self._part.element, at_row, count)
         shift_table_parts(self, at_row, count)
+        shift_defined_names(self._workbook, self.name, at_row, count)
         self._invalidate_bulk_indexes()
 
         written = self._write_bulk_rows(
@@ -545,6 +549,7 @@ class Worksheet:
             column_styles=column_styles,
             string_columns=string_columns,
         )
+        self._apply_template_row_merges(at_row, written, template_merge_bands)
         self.update_dimension()
         return written
 
@@ -586,6 +591,7 @@ class Worksheet:
         shift_sheet_col_references(self._part.element, at_col_idx, count)
         shift_table_parts_cols(self, at_col_idx, count)
         shift_col_dimensions(self._part.element, at_col_idx, count)
+        shift_defined_names_cols(self._workbook, self.name, at_col_idx, count)
         self._invalidate_bulk_indexes()
 
         # Transpose column vectors → row tuples for _write_bulk_rows
@@ -731,6 +737,34 @@ class Worksheet:
     @property
     def conditional_formatting(self) -> list[ConditionalFormatting]:
         return iter_conditional_formatting(self)
+
+    def _snapshot_template_row_merges(
+        self, template_rows: int | list[int] | None
+    ) -> list[list[tuple[str, str]]]:
+        """Horizontal merge (c1, c2) pairs per template row, before insert shift."""
+        row_nums = normalize_template_rows(template_rows)
+        if not row_nums:
+            return []
+        by_row: dict[int, list[tuple[str, str]]] = {n: [] for n in row_nums}
+        for ref in self.merged_ranges:
+            c1, r1, c2, r2 = parse_range(ref)
+            if r1 == r2 and r1 in by_row and c1 != c2:
+                by_row[r1].append((c1, c2))
+        return [by_row[n] for n in row_nums]
+
+    def _apply_template_row_merges(
+        self,
+        at_row: int,
+        written: int,
+        bands: list[list[tuple[str, str]]],
+    ) -> None:
+        if not bands or written <= 0:
+            return
+        n_templates = len(bands)
+        for offset in range(written):
+            dest = at_row + offset
+            for c1, c2 in bands[offset % n_templates]:
+                self.merge_cells(f"{join_address(c1, dest)}:{join_address(c2, dest)}")
 
     def merge_cells(self, cell_range: str) -> None:
         """Merge cells in ``cell_range`` (e.g. ``A1:C1``)."""
