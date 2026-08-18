@@ -6,6 +6,7 @@ import mimetypes
 from copy import deepcopy
 from datetime import date, datetime
 from pathlib import Path
+from typing import BinaryIO
 
 from lxml import etree
 
@@ -87,12 +88,13 @@ class Workbook:
     """An open workbook.
 
     ``Workbook()`` or :meth:`create` — blank workbook from the bundled template.
-    ``Workbook(path)`` or :meth:`open` — open an existing ``.xlsx`` or OPC folder.
+    ``Workbook(path)`` or :meth:`open` — open an existing ``.xlsx``, OPC folder,
+    or binary file-like (e.g. ``BytesIO``).
     """
 
     def __init__(
         self,
-        path_or_package: str | Path | OpcPackage | None = None,
+        path_or_package: str | Path | BinaryIO | OpcPackage | None = None,
         *,
         large: bool = False,
     ):
@@ -131,8 +133,12 @@ class Workbook:
         self._sheets_by_name = {ws.name: ws for ws in self._sheets}
 
     @classmethod
-    def open(cls, path, *, large: bool = False) -> Workbook:
-        """Open an ``.xlsx`` file or an unpacked OPC directory.
+    def open(cls, path: str | Path | BinaryIO, *, large: bool = False) -> Workbook:
+        """Open an ``.xlsx`` file, unpacked OPC directory, or binary file-like.
+
+        ``path`` may be a filesystem path, an unpacked package folder, or a
+        binary stream of a complete ``.xlsx`` zip (e.g. ``io.BytesIO``). Streams
+        are not unpacked folders.
 
         Pass ``large=True`` to defer parsing of unaccessed worksheets and build the
         shared-string index on first use (lighter open for huge workbooks).
@@ -144,8 +150,11 @@ class Workbook:
         """Create a new blank workbook from the bundled default template."""
         return cls()
 
-    def save(self, path, *, include_orphans: bool = False) -> None:
-        """Save the workbook."""
+    def save(self, path: str | Path | BinaryIO, *, include_orphans: bool = False) -> None:
+        """Save the workbook to a path or a binary file-like (e.g. ``BytesIO``).
+
+        After ``save(buf)``, use ``buf.getvalue()`` or ``buf.seek(0)`` before reading.
+        """
         self._package.save(path, include_orphans=include_orphans)
 
     def _invalidate_calc_chain(self) -> None:

@@ -14,11 +14,11 @@ Docs: [xlsxedit.jonasruilong.com](https://xlsxedit.jonasruilong.com)
 
 | API | Summary | Notes |
 |-----|---------|-------|
-| `Workbook(path, *, large=False)` | Load an existing `.xlsx` or OPC folder | Same as `Workbook.open(path)` |
-| `Workbook.open(path, *, large=False)` | Load an existing `.xlsx` | Same as `Workbook(path)`; `large=True` for bulk |
+| `Workbook(path, *, large=False)` | Load an existing `.xlsx`, OPC folder, or binary file-like | Same as `Workbook.open(path)` |
+| `Workbook.open(path, *, large=False)` | Load an existing `.xlsx` | Same as `Workbook(path)`; path, unpacked folder, or file-like; `large=True` for bulk |
 | `Workbook()` | New workbook from bundled template | Same as `Workbook.create()` |
 | `Workbook.create()` | New workbook from bundled template | Same as `Workbook()` |
-| `wb.save(path, *, include_orphans=False)` | Write package to disk | |
+| `wb.save(path, *, include_orphans=False)` | Write package to a path or binary file-like |  |
 | `wb[sheet_name]` | Get worksheet by name | `KeyError` if missing |
 | `wb.sheetnames` | List of sheet names | |
 | `wb.worksheets` | List of `Worksheet` objects | |

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import zipfile
 from pathlib import Path
 
@@ -49,3 +50,16 @@ def test_create_save_roundtrip(tmp_path: Path):
     wb2 = Workbook.open(out)
     assert wb2.sheetnames == ["Sheet1"]
     assert list(wb2["Sheet1"].cells) == []
+
+
+def test_bytesio_open_save_roundtrip():
+    wb = Workbook.create()
+    wb["Sheet1"]["A1"].value = "world"
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    wb2 = Workbook.open(io.BytesIO(buf.getvalue()))
+    assert wb2["Sheet1"]["A1"].value == "world"
+
+    wb3 = Workbook(io.BytesIO(buf.getvalue()))
+    assert wb3["Sheet1"]["A1"].value == "world"

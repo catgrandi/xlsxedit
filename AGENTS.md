@@ -21,7 +21,7 @@ wb["Sheet1"]["B5"].value = "direct cell write"
 wb.save("filled.xlsx")
 ```
 
-- **`Workbook.open(path)`** — existing file on disk
+- **`Workbook.open(path)`** — existing file on disk, unpacked OPC folder, or binary file-like (`BytesIO`)
 - **`Workbook.create()`** / **`Workbook()`** — new blank workbook
 - **`replace(old, new, value_type=None)`** — search-and-replace across sheets; use `value_type="number"` / `"date"` for typed cells
 - **Images:** `replace_image(name, path)` or `insert_image_at_placeholder("{logo}", path)` (sizes in **pixels**)
