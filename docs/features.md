@@ -22,7 +22,8 @@ Docs: [xlsxedit.jonasruilong.com](https://xlsxedit.jonasruilong.com)
 | `wb[sheet_name]` | Get worksheet by name | `KeyError` if missing |
 | `wb.sheetnames` | List of sheet names | |
 | `wb.worksheets` | List of `Worksheet` objects | |
-| `wb.add_worksheet(name)` | Add a sheet | |
+| `wb.add_worksheet(name)` | Add a sheet | Blank template |
+| `wb.copy_worksheet(name, new_name)` | Duplicate an existing sheet | Cells, styles, merges, drawings/tables; images shared |
 | `wb.rename_worksheet(old, new)` | Rename a sheet | |
 | `wb.remove_worksheet(name)` | Remove a sheet | Cannot remove last sheet |
 | `wb.replace(old, new, *, value_type=None)` | SAR on all sheets | Substring or whole-cell typed |

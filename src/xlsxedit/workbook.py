@@ -544,6 +544,30 @@ class Workbook:
         self._refresh_sheets()
         return self._sheets_by_name[name]
 
+    def copy_worksheet(self, name: str, new_name: str) -> Worksheet:
+        """Duplicate an existing worksheet (cells, styles, merges, sheet-owned parts)."""
+        from xlsxedit.sheet_clone import clone_sheet_relationships, copy_local_defined_names
+
+        if new_name in self._sheets_by_name:
+            raise DuplicateWorksheetError(f"worksheet {new_name!r} already exists")
+        if name not in self._sheets_by_name:
+            raise WorksheetNotFoundError(f"worksheet {name!r} not found")
+
+        source = self._sheets_by_name[name]
+        source_index = list(self.sheetnames).index(name)
+        element = deepcopy(source._part.element)
+        partname = self._package.next_partname("/xl/worksheets/sheet%d.xml")
+        part = WorksheetPart(partname, source._part.content_type, element, self._package)
+        self._package._add_part(part)
+        clone_sheet_relationships(source._part, part, self)
+
+        r_id = self._workbook_part.relate_to(part, RT.WORKSHEET)
+        sheet_id = self._workbook_part.next_sheet_id()
+        self._workbook_part.append_sheet_element(new_name, sheet_id, r_id)
+        copy_local_defined_names(self, source_index, len(self._sheets))
+        self._refresh_sheets()
+        return self._sheets_by_name[new_name]
+
     def _add_image_to_sheet(
         self,
         ws: Worksheet,
