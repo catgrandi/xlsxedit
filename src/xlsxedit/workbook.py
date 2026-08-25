@@ -172,6 +172,58 @@ class Workbook:
                 self._workbook_part.rels._rels.pop(r_id, None)
         self._package._remove_part(part)
 
+    _CALC_PR = f"{{{SML_NS}}}calcPr"
+    _WB_CHILD_RANK: dict[str, int] = {
+        name: i
+        for i, name in enumerate(
+            (
+                "fileVersion",
+                "fileSharing",
+                "workbookPr",
+                "workbookProtection",
+                "bookViews",
+                "sheets",
+                "functionGroups",
+                "externalReferences",
+                "definedNames",
+                "calcPr",
+                "oleSize",
+                "customWorkbookViews",
+                "pivotCaches",
+                "smartTagPr",
+                "smartTagTypes",
+                "webPublishing",
+                "fileRecoveryPr",
+                "webPublishObjects",
+                "extLst",
+            )
+        )
+    }
+
+    def _workbook_child_insert_index(self, wb_elm: etree._Element, localname: str) -> int:
+        rank = self._WB_CHILD_RANK.get(localname)
+        if rank is None:
+            return len(list(wb_elm))
+        for i, child in enumerate(wb_elm):
+            child_rank = self._WB_CHILD_RANK.get(etree.QName(child).localname)
+            if child_rank is not None and child_rank > rank:
+                return i
+        return len(list(wb_elm))
+
+    def set_full_calc_on_load(self) -> None:
+        """Set ``calcPr/@fullCalcOnLoad`` so Excel recalculates on open.
+
+        Idempotent. Does not evaluate formulas or strip cached ``<v>`` values;
+        Excel (and hosts that honor this flag) refresh formula results after open.
+        If ``calcMode="manual"``, some hosts may ignore ``fullCalcOnLoad``.
+        """
+        wb_elm = self._workbook_part.element
+        calc_pr = wb_elm.find(self._CALC_PR)
+        if calc_pr is None:
+            calc_pr = etree.Element(self._CALC_PR)
+            wb_elm.insert(self._workbook_child_insert_index(wb_elm, "calcPr"), calc_pr)
+        calc_pr.set("fullCalcOnLoad", "1")
+
     def _on_formula_removed(self, worksheet: Worksheet, c_elm) -> None:
         """Bookkeeping after a cell loses its ``<f>`` element.
 
@@ -363,12 +415,18 @@ class Workbook:
         return count
 
     def replace(self, old: str, new, *, value_type: str | None = None) -> int:
-        """Replace ``old`` across all sheets. See :meth:`Worksheet.replace`."""
+        """Replace ``old`` across all sheets. See :meth:`Worksheet.replace`.
+
+        When at least one cell is changed, sets ``calcPr/@fullCalcOnLoad`` so
+        Excel recalculates formulas on open.
+        """
         if not old:
             return 0
         total = 0
         for ws in self._sheets:
             total += self._replace_on_sheet(ws, old, new, value_type=value_type)
+        if total > 0:
+            self.set_full_calc_on_load()
         return total
 
     def find(self, value, *, sheet: str | None = None) -> Cell | None:

@@ -909,8 +909,15 @@ class Worksheet:
         )
 
     def replace(self, old: str, new, *, value_type: str | None = None) -> int:
-        """Replace placeholder text in string cells on this sheet."""
-        return self._workbook._replace_on_sheet(self, old, new, value_type=value_type)
+        """Replace placeholder text in string cells on this sheet.
+
+        When at least one cell is changed, sets ``calcPr/@fullCalcOnLoad`` on
+        the workbook so Excel recalculates formulas on open.
+        """
+        count = self._workbook._replace_on_sheet(self, old, new, value_type=value_type)
+        if count > 0:
+            self._workbook.set_full_calc_on_load()
+        return count
 
     def find(self, value) -> Cell | None:
         """Return the first non-formula cell whose ``value`` equals ``value``, or ``None``."""

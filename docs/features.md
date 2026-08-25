@@ -26,7 +26,8 @@ Docs: [xlsxedit.jonasruilong.com](https://xlsxedit.jonasruilong.com)
 | `wb.copy_worksheet(name, new_name)` | Duplicate an existing sheet | Cells, styles, merges, drawings/tables; images shared |
 | `wb.rename_worksheet(old, new)` | Rename a sheet | |
 | `wb.remove_worksheet(name)` | Remove a sheet | Cannot remove last sheet |
-| `wb.replace(old, new, *, value_type=None)` | SAR on all sheets | Substring or whole-cell typed |
+| `wb.replace(old, new, *, value_type=None)` | SAR on all sheets | Substring or whole-cell typed; sets `fullCalcOnLoad` when any cell changes |
+| `wb.set_full_calc_on_load()` | Request Excel full recalc on open | Sets `calcPr/@fullCalcOnLoad`; use after non-`replace` edits |
 | `wb.find(value, *, sheet=None)` | First cell with exact ``value`` | All sheets if ``sheet`` omitted; skips formulas |
 | `wb.findall(value, *, sheet=None)` | All matching cells as `list[Cell]` | Sheet order, then row-major; `[]` if none |
 | `wb.replace_image(name, image_path)` | Replace picture by drawing name | |
@@ -64,7 +65,7 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | `ws.insert_rows(rows, at_cell, …)` | Insert rows, shift below down | Shifts merges/CF/tables; does **not** rewrite formulas or drawing/chart anchors |
 | `ws.insert_columns(cols, at_col / at_cell, …)` | Insert columns, shift right | ``cols`` = column vectors (top→bottom); same caveats as ``insert_rows`` |
 | `ws.update_dimension()` | Refresh `<dimension>` | Usually automatic |
-| `ws.replace(old, new, *, value_type=None)` | SAR on this sheet only | |
+| `ws.replace(old, new, *, value_type=None)` | SAR on this sheet only | Sets `fullCalcOnLoad` when any cell changes |
 | `ws.find(value)` | First cell with exact ``value`` | Skips formulas; ``None`` if missing |
 | `ws.findall(value)` | All matching cells as `list[Cell]` | `[]` if none |
 | `ws.images` | List of `Picture` | Read existing drawings |
