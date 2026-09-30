@@ -42,3 +42,6 @@ ENV/
 *.xlsx.tmp
 *_tmp.xlsx
 tutorial/output/
+
+# Agent working files (plans, reports) — per global convention
+.agents.local/

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Conventional Commits"
+  short_description: "Write and validate consistent commit messages"
+  default_prompt: "Use $conventional-commits to write and validate a commit message for these changes."

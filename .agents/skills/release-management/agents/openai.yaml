@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release Management"
+  short_description: "Cut, verify, and repair software releases"
+  default_prompt: "Use $release-management to decide the next version and prepare this release."
