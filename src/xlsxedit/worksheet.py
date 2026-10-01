@@ -40,6 +40,7 @@ from xlsxedit.row_shift import (
     check_merges_disjoint,
     check_style_specs,
     check_values_writable,
+    place_cell_in_order,
     plan_insert_columns,
     plan_insert_rows,
     sort_row_cells,
@@ -388,6 +389,16 @@ class Worksheet:
         string_columns = string_columns or set()
         count = 0
         max_width = 0
+        has_merges = bool(self.merged_ranges)
+
+        def writes_cell(address: str) -> bool:
+            """Whether this call also writes ``address`` itself."""
+            col, row = split_address(address)
+            if not 0 <= row - start_row < len(row_list):
+                return False
+            values = row_list[row - start_row]
+            width = len(values) if isinstance(values, (list, tuple)) else 1
+            return 0 <= col_to_index(col) - start_col_idx < width
 
         for offset, row_values in enumerate(row_list):
             row_num = start_row + offset
@@ -435,6 +446,17 @@ class Worksheet:
 
                 if style_index is not None:
                     c_elm.set("s", style_index)
+
+                anchor = self._resolve_write_address(address) if has_merges else address
+                if anchor != address:
+                    # A merge covers this cell: its value goes to the anchor, as with
+                    # ws[address], unless it is None or this call writes the anchor too.
+                    if value is None or writes_cell(anchor):
+                        continue
+                    c_elm = self._bulk_get_or_create_cell(
+                        anchor, self._bulk_ensure_row(split_address(anchor)[1])
+                    )
+                    place_cell_in_order(c_elm)
 
                 write_cell_value(
                     c_elm,

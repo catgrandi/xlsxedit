@@ -1084,3 +1084,126 @@ def test_a_template_merge_overlapping_a_grown_merge_refuses_the_insert():
     with pytest.raises(ValueError, match="overlaps existing 'B5:B9'"):
         ws.insert_rows([["x"]], at_row=6, template_rows=2)
     assert_preserved(before, _saved(wb))
+
+
+# -- values aimed at merged cells ---------------------------------------------
+
+
+def _has_value(ws, address: str) -> bool:
+    c = ws._find_cell_element(address)
+    return c is not None and any(etree.QName(child).localname in ("v", "f", "is") for child in c)
+
+
+@pytest.mark.parametrize("row_styles", [None, [{}], [{"bold": True}, {}]])
+def test_bulk_writes_into_a_grown_merge_go_to_its_anchor(row_styles):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A3"].value = "label"
+    ws.merge_cells("A3:A6")
+    ws.insert_rows([[None, 1], [None, 2]], at_row=5, row_styles=row_styles)
+    assert ws.merged_ranges == ["A3:A8"]
+    assert ws["A3"].value == "label"
+    assert not _has_value(ws, "A5") and not _has_value(ws, "A6")
+    assert (ws["B5"].value, ws["B6"].value) == (1, 2)
+    ws.insert_rows([["relabelled", 3]], at_row=4, row_styles=row_styles)
+    assert ws["A3"].value == "relabelled"
+    assert not _has_value(ws, "A4")
+
+
+def test_insert_columns_into_a_horizontal_merge_writes_its_anchor():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["B2"].value = "title"
+    ws.merge_cells("B2:D2")
+    ws.insert_columns([("top", "inside", "below")], at_col="C")
+    assert ws.merged_ranges == ["B2:E2"]
+    assert (ws["C1"].value, ws["B2"].value, ws["C3"].value) == ("top", "inside", "below")
+    assert not _has_value(ws, "C2")
+
+
+@pytest.mark.parametrize("row_styles", [None, [{}], [{"bold": True}, {}]])
+def test_a_write_that_fills_the_anchor_keeps_its_own_value(row_styles):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws.merge_cells("A10:C10")
+    ws.merge_cells("A11:C11")
+    ws.write_rows([["a", "b", "c"], ["d", None, "f"]], at_row=10, row_styles=row_styles)
+    assert (ws["A10"].value, ws["A11"].value) == ("a", "d")
+    assert not any(_has_value(ws, a) for a in ("B10", "C10", "B11", "C11"))
+
+
+def test_several_values_for_one_outside_anchor_leave_the_last():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A2"].value = "Block"
+    ws.merge_cells("A2:B4")
+    ws.insert_rows([["x", "y"]], at_row=3)
+    assert ws["A2"].value == "y"
+    assert not _has_value(ws, "A3") and not _has_value(ws, "B3")
+
+
+def test_writing_none_at_the_anchor_clears_it_and_drops_covered_values():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A1"].value = "old"
+    ws.merge_cells("A1:B1")
+    ws.write_rows([[None, "x"]], at_row=1)
+    assert ws["A1"].value is None
+    assert not _has_value(ws, "B1")
+
+
+def test_template_row_merges_exist_before_the_new_rows_are_written():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws.merge_cells("A2:C2")
+    ws.insert_rows([["x", "y", "z"]], at_row=6, template_rows=2)
+    assert "A6:C6" in ws.merged_ranges
+    assert ws["A6"].value == "x"
+    assert not _has_value(ws, "B6") and not _has_value(ws, "C6")
+
+
+def test_a_routed_value_creates_the_anchor_in_column_order():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["C1"].value = "right"
+    ws.merge_cells("A1:B4")
+    ws.insert_rows([["x"]], at_row=3)
+    assert ws["A1"].value == "x"
+    assert _cell_order(ws)[0] == ["A1", "C1"]
+
+
+def test_a_routed_anchor_lands_before_a_row_extension():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws.write_rows([[1, None, 3], [4, None, 6]], at_row=1)
+    for row in ws._part.element.iterfind("m:sheetData/m:row", NS):
+        row.append(_xml('<extLst><ext uri="{X}"><xm:f>A1</xm:f></ext></extLst>'))
+    ws.merge_cells("E2:F3")
+    ws.insert_rows([[None, None, None, None, None, "routed"]], at_row=3)
+    assert ws["E2"].value == "routed"  # the anchor of E2:F4, created in row 2
+    row2 = ws._part.element.find("m:sheetData/m:row[@r='2']", NS)
+    assert [etree.QName(child).localname for child in row2] == ["c", "c", "c", "c", "extLst"]
+    assert_valid_package(wb)
+
+
+def test_bulk_writes_route_through_whole_column_and_large_merges():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    _add(ws, '<mergeCells count="2"><mergeCell ref="D:E"/><mergeCell ref="G1:H3000"/></mergeCells>')
+    assert ws._merge_index._large  # neither merge is indexed cell by cell
+    ws.insert_rows([[1, 2, 3, 4, 5, 6, 7, 8]], at_row=3)
+    assert ws.merged_ranges == ["D:E", "G1:H3001"]
+    assert (ws["D1"].value, ws["G1"].value) == (5, 8)
+    assert not any(_has_value(ws, a) for a in ("D3", "E3", "G3", "H3"))
+
+
+@pytest.mark.parametrize("merge", ["H:I", "3:4"])
+def test_whole_column_and_row_merges_work_with_template_rows(merge: str):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws.merge_cells("B1:C1")
+    ws._part.element.find("m:mergeCells", NS).append(_xml(f'<mergeCell ref="{merge}"/>'))
+    ws._invalidate_merge_map()
+    ws.insert_rows([["a", "b"]], at_row=2, template_rows=1)
+    assert "B2:C2" in ws.merged_ranges
+    assert_valid_package(wb)

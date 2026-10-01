@@ -6,6 +6,7 @@ import re
 
 from xlsxedit.exceptions import InvalidRangeError
 from xlsxedit.oxml.address import col_to_index, index_to_col, join_address, split_address
+from xlsxedit.range_set import CellRange
 
 _RANGE_RE = re.compile(
     r"^\$?([A-Za-z]+)\$?(\d+)(?::\$?([A-Za-z]+)\$?(\d+))?$"
@@ -45,37 +46,51 @@ def normalize_range(ref: str) -> str:
 
 
 def ranges_overlap(a: str, b: str) -> bool:
-    ac1, ar1, ac2, ar2 = parse_range(a)
-    bc1, br1, bc2, br2 = parse_range(b)
-    a_c1, a_c2 = col_to_index(ac1), col_to_index(ac2)
-    b_c1, b_c2 = col_to_index(bc1), col_to_index(bc2)
-    if a_c2 < b_c1 or b_c2 < a_c1:
-        return False
-    if ar2 < br1 or br2 < ar1:
-        return False
-    return True
+    """Whether two ``ST_Ref`` areas share a cell (whole columns and rows included)."""
+    return CellRange.parse(a).intersects(CellRange.parse(b))
 
 
 class MergeMap:
-    """Map cell addresses to merge anchor (top-left) cells."""
+    """Map cell addresses to merge anchor (top-left) cells.
+
+    Reads every ``ST_Ref`` form a ``mergeCell`` may use, including whole
+    columns or rows. Merges of up to ``_INDEXED_CELLS`` cells are indexed cell
+    by cell; larger ones are checked by containment.
+    """
+
+    _INDEXED_CELLS = 4096
 
     def __init__(self, refs: list[str]):
         self._refs = refs
         self._anchor_for: dict[str, str] = {}
+        self._large: list[tuple[CellRange, str]] = []
         for ref in refs:
-            anchor = merge_anchor(ref)
-            c1, r1, c2, r2 = parse_range(ref)
-            for ci in range(col_to_index(c1), col_to_index(c2) + 1):
-                for ri in range(r1, r2 + 1):
-                    addr = join_address(index_to_col(ci), ri)
-                    self._anchor_for[addr] = anchor
+            area = CellRange.parse(ref)
+            anchor = join_address(index_to_col(area.min_col - 1), area.min_row)
+            size = (area.max_col - area.min_col + 1) * (area.max_row - area.min_row + 1)
+            if size > self._INDEXED_CELLS:
+                self._large.append((area, anchor))
+                continue
+            for ci in range(area.min_col - 1, area.max_col):
+                for ri in range(area.min_row, area.max_row + 1):
+                    self._anchor_for[join_address(index_to_col(ci), ri)] = anchor
 
     @property
     def refs(self) -> list[str]:
         return list(self._refs)
 
     def anchor_for(self, address: str) -> str | None:
-        return self._anchor_for.get(address.upper() if address else address)
+        if not address:
+            return None
+        anchor = self._anchor_for.get(address.upper())
+        if anchor is not None or not self._large:
+            return anchor
+        try:
+            col, row = split_address(address)
+        except InvalidRangeError:
+            return None
+        col_idx = col_to_index(col) + 1
+        return next((a for area, a in self._large if area.contains(col_idx, row)), None)
 
     def is_anchor(self, address: str) -> bool:
         a = self.anchor_for(address)
