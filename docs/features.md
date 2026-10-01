@@ -68,6 +68,7 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | `ws.replace(old, new, *, value_type=None)` | SAR on this sheet only | Sets `fullCalcOnLoad` when any cell changes |
 | `ws.find(value)` | First cell with exact ``value`` | Skips formulas; ``None`` if missing |
 | `ws.findall(value)` | All matching cells as `list[Cell]` | `[]` if none |
+| `ws.drawing_objects` | Every drawing object as `DrawingObject` | Pictures, charts, shapes, groups, slicers, …; see [Drawing objects](#drawing-objects) |
 | `ws.images` | List of `Picture` | Read existing drawings |
 | `ws.add_image(path, *, anchor, width, height, name, offset_x, offset_y)` | Insert image | Pixel offsets within anchor cell (default 0) |
 | `ws.charts` | List of `Chart` | |
@@ -143,9 +144,11 @@ From `ws.images` or `ws.add_image(...)`.
 | `pic.media_path` | Path inside package, e.g. `xl/media/image1.jpeg` |
 | `pic.replace(image_path)` | Swap image bytes |
 
+`ws.images` lists the pictures that sit directly in top-level two-cell anchors, then those in one-cell anchors, then the rest in document order: pictures inside groups, inside the `mc:Choice` branch of `mc:AlternateContent`, or in absolute anchors. Pictures in an `mc:Fallback` branch are left out; `ws.drawing_objects` has them.
+
 Setting `width` or `height` writes `xdr:spPr/a:xfrm/a:ext` and resizes the anchor. A one-cell or absolute anchor takes the size in `xdr:ext`. A two-cell anchor gets a new bottom-right corner (`xdr:to`), computed from the sheet's column widths and row heights for Excel's default 11-point body font; hidden columns and rows count as zero. Reading the size uses `a:xfrm/a:ext`, then `xdr:ext`, then the two-cell anchor box. Resizing also removes a bare `a:ext` that earlier releases wrote directly under `xdr:spPr`.
 
-A move that would put a corner outside the sheet raises `ValueError`.
+A picture inside a group cannot be moved, offset, or resized, and one with an absolute anchor cannot be moved or offset: those setters raise `ValueError`, as does a move that would put a corner outside the sheet.
 
 Each picture `add_image` creates gets a `cNvPr/@id` unique within the drawing part and a fresh `a16:creationId`.
 
@@ -165,9 +168,29 @@ From `ws.charts` or `ws.add_chart(...)`.
 | `chart.partname` | Chart part path |
 | `chart.set_series_formula(index, formula, worksheet=None)` | Update series range; with `worksheet`, rebuild the series cache from its cells |
 
+`ws.charts` lists the charts that sit directly in top-level two-cell anchors, then the rest in document order: charts in absolute or one-cell anchors, inside groups, or in an `mc:Choice` branch. Other graphic frames, such as chartEx charts, slicers, and timelines, are not in `ws.charts`; `ws.drawing_objects` has them.
+
+`chart.anchor` and the offsets follow the same rules as a picture's. Setting `chart.to_anchor` raises `ValueError` for a chart inside a group or one whose anchor has no `xdr:to`.
+
 A rebuilt series cache has `c:ptCount` equal to the size of the range. A numeric cache (`c:numCache`) holds only numeric cells: blank, text, boolean, and error cells get no `c:pt`, so point indexes can skip. Its `c:formatCode` is the number format of the first numeric cell, and a point whose cell has another format carries that format. A string cache (`c:strCache`) leaves out blank cells.
 
 Each chart `add_chart` creates gets a `cNvPr/@id` unique within the drawing part and a fresh `a16:creationId`.
+
+---
+
+## Drawing objects
+
+From `ws.drawing_objects`: every object of the sheet's drawing in document order, read-only. Group members and both branches of `mc:AlternateContent` are included, around an anchor or inside it.
+
+| API | Summary |
+|-----|---------|
+| `obj.kind` | `"picture"`, `"chart"`, `"chartEx"`, `"slicer"`, `"timeline"`, `"shape"`, `"connector"`, `"group"`, `"contentPart"`, or `"graphicFrame"` for any other graphic frame |
+| `obj.name`, `obj.id` | `cNvPr` name and id |
+| `obj.anchor` | Top-left cell of the enclosing anchor; `""` for an absolute anchor |
+| `obj.anchor_type` | `"twoCellAnchor"`, `"oneCellAnchor"`, or `"absoluteAnchor"` |
+| `obj.alternate` | `"choice"` or `"fallback"` inside `mc:AlternateContent`, else `None` |
+| `obj.group` | The group object it belongs to, else `None` |
+| `obj.element` | The object's XML element, such as `xdr:pic` |
 
 ---
 
