@@ -41,6 +41,28 @@ _BG_COLOR = f"{{{SML_NS}}}bgColor"
 
 _STYLESHEET_ORDER = ORDER["CT_Stylesheet"]
 _XF_ORDER = ORDER["CT_Xf"]
+# CT_Font is an unbounded xsd:choice, so the schema fixes no child order; this
+# is the order Excel writes.
+_FONT_ORDER = (
+    "b",
+    "i",
+    "strike",
+    "condense",
+    "extend",
+    "outline",
+    "shadow",
+    "u",
+    "vertAlign",
+    "sz",
+    "color",
+    "name",
+    "family",
+    "charset",
+    "scheme",
+)
+
+# CT_BooleanProperty val="0"/"false" and CT_UnderlineProperty val="none" switch the property off.
+_OFF = frozenset({"0", "false", "none"})
 
 _BUILTIN_DATE_IDS = frozenset({14, 15, 16, 17, 22, 27, 28, 29, 30, 31, 36, 50, 52, 57})
 _BUILTIN_PERCENT_IDS = frozenset({9, 10})
@@ -108,6 +130,42 @@ class _Pool:
         self._positions[key] = pos
         self.container.set("count", str(len(self.entries)))
         return pos, True
+
+
+def _flag(font: _Element, tag: str) -> bool:
+    elm = font.find(tag)
+    return elm is not None and elm.get("val") not in _OFF
+
+
+def _font_child(font: _Element, tag: str) -> _Element:
+    elm = font.find(tag)
+    if elm is None:
+        elm = etree.Element(tag)
+        insert_ordered(font, elm, _FONT_ORDER)
+    return elm
+
+
+def _set_flag(font: _Element, tag: str, value: bool | None) -> None:
+    if value is None:
+        return
+    elm = font.find(tag)
+    if not value:
+        if elm is not None:
+            font.remove(elm)
+    elif elm is None:
+        insert_ordered(font, etree.Element(tag), _FONT_ORDER)
+    elif elm.get("val") in _OFF:
+        del elm.attrib["val"]
+
+
+def _format_number(value: float) -> str:
+    number = float(value)
+    return str(int(number)) if number.is_integer() else repr(number)
+
+
+def _parse_number(text: str) -> int | float:
+    number = float(text)
+    return int(number) if number.is_integer() else number
 
 
 class Styles:
@@ -197,6 +255,12 @@ class Styles:
             return None
         return self._fills[idx]
 
+    def _xf_font(self, style_index: int | str | None) -> _Element | None:
+        xf = self._xf(style_index)
+        if xf is None:
+            return None
+        return self._font(xf.get("fontId", "0"))
+
     def num_format_id(self, style_index: int | str | None) -> int | None:
         xf = self._xf(style_index)
         if xf is None:
@@ -230,51 +294,33 @@ class Styles:
         return bool(code and "%" in code)
 
     def font_bold(self, style_index: int | str | None) -> bool:
-        xf = self._xf(style_index)
-        if xf is None:
-            return False
-        font = self._font(xf.get("fontId", "0"))
-        return font is not None and font.find(_B) is not None
+        font = self._xf_font(style_index)
+        return font is not None and _flag(font, _B)
 
     def font_italic(self, style_index: int | str | None) -> bool:
-        xf = self._xf(style_index)
-        if xf is None:
-            return False
-        font = self._font(xf.get("fontId", "0"))
-        return font is not None and font.find(_I) is not None
+        font = self._xf_font(style_index)
+        return font is not None and _flag(font, _I)
 
     def font_underline(self, style_index: int | str | None) -> bool:
-        xf = self._xf(style_index)
-        if xf is None:
-            return False
-        font = self._font(xf.get("fontId", "0"))
-        return font is not None and font.find(_U) is not None
+        font = self._xf_font(style_index)
+        return font is not None and _flag(font, _U)
 
-    def font_size(self, style_index: int | str | None) -> int | None:
-        xf = self._xf(style_index)
-        if xf is None:
-            return None
-        font = self._font(xf.get("fontId", "0"))
+    def font_size(self, style_index: int | str | None) -> int | float | None:
+        font = self._xf_font(style_index)
         if font is None:
             return None
         sz = font.find(_SZ)
-        return int(sz.get("val")) if sz is not None else None
+        return _parse_number(sz.get("val")) if sz is not None else None
 
     def font_name(self, style_index: int | str | None) -> str | None:
-        xf = self._xf(style_index)
-        if xf is None:
-            return None
-        font = self._font(xf.get("fontId", "0"))
+        font = self._xf_font(style_index)
         if font is None:
             return None
         name = font.find(_NAME)
         return name.get("val") if name is not None else None
 
     def font_color_rgb(self, style_index: int | str | None) -> str | None:
-        xf = self._xf(style_index)
-        if xf is None:
-            return None
-        font = self._font(xf.get("fontId", "0"))
+        font = self._xf_font(style_index)
         if font is None:
             return None
         color = font.find(_COLOR)
@@ -372,47 +418,40 @@ class Styles:
     def ensure_font(
         self,
         *,
-        bold: bool = False,
-        italic: bool = False,
-        underline: bool = False,
-        size: int = 12,
+        base_font: int = 0,
+        bold: bool | None = None,
+        italic: bool | None = None,
+        underline: bool | None = None,
+        size: float | None = None,
         color_rgb: str | None = None,
         name: str | None = None,
     ) -> int:
-        """Return the id of a font with these properties, reusing an identical one."""
+        """Return the id of font ``base_font`` with the given properties changed.
+
+        ``None`` keeps a property as ``base_font`` has it; ``False`` removes
+        bold, italic or underline. Setting ``name`` drops the theme font
+        ``scheme``, which would otherwise override it. Reuses an identical
+        existing font instead of adding one.
+        """
         fonts_elm = self._element.find(_FONTS) if self._element is not None else None
         if fonts_elm is None or fonts_elm.find(_FONT) is None:
             raise ValueError("styles part has no fonts")
         entries = self._synced(self._font_pool, fonts_elm).entries
-        font = deepcopy(entries[0])
-        for tag in (_B, _I, _U):
-            existing = font.find(tag)
-            if existing is not None:
-                font.remove(existing)
-        if bold:
-            font.insert(0, etree.Element(_B))
-        if italic:
-            font.insert(0, etree.Element(_I))
-        if underline:
-            font.insert(0, etree.Element(_U))
+        base = self._font(base_font)
+        font = deepcopy(base if base is not None else entries[0])
 
-        sz = font.find(_SZ)
-        if sz is None:
-            sz = etree.SubElement(font, _SZ)
-        sz.set("val", str(size))
-
+        _set_flag(font, _B, bold)
+        _set_flag(font, _I, italic)
+        _set_flag(font, _U, underline)
+        if size is not None:
+            _font_child(font, _SZ).set("val", _format_number(size))
         if color_rgb is not None:
-            color = font.find(_COLOR)
-            if color is None:
-                color = etree.SubElement(font, _COLOR)
+            color = _font_child(font, _COLOR)
+            for attr in ("auto", "indexed", "theme", "tint"):
+                color.attrib.pop(attr, None)
             color.set("rgb", normalize_rgb(color_rgb))
-            color.attrib.pop("theme", None)
-
         if name is not None:
-            name_elm = font.find(_NAME)
-            if name_elm is None:
-                name_elm = etree.SubElement(font, _NAME)
-            name_elm.set("val", name)
+            _font_child(font, _NAME).set("val", name)
             scheme = font.find(_SCHEME)
             if scheme is not None:
                 font.remove(scheme)
@@ -492,32 +531,37 @@ class Styles:
         return self._add(self._xf_pool, cell_xfs, new_xf)
 
     def apply_cell_style(self, cell_element: _Element, **style_kwargs: Any) -> None:
+        """Point the cell at an xf built on its current style plus ``style_kwargs``."""
         source = int(cell_element.get("s", "0"))
-        overrides = self._style_kwargs_to_overrides(style_kwargs)
+        overrides = self._style_kwargs_to_overrides(style_kwargs, base_xf=source)
         if not overrides:
             return
         new_idx = self.clone_xf(source, **overrides)
         cell_element.set("s", str(new_idx))
 
-    def _style_kwargs_to_overrides(self, style_kwargs: dict[str, Any]) -> dict[str, Any]:
+    def _style_kwargs_to_overrides(
+        self, style_kwargs: dict[str, Any], *, base_xf: int = 0
+    ) -> dict[str, Any]:
         overrides: dict[str, Any] = {}
 
         if style_kwargs.get("num_format") is not None:
             overrides["numFmtId"] = self.ensure_num_format(style_kwargs["num_format"])
 
-        font_keys = {
-            k: style_kwargs[k]
-            for k in ("bold", "italic", "underline", "font_size", "font_color", "font_name")
-            if k in style_kwargs and style_kwargs[k] is not None
-        }
-        if font_keys:
+        def flag(key: str) -> bool | None:
+            value = style_kwargs.get(key)
+            return None if value is None else bool(value)
+
+        font_keys = ("bold", "italic", "underline", "font_size", "font_color", "font_name")
+        if any(style_kwargs.get(k) is not None for k in font_keys):
+            xf = self._xf(base_xf)
             overrides["fontId"] = self.ensure_font(
-                bold=bool(font_keys.get("bold")),
-                italic=bool(font_keys.get("italic")),
-                underline=bool(font_keys.get("underline")),
-                size=int(font_keys.get("font_size", 12)),
-                color_rgb=font_keys.get("font_color"),
-                name=font_keys.get("font_name"),
+                base_font=int(xf.get("fontId", "0")) if xf is not None else 0,
+                bold=flag("bold"),
+                italic=flag("italic"),
+                underline=flag("underline"),
+                size=style_kwargs.get("font_size"),
+                color_rgb=style_kwargs.get("font_color"),
+                name=style_kwargs.get("font_name"),
             )
 
         if style_kwargs.get("bg_color") is not None:
@@ -534,8 +578,8 @@ class Styles:
         return overrides
 
     def allocate_cell_style(self, *, base_xf: int = 0, **style_kwargs: Any) -> int:
-        """Create a cellXf index without touching a worksheet cell."""
-        overrides = self._style_kwargs_to_overrides(style_kwargs)
+        """Return a cellXf index for ``base_xf`` plus ``style_kwargs`` without touching a cell."""
+        overrides = self._style_kwargs_to_overrides(style_kwargs, base_xf=base_xf)
         if not overrides:
             return base_xf
         return self.clone_xf(base_xf, **overrides)
@@ -629,7 +673,7 @@ class CellStyle:
         return self._styles.font_underline(self._index) if self._styles else False
 
     @property
-    def font_size(self) -> int | None:
+    def font_size(self) -> int | float | None:
         return self._styles.font_size(self._index) if self._styles else None
 
     @property

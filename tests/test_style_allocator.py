@@ -26,6 +26,15 @@ def _counts(wb: Workbook) -> dict[str, int]:
     }
 
 
+def _font(wb: Workbook, cell) -> etree._Element:
+    xf = _stylesheet(wb).find(f"{_NS}cellXfs")[int(cell.style.style_index)]
+    return _stylesheet(wb).find(f"{_NS}fonts")[int(xf.get("fontId"))]
+
+
+def _local_names(elm: etree._Element) -> list[str]:
+    return [etree.QName(child).localname for child in elm]
+
+
 # --- growth bounds -----------------------------------------------------------
 
 
@@ -181,3 +190,86 @@ def test_recreated_dxfs_restarts_numbering():
     assert added[0].rules[0]._element.get("dxfId") == "0"
     assert stylesheet.find(f"{_NS}dxfs").get("count") == "1"
     assert_valid_package(wb)
+
+
+# --- apply_style builds on the current font ----------------------------------
+
+
+def test_ensure_font_builds_on_the_base_font():
+    stylesheet = etree.fromstring(
+        f'<styleSheet xmlns="{SML_NS}"><fonts count="2">'
+        '<font><sz val="11"/><name val="Calibri"/></font>'
+        '<font><sz val="16"/><color rgb="FFFF0000"/><name val="Arial"/></font></fonts>'
+        "</styleSheet>"
+    )
+    styles = Styles(stylesheet)
+
+    bold = styles.ensure_font(base_font=1, bold=True)
+
+    assert _local_names(styles._fonts[bold]) == ["b", "sz", "color", "name"]
+    assert styles._fonts[bold].find(f"{_NS}name").get("val") == "Arial"
+    assert styles.ensure_font(base_font=1) == 1
+
+
+def test_apply_style_bold_keeps_the_current_font():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    cell = ws["A1"]
+    cell.value = "x"
+    cell.apply_style(font_name="Arial", font_size=16, font_color="FF0000")
+
+    cell.apply_style(bold=True)
+
+    assert cell.style.bold
+    assert cell.style.font_name == "Arial"
+    assert cell.style.font_size == 16
+    assert cell.style.font_color == "FFFF0000"
+    assert_valid_package(wb)
+
+
+def test_apply_style_keeps_family_and_scheme():
+    wb = Workbook.open(INSPECT_FIXTURES["TextSytle"])
+    cell = wb["Sheet1"]["A3"]  # red Calibri 12, family 2, scheme minor
+
+    cell.apply_style(italic=True)
+
+    font = _font(wb, cell)
+    assert _local_names(font) == ["i", "sz", "color", "name", "family", "scheme"]
+    assert cell.style.font_color == "FFFF0000"
+    assert cell.style.font_size == 12
+    assert font.find(f"{_NS}scheme").get("val") == "minor"
+
+
+def test_apply_style_false_turns_a_flag_off():
+    wb = Workbook.open(INSPECT_FIXTURES["TextSytle"])
+    cell = wb["Sheet1"]["A1"]  # bold
+
+    cell.apply_style(bold=False, italic=True)
+
+    assert not cell.style.bold
+    assert cell.style.italic
+    assert cell.style.font_size == 12
+
+
+def test_apply_style_turns_on_a_flag_set_to_false():
+    stylesheet = etree.fromstring(
+        f'<styleSheet xmlns="{SML_NS}"><fonts count="1">'
+        '<font><b val="0"/><sz val="11"/></font></fonts>'
+        '<cellXfs count="1"><xf numFmtId="0" fontId="0"/></cellXfs></styleSheet>'
+    )
+    styles = Styles(stylesheet)
+    assert not styles.font_bold(0)
+
+    xf = styles.allocate_cell_style(bold=True)
+
+    assert styles.font_bold(xf)
+    assert _local_names(styles._fonts[-1]) == ["b", "sz"]
+
+
+def test_fractional_font_size_round_trips():
+    wb = Workbook.create()
+    cell = wb["Sheet1"]["A1"]
+
+    cell.apply_style(font_size=10.5)
+
+    assert cell.style.font_size == 10.5
