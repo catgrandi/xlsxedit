@@ -53,15 +53,18 @@ the files use CRLF in the archive. The hashes are of the committed files.
 
 ## Verify the copy
 
-From the repository root, download the archive, check its hash, and compare
-each file while ignoring line endings:
+From anywhere inside the repository, download the archive into a temporary
+directory, check its hash, and compare each file with the committed copy
+while ignoring line endings:
 
 ```bash
+repo=$(git rev-parse --show-toplevel)
+cd "$(mktemp -d)"
 curl -LO https://ecma-international.org/wp-content/uploads/ECMA-376-4_5th_edition_december_2016.zip
 sha256sum ECMA-376-4_5th_edition_december_2016.zip
 unzip -o ECMA-376-4_5th_edition_december_2016.zip OfficeOpenXML-XMLSchema-Transitional.zip
 unzip -o -d ecma OfficeOpenXML-XMLSchema-Transitional.zip
-for f in schemas/transitional/*.xsd; do diff --strip-trailing-cr "$f" "ecma/${f##*/}"; done
+for f in "$repo"/schemas/transitional/*.xsd; do diff --strip-trailing-cr "$f" "ecma/${f##*/}"; done
 ```
 
 The loop prints nothing when every file matches.
