@@ -15,7 +15,6 @@ from xlsxedit.opc.constants import CT, SML_NS
 from xlsxedit.oxml.parser import parse_xml
 from tests.conftest import BOOK1, INSPECT_FIXTURES
 from tests.preservation import (
-    CONTENT_TYPES,
     CellState,
     PreservationReport,
     assert_preserved,
@@ -64,9 +63,7 @@ def _probe_first_sheet(name: str, value) -> tuple[dict[str, bytes], dict[str, by
 
 def _assert_bytes_kept(before: dict[str, bytes], report: PreservationReport) -> None:
     types = content_types(before)
-    rewritten = {
-        m for m in report.reserialised - {CONTENT_TYPES} if types[m] not in REBUILT_ON_SAVE
-    }
+    rewritten = {m for m in report.reserialised if types.get(m) not in REBUILT_ON_SAVE}
     assert not rewritten, f"re-serialised parts that should keep their bytes: {sorted(rewritten)}"
 
 
@@ -81,8 +78,7 @@ def test_fixture_is_consistent(name: str):
 
 @pytest.mark.parametrize("name", FIXTURES)
 def test_no_edit_save_changes_nothing(name: str):
-    """Not even ``[Content_Types].xml``: rewriting its ``Default`` entries as
-    ``Override``s keeps every part's effective content type."""
+    """Not even ``[Content_Types].xml``, which keeps its bytes."""
     before = read_pkg(FIXTURES[name])
     _assert_bytes_kept(before, assert_preserved(before, Workbook.open(FIXTURES[name])))
 

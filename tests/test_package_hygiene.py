@@ -6,6 +6,7 @@ import io
 import zipfile
 
 import pytest
+from lxml import etree
 
 from xlsxedit import Workbook
 from xlsxedit.opc.constants import CT
@@ -14,7 +15,10 @@ from xlsxedit.opc.packuri import PackURI, encode_partname, is_partname
 from xlsxedit.opc.part import Part
 from xlsxedit.opc.pkgwriter import PackageWriter
 from tests.conftest import BOOK1, INSPECT_FIXTURES
-from tests.preservation import CONTENT_TYPES, content_types, read_pkg
+from tests.preservation import CONTENT_TYPES, assert_preserved, content_types, read_pkg
+
+WORKBOOK = "xl/workbook.xml"
+WORKBOOK_RELS = "xl/_rels/workbook.xml.rels"
 
 
 def _edit(pkg: dict[str, bytes], member: str, old: bytes, new: bytes) -> dict[str, bytes]:
@@ -61,6 +65,31 @@ def test_package_writer_refuses_duplicate_part_names(tmp_path):
     with pytest.raises(ValueError, match="duplicate part names: /xl/media/image1.png"):
         PackageWriter.write(out, OpcPackage().rels, parts)
     assert not out.exists()
+
+
+def test_regenerated_content_types_keep_the_source_defaults():
+    src = INSPECT_FIXTURES["images"]
+    before = read_pkg(src)
+    wb = Workbook.open(src)
+    wb.add_worksheet("New")
+    after = _saved(wb)
+    assert_preserved(
+        before,
+        after,
+        expected_changed={WORKBOOK, WORKBOOK_RELS},
+        expected_added={"xl/worksheets/sheet3.xml"},
+    )
+    root = etree.fromstring(after[CONTENT_TYPES])
+    defaults = [(e.get("Extension"), e.get("ContentType")) for e in root.iterchildren("{*}Default")]
+    assert defaults == [
+        ("jpeg", "image/jpeg"),
+        ("jpg", "image/jpeg"),
+        ("rels", CT.OPC_RELATIONSHIPS),
+        ("xml", CT.XML),
+    ]
+    overridden = {e.get("PartName") for e in root.iterchildren("{*}Override")}
+    assert {"/xl/media/image1.jpeg", "/xl/media/image2.jpg"}.isdisjoint(overridden)
+    assert "/xl/worksheets/sheet3.xml" in overridden
 
 
 def test_part_without_a_declared_content_type_loads_and_saves():
