@@ -221,3 +221,12 @@ def test_alternate_content_is_inserted_where_its_content_goes():
         "AlternateContent",
         "chart",
     ]
+
+
+def test_repeated_children_keep_document_order():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A1"].value = 1
+    first = ws.add_conditional_formatting("A1", operator="greaterThan", formula="0")
+    second = ws.add_conditional_formatting("A1", operator="lessThan", formula="0")
+    assert first._element.getnext() is second._element
