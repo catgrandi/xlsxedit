@@ -37,7 +37,7 @@ Docs: [xlsxedit.jonasruilong.com](https://xlsxedit.jonasruilong.com)
 | `wb.properties` | Core document metadata (`docProps/core.xml`) | `title`, `author`, `subject`, `keywords`, `comments`, `category`, `last_modified_by`, `created`, `modified` |
 | `wb.orphan_partnames` | ZIP members not on relationship graph | Advanced |
 | `wb.shared_strings` | Shared string table (advanced) | |
-| `wb.styles` | Styles part (advanced) | |
+| `wb.styles` | Styles part (advanced) | `effective_xf_index(ws, address)` returns the `cellXfs` index that formats a cell |
 
 `.xlsm` (macro-enabled) and `.xltx` / `.xltm` (template) workbooks open, edit, and save too — the workbook content type is preserved and VBA parts round-trip untouched (no macro inspection or signing).
 
@@ -92,10 +92,10 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | `cell.address` | Cell address | |
 | `cell.worksheet` | Owning worksheet | |
 | `cell.offset(cols=0, rows=0)` | Neighbor cell | e.g. `offset(cols=1, rows=1)` is one right and one down |
-| `cell.style` | `CellStyle` read proxy | bold, colors, fonts, alignment, num format |
-| `cell.apply_style(**kwargs)` | Write style | `bold`, `font_color`, `bg_color`, `font_size`, … |
-| `cell.apply_date_format()` | Apply standard date format | |
-| `cell.apply_number_format(code)` | Apply custom number format | e.g. `"$#,##0.00"` |
+| `cell.style` | `CellStyle` read proxy | Effective style: the cell's own; an empty cell without one takes its row's (row formatted as a whole), else its column's; otherwise the default, as Excel shows it |
+| `cell.apply_style(**kwargs)` | Change only the passed style properties | `bold`, `font_color`, `bg_color`, `font_size`, …; builds on the effective style and keeps the current font's other properties; `False` turns bold/italic/underline off; reuses an identical existing format |
+| `cell.apply_date_format()` | Apply standard date format | Builds on the effective style |
+| `cell.apply_number_format(code)` | Apply custom number format | e.g. `"$#,##0.00"`; builds on the effective style |
 | `cell.hyperlink` | `Hyperlink` proxy | `.url`, `.location`, `.display` |
 | `cell.replace(old, new)` | Substring replace in cell text | |
 | `cell.has_formula` | Whether cell has formula | |
@@ -104,6 +104,8 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 ### CellStyle (read via `cell.style`)
 
 `bold`, `italic`, `underline`, `font_size`, `font_name`, `font_color`, `bg_color`, `horizontal_align`, `vertical_align`, `num_format`, `is_date`, `is_percent`
+
+`font_size` is an `int`, or a `float` for a fractional size such as `10.5`. `font_color` is a `xlsxedit.styles.Color` with `rgb`, `theme`, `tint`, `indexed`, and `auto` fields, or `None` when the font sets no colour; it compares equal to its `rgb` string, so `font_color == "FFFF0000"` works. `bg_color` is the fill's `rgb` string or `None`.
 
 ---
 

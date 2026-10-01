@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any, Iterable, Iterator
 
 from lxml import etree
 
@@ -11,7 +11,6 @@ from xlsxedit.bulk import write_cell_value
 from xlsxedit.bulk_styles import (
     BulkStyleCache,
     merge_style_specs,
-    normalize_style_spec,
     normalize_template_rows,
     validate_style_sources,
 )
@@ -176,18 +175,27 @@ class Worksheet:
         self._cell_index[address] = c_elm
         return c_elm
 
-    def _style_map_for_row(self, row: int) -> dict[int, str]:
-        styles: dict[int, str] = {}
+    def _style_map_for_row(self, row: int, columns: Iterable[int]) -> dict[int, int]:
+        """Effective ``cellXfs`` index of each 0-based column in ``columns`` of ``row``.
+
+        Resolved as :meth:`Styles.effective_xf_index` does. A column whose
+        cell, row and ``<col>`` set no style is left out.
+        """
         row_elm = self._find_row_element(row)
-        if row_elm is None:
-            return styles
-        for c_elm in row_elm.findall(_C):
-            addr = c_elm.get("r")
-            s = c_elm.get("s")
-            if addr is None or s is None:
-                continue
-            col, _ = split_address(addr)
-            styles[col_to_index(col)] = s
+        cells: dict[int, etree._Element] = {}
+        if row_elm is not None:
+            for c_elm in row_elm.findall(_C):
+                addr = c_elm.get("r")
+                if addr is not None:
+                    col, _ = split_address(addr)
+                    cells[col_to_index(col)] = c_elm
+        sheet_data = self._part.element.find(_SHEET_DATA)
+        resolve = self._workbook.styles.resolve_xf_index
+        styles: dict[int, int] = {}
+        for col_idx in columns:
+            xf = resolve(sheet_data, row_elm, cells.get(col_idx), col_idx + 1)
+            if xf is not None:
+                styles[col_idx] = xf
         return styles
 
     def _resolve_write_address(self, address: str) -> str:
@@ -351,9 +359,18 @@ class Worksheet:
         self,
         *,
         template_rows: int | list[int] | None,
-    ) -> list[dict[int, str]]:
+        start_col_idx: int,
+        row_list: list,
+    ) -> list[dict[int, int]]:
         row_nums = normalize_template_rows(template_rows)
-        return [self._style_map_for_row(n) for n in row_nums]
+        if not row_nums:
+            return []
+        width = max(
+            (len(values) if isinstance(values, (list, tuple)) else 1 for values in row_list),
+            default=0,
+        )
+        columns = range(start_col_idx, start_col_idx + width)
+        return [self._style_map_for_row(n, columns) for n in row_nums]
 
     def _write_bulk_rows(
         self,
@@ -373,11 +390,10 @@ class Worksheet:
 
         template_maps = self._resolve_template_style_maps(
             template_rows=template_rows,
+            start_col_idx=start_col_idx,
+            row_list=row_list,
         )
-        styles = self._workbook.styles
-        inline_cache: BulkStyleCache | None = None
-        if row_styles is not None:
-            inline_cache = BulkStyleCache(styles)
+        style_cache = BulkStyleCache(self._workbook.styles)
 
         sst = self.shared_strings
         sst_cache: dict[str, int] = {}
@@ -407,27 +423,17 @@ class Worksheet:
                     else {}
                 )
 
-                style_index: str | None = None
+                idx: int | None = None
                 if row_styles is not None:
-                    merged = merge_style_specs(col_spec, row_spec)
-                    idx = inline_cache.index_for(merged) if inline_cache else None
-                    if idx is not None:
-                        style_index = str(idx)
+                    idx = style_cache.index_for(merge_style_specs(col_spec, row_spec))
                 elif template_maps:
-                    template_s = template_maps[offset % len(template_maps)].get(col_idx)
-                    col_only = normalize_style_spec(col_spec)
-                    if col_only:
-                        base = int(template_s) if template_s is not None else 0
-                        idx = styles.allocate_cell_style(base_xf=base, **col_only)
-                        style_index = str(idx)
-                    elif template_s is not None:
-                        style_index = template_s
+                    template_xf = template_maps[offset % len(template_maps)].get(col_idx)
+                    idx = style_cache.index_for(col_spec, base_xf=template_xf or 0)
+                    if idx is None:
+                        idx = template_xf
                 elif col_spec:
-                    if inline_cache is None:
-                        inline_cache = BulkStyleCache(styles)
-                    idx = inline_cache.index_for(col_spec)
-                    if idx is not None:
-                        style_index = str(idx)
+                    idx = style_cache.index_for(col_spec)
+                style_index = None if idx is None else str(idx)
 
                 if style_index is not None:
                     c_elm.set("s", style_index)

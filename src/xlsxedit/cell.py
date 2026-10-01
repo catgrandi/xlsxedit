@@ -152,11 +152,12 @@ class Cell:
 
     @property
     def style(self) -> CellStyle:
-        return CellStyle(
-            self._worksheet._workbook.styles,
-            self.style_index,
-            self._element,
-        )
+        """Read proxy for the cell's effective style (see ``Styles.effective_xf_index``)."""
+        styles = self._worksheet._workbook.styles
+        index = self.style_index
+        if index is None:
+            index = str(styles._cell_xf_index(self._element))
+        return CellStyle(styles, index, self._element)
 
     @property
     def hyperlink(self) -> Hyperlink:
@@ -189,7 +190,13 @@ class Cell:
         horizontal_align: str | None = None,
         vertical_align: str | None = None,
     ) -> None:
-        """Apply whole-cell font, fill, and alignment via a cloned ``xf``."""
+        """Change only the passed font, fill, and alignment properties of the cell.
+
+        Builds on the cell's effective style (see ``cell.style``): font changes
+        keep the current font's other properties, and ``False`` turns bold,
+        italic or underline off. An identical existing ``xf``, font or fill is
+        reused instead of appending a duplicate.
+        """
         kwargs = {
             "bold": bold,
             "italic": italic,
