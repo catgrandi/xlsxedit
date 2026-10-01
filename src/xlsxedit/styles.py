@@ -11,10 +11,13 @@ from lxml import etree
 from xlsxedit._ooxml_order import ORDER
 from xlsxedit.exceptions import InvalidColorError
 from xlsxedit.opc.constants import SML_NS
+from xlsxedit.oxml.address import col_to_index, join_address, split_address
 from xlsxedit.worksheet_order import insert_ordered, reposition_ordered
 
 if TYPE_CHECKING:
     from lxml.etree import _Element
+
+    from xlsxedit.worksheet import Worksheet
 
 _XF = f"{{{SML_NS}}}xf"
 _NUM_FMT = f"{{{SML_NS}}}numFmt"
@@ -38,6 +41,9 @@ _SCHEME = f"{{{SML_NS}}}scheme"
 _PATTERN_FILL = f"{{{SML_NS}}}patternFill"
 _FG_COLOR = f"{{{SML_NS}}}fgColor"
 _BG_COLOR = f"{{{SML_NS}}}bgColor"
+_COLS = f"{{{SML_NS}}}cols"
+_COL = f"{{{SML_NS}}}col"
+_SHEET_DATA = f"{{{SML_NS}}}sheetData"
 
 _STYLESHEET_ORDER = ORDER["CT_Stylesheet"]
 _XF_ORDER = ORDER["CT_Xf"]
@@ -61,6 +67,7 @@ _FONT_ORDER = (
     "scheme",
 )
 
+_TRUE = frozenset({"1", "true"})
 # CT_BooleanProperty val="0"/"false" and CT_UnderlineProperty val="none" switch the property off.
 _OFF = frozenset({"0", "false", "none"})
 
@@ -261,6 +268,77 @@ class Styles:
             return None
         return self._font(xf.get("fontId", "0"))
 
+    def effective_xf_index(self, worksheet: Worksheet, address: str) -> int:
+        """Return the ``cellXfs`` index that formats the cell at ``address``.
+
+        The cell's own ``s`` wins, and a cell with a value but no ``s`` is in
+        style 0, as Excel shows it. A cell with no ``<c>`` element, or an empty
+        one such as ``ws[address]`` creates, takes the row's ``s`` when the row
+        sets ``customFormat``, then the ``style`` of the ``<col>`` covering
+        its column, then 0.
+        """
+        col, row_num = split_address(address)
+        cell = worksheet._find_cell_element(join_address(col, row_num))
+        row = cell.getparent() if cell is not None else worksheet._find_row_element(row_num)
+        sheet_data = worksheet._part.element.find(_SHEET_DATA)
+        xf = self.resolve_xf_index(sheet_data, row, cell, col_to_index(col) + 1)
+        return 0 if xf is None else xf
+
+    def _cell_xf_index(self, cell_element: _Element) -> int:
+        """:meth:`effective_xf_index` for a ``<c>`` element already in hand."""
+        s = cell_element.get("s")
+        if s is not None:
+            return int(s)
+        if len(cell_element):
+            return 0
+        row = cell_element.getparent()
+        sheet_data = row.getparent() if row is not None else None
+        xf = self.resolve_xf_index(sheet_data, row, cell_element)
+        return 0 if xf is None else xf
+
+    def resolve_xf_index(
+        self,
+        sheet_data: _Element | None,
+        row: _Element | None,
+        cell: _Element | None,
+        column: int | None = None,
+    ) -> int | None:
+        """Return the ``cellXfs`` index a cell takes from itself, its row or its column.
+
+        The element-level form of :meth:`effective_xf_index`. ``sheet_data`` is
+        the worksheet's ``<sheetData>``, ``row`` and ``cell`` the ``<row>`` and
+        ``<c>`` elements (either may be absent) and ``column`` the 1-based
+        column number, read from the cell's ``r`` when omitted. Returns
+        ``None`` when nothing sets a style, including for a cell with a value
+        but no ``s``.
+        """
+        if cell is not None:
+            s = cell.get("s")
+            if s is not None:
+                return int(s)
+            if len(cell):
+                return None
+        if row is not None and row.get("customFormat") in _TRUE:
+            s = row.get("s")
+            if s is not None:
+                return int(s)
+        if sheet_data is None:
+            return None
+        if column is None:
+            address = cell.get("r") if cell is not None else None
+            if not address:
+                return None
+            column = col_to_index(split_address(address)[0]) + 1
+        # CT_Worksheet places every <cols> before <sheetData>.
+        for cols in sheet_data.itersiblings(_COLS, preceding=True):
+            for col in cols.iterchildren(_COL):
+                style = col.get("style")
+                if style is None:
+                    continue
+                if int(col.get("min", "0")) <= column <= int(col.get("max", "0")):
+                    return int(style)
+        return None
+
     def num_format_id(self, style_index: int | str | None) -> int | None:
         xf = self._xf(style_index)
         if xf is None:
@@ -281,7 +359,7 @@ class Styles:
             return False
         if nf_id in _BUILTIN_DATE_IDS:
             return True
-        code = self.format_code(style_index)
+        code = self._num_fmts.get(nf_id)
         return bool(code and _format_code_indicates_date(code))
 
     def is_percent_format(self, style_index: int | str | None) -> bool:
@@ -290,7 +368,7 @@ class Styles:
             return False
         if nf_id in _BUILTIN_PERCENT_IDS:
             return True
-        code = self.format_code(style_index)
+        code = self._num_fmts.get(nf_id)
         return bool(code and "%" in code)
 
     def font_bold(self, style_index: int | str | None) -> bool:
@@ -531,8 +609,8 @@ class Styles:
         return self._add(self._xf_pool, cell_xfs, new_xf)
 
     def apply_cell_style(self, cell_element: _Element, **style_kwargs: Any) -> None:
-        """Point the cell at an xf built on its current style plus ``style_kwargs``."""
-        source = int(cell_element.get("s", "0"))
+        """Point the cell at an xf built on its effective style plus ``style_kwargs``."""
+        source = self._cell_xf_index(cell_element)
         overrides = self._style_kwargs_to_overrides(style_kwargs, base_xf=source)
         if not overrides:
             return
@@ -586,14 +664,16 @@ class Styles:
 
     def apply_num_format(self, cell_element: _Element, format_code: str) -> None:
         nf_id = self.ensure_num_format(format_code)
-        source = int(cell_element.get("s", "0"))
+        source = self._cell_xf_index(cell_element)
         new_idx = self.clone_xf(source, numFmtId=nf_id)
         cell_element.set("s", str(new_idx))
 
     def apply_date_format(self, cell_element: _Element) -> None:
-        if self.is_date_format(cell_element.get("s")):
+        source = self._cell_xf_index(cell_element)
+        if self.is_date_format(source):
+            if cell_element.get("s") is None:
+                cell_element.set("s", str(source))
             return
-        source = int(cell_element.get("s", "0"))
         new_idx = self.clone_xf(source, numFmtId=_BUILTIN_DATE_NUMFMT_ID)
         cell_element.set("s", str(new_idx))
 
