@@ -3,12 +3,15 @@
 ``assert_preserved`` reports exactly which package members an operation changed,
 ``worksheet_diff`` breaks one worksheet's change down to cells, rows and children,
 and ``check_consistency`` enforces the cross-part invariants Excel repairs on open.
+``checking_workbooks`` runs those checks on every workbook the test suite builds
+(``tests/conftest.py``), honouring invariants a test declares with ``waives``.
 Packages are ``read_pkg`` dictionaries of ZIP member name to bytes. Nothing here
 imports pytest, so scripts can reuse the module.
 """
 
 from __future__ import annotations
 
+import functools
 import io
 import os
 import posixpath
@@ -16,6 +19,7 @@ import re
 import zipfile
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import NamedTuple
 from urllib.parse import unquote
@@ -1059,3 +1063,108 @@ def _check_x14_cf(book: _Book) -> None:
                             f"x14:cfRule {rule_id} xm:sqref differs from base sqref "
                             f"{cf.get('sqref')!r}",
                         )
+
+
+def waives(issue: str, *codes: str):
+    """Mark a test whose workbooks still break the invariants ``codes`` until ``issue`` lands.
+
+    The suite guard in ``tests/conftest.py`` tolerates those violations in that
+    test, and fails it once none of them turns up any more, so the mark goes
+    away with the fix. Every parametrisation of a marked test must break them.
+    """
+    unknown = set(codes) - INVARIANTS.keys()
+    if not codes or unknown:
+        raise ValueError(f"waives() needs invariant codes from INVARIANTS, got {codes!r}")
+
+    def mark(test):
+        test.consistency_waivers = {**waived(test), **dict.fromkeys(codes, issue)}
+        return test
+
+    return mark
+
+
+def waived(test) -> dict[str, str]:
+    """``{invariant code: issue}`` that :func:`waives` declared on a test function."""
+    return dict(getattr(test, "consistency_waivers", None) or {})
+
+
+class ConsistencyGuardError(Exception):
+    """Raised by :func:`checking_workbooks`.
+
+    Deliberately not an ``AssertionError``, so ``pytest.raises(AssertionError)``
+    and ``xfail(raises=AssertionError)`` in a test cannot absorb it.
+    """
+
+
+class _Guard:
+    abandoned = False
+
+    def abandon(self) -> None:
+        """Skip the exit checks: the code under test has already failed."""
+        self.abandoned = True
+
+
+@contextmanager
+def checking_workbooks(*, waive: Mapping[str, str] | Iterable[str] = ()):
+    """Run :func:`check_consistency` on every workbook built inside the block.
+
+    ``Workbook.save`` checks the package it wrote (read back from a path or an
+    in-memory buffer; other file objects are left alone). When the block
+    exits, every ``Workbook`` constructed in it is saved to memory and checked
+    again, so workbooks that are never saved are covered too; one that can no
+    longer be saved is skipped. The block yields a guard whose ``abandon()``
+    skips that exit pass, for when the code under test has already failed.
+    ``waive`` holds invariant codes (or :func:`waived` ``{code: issue}``)
+    whose violations are tolerated, but each must turn up at least once: a
+    waiver that matches nothing is stale and fails the block. Failures raise
+    :class:`ConsistencyGuardError`.
+    """
+    from xlsxedit import Workbook
+
+    issues = dict(waive) if isinstance(waive, Mapping) else dict.fromkeys(waive)
+    codes = frozenset(issues)
+    seen: set[str] = set()
+    built: list[Workbook] = []
+    guard = _Guard()
+    original_init, original_save = Workbook.__init__, Workbook.save
+
+    def check(pkg) -> None:
+        try:
+            found = check_consistency(pkg, waive=codes)
+        except AssertionError as exc:
+            raise ConsistencyGuardError(str(exc)) from None
+        seen.update(v.code for v in found)
+
+    @functools.wraps(original_init)
+    def init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        built.append(self)
+
+    @functools.wraps(original_save)
+    def save(self, path, *args, **kwargs):
+        original_save(self, path, *args, **kwargs)
+        if isinstance(path, (str, os.PathLike)):
+            check(read_pkg(path))
+        elif hasattr(path, "getvalue") and hasattr(path, "tell"):
+            check(read_pkg(path.getvalue()[: path.tell()]))
+
+    Workbook.__init__, Workbook.save = init, save
+    try:
+        yield guard
+    finally:
+        Workbook.__init__, Workbook.save = original_init, original_save
+    if guard.abandoned:
+        return
+    for wb in built:
+        buf = io.BytesIO()
+        try:
+            wb.save(buf)
+        except Exception:
+            continue
+        check(buf.getvalue())
+    stale = sorted(codes - seen)
+    if stale:
+        named = ", ".join(f"{c} ({issues[c]})" if issues[c] else c for c in stale)
+        raise ConsistencyGuardError(
+            f"waived invariants are no longer violated: {named}; remove the waiver"
+        )

@@ -2,9 +2,10 @@
 
 The first tests corrupt one fixture member at a time and pin the violation it
 produces. The ``_known_bug`` tests at the end apply an operation that an open
-issue documents as breaking an invariant. Each is a strict xfail naming the
-invariants and the issue that turns them on; when it lands, the test
-XPASSes, so delete the ``_known_bug`` line.
+issue documents as breaking an invariant: each is a strict xfail that also
+waives exactly the invariants it breaks in the suite guard. The issue named
+there turns those invariants on; when it lands, the test XPASSes, then its
+waiver goes stale, so delete the ``_known_bug`` line.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from tests.preservation import (
     check_consistency,
     consistency_violations,
     read_pkg,
+    waives,
     worksheet_members,
 )
 
@@ -73,8 +75,9 @@ def _zip(pkg: dict[str, bytes]) -> io.BytesIO:
 
 
 def _known_bug(issue: str, *codes: str, reason: str):
-    """Strict xfail on the ``codes`` violations that ``issue`` documents."""
-    return pytest.mark.xfail(strict=True, raises=AssertionError, reason=f"{issue}: {reason}")
+    """Strict xfail on the ``codes`` violations ``issue`` documents, waived in the suite guard."""
+    xfail = pytest.mark.xfail(strict=True, raises=AssertionError, reason=f"{issue}: {reason}")
+    return lambda test: xfail(waives(issue, *codes)(test))
 
 
 def _chain(*entries: str) -> bytes:
