@@ -36,3 +36,11 @@ class InvalidImageError(XlsxeditError, ValueError):
 
 class MissingPartError(XlsxeditError, RuntimeError):
     """Raised when a required package part is absent."""
+
+
+class FormulaGroupError(XlsxeditError, ValueError):
+    """Raised when an edit would split a shared, array, or data-table formula."""
+
+
+class DTDForbiddenError(XlsxeditError, ValueError):
+    """Raised when a package's XML declares a DTD (``<!DOCTYPE>``)."""

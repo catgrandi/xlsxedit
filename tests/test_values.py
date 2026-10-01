@@ -38,11 +38,13 @@ def test_values_max_rows():
 
 
 def test_values_formula_cache():
+    from xlsxedit.cell import _ensure_v
+
     wb = Workbook.create()
     ws = wb["Sheet1"]
     ws["A1"].value = 1
-    ws["B1"].value = 42
     ws["B1"].formula = "=A1+1"
+    _ensure_v(ws["B1"]._element).text = "42"
     assert ws["B1"].has_formula
     assert ws.values() == [[1, 42]]
 

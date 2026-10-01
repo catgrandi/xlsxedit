@@ -6,7 +6,9 @@ from xlsxedit.coreprops import CoreProperties
 from xlsxedit.dimensions import ColumnDimension, RowDimension
 from xlsxedit.drawing import Chart, Picture, Table
 from xlsxedit.exceptions import (
+    DTDForbiddenError,
     DuplicateWorksheetError,
+    FormulaGroupError,
     InvalidColorError,
     InvalidImageError,
     InvalidRangeError,
@@ -43,5 +45,7 @@ __all__ = [
     "InvalidColorError",
     "InvalidImageError",
     "MissingPartError",
+    "FormulaGroupError",
+    "DTDForbiddenError",
 ]
 __version__ = "1.0.1"
