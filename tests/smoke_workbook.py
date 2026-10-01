@@ -1,4 +1,8 @@
-"""Build a workbook that exercises every public write API (for manual Excel inspection)."""
+"""Build a workbook that exercises every public write API (for manual Excel inspection).
+
+Run ``python -m tests.smoke_workbook`` to write ``tutorial/output/api_smoke.xlsx`` and
+open it in Excel. ``test_smoke_workbook`` builds the same workbook but saves to ``tmp_path``.
+"""
 
 from __future__ import annotations
 
@@ -161,7 +165,7 @@ def main() -> None:
     wb = build_smoke_workbook()
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     wb.save(OUTPUT)
-    print(f"Saved → {OUTPUT}")
+    print(f"Saved to {OUTPUT}")
     print("Open in Excel to verify visually.")
 
 
