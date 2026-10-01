@@ -434,7 +434,6 @@ def test_insert_columns_inside_a_table_adds_a_table_column():
     check_consistency(wb)
 
 
-@_known_bug("#7", "table-name", reason="add_table reuses displayName Table1")
 def test_add_table_names_each_table_uniquely():
     wb = Workbook.create()
     ws = wb.worksheets[0]

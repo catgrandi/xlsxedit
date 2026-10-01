@@ -1,4 +1,5 @@
-"""Table part integrity: ``write_dataframe`` resizing.
+"""Table part integrity: ``write_dataframe`` resizing, ``add_table`` naming,
+and ``copy_worksheet`` clones.
 
 Every test reads the table parts back from the saved package; the suite guard
 in ``tests/conftest.py`` also runs ``check_consistency`` on every workbook
@@ -7,6 +8,7 @@ built here.
 
 from __future__ import annotations
 
+import re
 import typing
 
 import pytest
@@ -22,7 +24,12 @@ from tests.preservation import assert_preserved, check_consistency, read_pkg
 TABLES = INSPECT_FIXTURES["ChartsAndTables"]
 TABLE = "xl/tables/table1.xml"
 SHEET = "xl/worksheets/sheet3.xml"
+FIXTURE_UID = "{ADEF1FC0-C6FE-3447-9A1E-67E59ED4BB8C}"
 FIXTURE_COLUMNS = [("1", "Item"), ("2", "Price"), ("3", "Quantity")]
+
+_XR_UID = "{http://schemas.microsoft.com/office/spreadsheetml/2014/revision}uid"
+_XR3_UID = "{http://schemas.microsoft.com/office/spreadsheetml/2016/revision3}uid"
+_GUID = re.compile(r"\{[0-9A-F]{8}-[0-9A-F]{4}-4[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}\}")
 
 
 def _sml(localname: str) -> str:
@@ -81,6 +88,15 @@ def _side_by_side() -> Workbook:
     ws.add_table("A1:B3", ["Item", "Qty"], name="Left")
     ws.add_table("D1:E3", ["Day", "N"], name="Right")
     return wb
+
+
+def _add_defined_name(wb: Workbook, name: str) -> None:
+    wb_elm = wb._workbook_part.element
+    block = wb_elm.find(_sml("definedNames"))
+    if block is None:
+        block = etree.Element(_sml("definedNames"))
+        wb_elm.insert(wb._workbook_child_insert_index(wb_elm, "definedNames"), block)
+    etree.SubElement(block, _sml("definedName"), name=name).text = f"'{wb.sheetnames[0]}'!$A$1"
 
 
 # --- write_dataframe ---------------------------------------------------------
@@ -254,3 +270,79 @@ def test_write_dataframe_refuses_a_table_whose_columns_already_disagree(unchecke
         wb.write_dataframe([("Pen", 1.5, 4)], sheet="Table", at_cell="A2", header=False)
     violations = check_consistency(wb, waive={"table-columns"})
     assert [v.detail for v in violations] == ["tableColumns/@count=4 but 3 tableColumn children"]
+
+
+# --- add_table: names and revision uids ---------------------------------------
+
+
+def test_add_table_names_each_table_after_its_workbook_wide_id():
+    wb = Workbook.create()
+    other = wb.add_worksheet("Other")
+    for ws in (wb["Sheet1"], other):
+        _fill(ws, "A1", ["x", "y"], rows=1)
+        ws.add_table("A1:B2", ["x", "y"])
+    tables = _saved_tables(wb)
+    assert [_identity(t) for t in tables.values()] == [
+        ("1", "Table1", "Table1"),
+        ("2", "Table2", "Table2"),
+    ]
+
+
+def test_add_table_default_name_skips_names_in_use():
+    wb = Workbook.open(TABLES)
+    _add_defined_name(wb, "TABLE4")
+    ws = wb.add_worksheet("New")
+    _fill(ws, "A1", ["x", "y"], rows=1)
+    _fill(ws, "D1", ["p", "q"], rows=1)
+    assert ws.add_table("A1:B2", ["x", "y"]).name == "Table3"
+    assert ws.add_table("D1:E2", ["p", "q"]).name == "Table5"
+    new = list(_saved_tables(wb).values())[1:]
+    assert [_identity(t) for t in new] == [("3", "Table3", "Table3"), ("4", "Table5", "Table5")]
+
+
+def test_add_table_gives_each_table_fresh_revision_uids():
+    tables = _saved_tables(_side_by_side())
+    uids = []
+    for table in tables.values():
+        uid = table.get(_XR_UID)
+        assert _GUID.fullmatch(uid)
+        assert table.find(_sml("autoFilter")).get(_XR_UID) == uid  # Excel's convention
+        uids.append(uid)
+    assert len(set(uids)) == 2
+    assert FIXTURE_UID not in uids
+
+
+# --- copy_worksheet ------------------------------------------------------------
+
+
+def test_copy_worksheet_gives_every_cloned_table_its_own_id_name_and_uid():
+    wb = _side_by_side()
+    wb.copy_worksheet("Sheet1", "Copy")
+    tables = list(_saved_tables(wb).values())
+    assert [_identity(t) for t in tables] == [
+        ("1", "Left", "Left"),
+        ("2", "Right", "Right"),
+        ("3", "Table3", "Table3"),
+        ("4", "Table4", "Table4"),
+    ]
+    uids = [t.get(_XR_UID) for t in tables]
+    assert len(set(uids)) == 4
+    for table, uid in zip(tables, uids):
+        assert table.find(_sml("autoFilter")).get(_XR_UID) == uid
+
+
+def test_copy_worksheet_refreshes_the_column_uids_of_a_cloned_table():
+    before = read_pkg(TABLES)
+    wb = Workbook.open(TABLES)
+    wb.copy_worksheet("Table", "Table copy")
+    pkg = read_pkg(wb)
+    assert pkg[TABLE] == before[TABLE]
+    source, clone = (etree.fromstring(pkg[m]) for m in (TABLE, "xl/tables/table2.xml"))
+    assert _identity(clone) == ("3", "Table3", "Table3")
+    assert _summary(clone) == _fixture_table()
+    assert clone.get(_XR_UID) not in (None, FIXTURE_UID)
+    assert clone.find(_sml("autoFilter")).get(_XR_UID) == clone.get(_XR_UID)
+    source_uids = {c.get(_XR3_UID) for c in source.iter(_sml("tableColumn"))}
+    clone_uids = {c.get(_XR3_UID) for c in clone.iter(_sml("tableColumn"))}
+    assert len(clone_uids) == 3
+    assert not source_uids & clone_uids

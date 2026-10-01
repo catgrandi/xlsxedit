@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import mimetypes
+import uuid
 from copy import deepcopy
 from datetime import date, datetime
 from pathlib import Path
@@ -840,14 +841,18 @@ class Workbook:
         if not columns:
             raise ValueError("columns must not be empty")
 
+        used_names, used_ids = _table_names_and_ids(self)
+        table_id = max(used_ids, default=0) + 1
+
         templates = _default_xlsx_path().parent
         table_elm = parse_template_xml((templates / "default-table.xml").read_bytes())
 
-        table_name = name or "Table1"
+        table_name = name or _next_table_name(used_names, table_id)
         disp = display_name or table_name
         table_elm.set("ref", ref)
         table_elm.set("name", table_name)
         table_elm.set("displayName", disp)
+        _refresh_revision_uids(table_elm)
 
         af = table_elm.find(f"{{{SML_NS}}}autoFilter")
         if af is not None:
@@ -864,13 +869,6 @@ class Workbook:
             col_elm.set("id", str(i))
             col_elm.set("name", col_name)
 
-        table_id = 1
-        for sheet in self._sheets:
-            for tbl in sheet.tables:
-                try:
-                    table_id = max(table_id, int(tbl._element.get("id", "0")) + 1)
-                except (TypeError, ValueError):
-                    pass
         table_elm.set("id", str(table_id))
 
         table_partname = self._package.next_partname("/xl/tables/table%d.xml")
@@ -898,8 +896,75 @@ class Workbook:
 _MAX_ROW = 1048576
 _MAX_COL = 16384  # columns A..XFD
 
+_DEFINED_NAMES = f"{{{SML_NS}}}definedNames"
+_DEFINED_NAME = f"{{{SML_NS}}}definedName"
 _TABLE_COLUMNS = f"{{{SML_NS}}}tableColumns"
 _TABLE_COLUMN = f"{{{SML_NS}}}tableColumn"
+
+# xr, xr2 and xr3: Excel's revision uids, which must not repeat across parts.
+_REVISION_NAMESPACES = frozenset(
+    {
+        "http://schemas.microsoft.com/office/spreadsheetml/2014/revision",
+        "http://schemas.microsoft.com/office/spreadsheetml/2015/revision2",
+        "http://schemas.microsoft.com/office/spreadsheetml/2016/revision3",
+    }
+)
+
+
+def _new_revision_uid() -> str:
+    """A fresh revision uid in Excel's ``{GUID}`` form."""
+    return "{" + str(uuid.uuid4()).upper() + "}"
+
+
+def _refresh_revision_uids(root: etree._Element) -> None:
+    """Give every revision ``uid`` attribute in ``root`` a fresh GUID.
+
+    Elements that shared a uid still share one: Excel writes the same uid on
+    a ``<table>`` and its ``<autoFilter>``.
+    """
+    fresh: dict[str, str] = {}
+    for elm in root.iter(etree.Element):
+        for attr, value in list(elm.attrib.items()):
+            qname = etree.QName(attr)
+            if qname.localname == "uid" and qname.namespace in _REVISION_NAMESPACES:
+                elm.set(attr, fresh.setdefault(value.upper(), _new_revision_uid()))
+
+
+def _table_names_and_ids(
+    workbook: Workbook, *, exclude: Part | None = None
+) -> tuple[set[str], set[int]]:
+    """Names in use (casefolded) and table ids across the workbook.
+
+    Names are every table's ``name`` and ``displayName`` plus the defined
+    names, which share their namespace. Every table part in the package is
+    read, so the tables of a sheet still being copied count too.
+    """
+    names: set[str] = set()
+    ids: set[int] = set()
+    for part in workbook._package.get_parts_of_type(CT.TABLE):
+        if part is exclude:
+            continue
+        elm = parse_xml(part.blob)
+        names.update(v.casefold() for v in (elm.get("name"), elm.get("displayName")) if v)
+        table_id = elm.get("id", "")
+        if table_id.isdigit():
+            ids.add(int(table_id))
+    defined = workbook._workbook_part.element.find(_DEFINED_NAMES)
+    if defined is not None:
+        names.update(
+            elm.get("name").casefold()
+            for elm in defined.iterchildren(_DEFINED_NAME)
+            if elm.get("name")
+        )
+    return names, ids
+
+
+def _next_table_name(used: set[str], start: int) -> str:
+    """The first ``TableN`` with ``N >= start`` not in ``used`` (casefolded names)."""
+    n = max(start, 1)
+    while f"table{n}" in used:
+        n += 1
+    return f"Table{n}"
 
 
 def _range_box(ref: str) -> tuple[int, int, int, int]:
