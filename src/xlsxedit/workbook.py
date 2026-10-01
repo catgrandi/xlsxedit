@@ -627,6 +627,7 @@ class Workbook:
         sheet_id = self._workbook_part.next_sheet_id()
         self._workbook_part.append_sheet_element(new_name, sheet_id, r_id)
         copy_local_defined_names(self, source_index, len(self._sheets))
+        self._invalidate_calc_chain()
         self._refresh_sheets()
         return self._sheets_by_name[new_name]
 

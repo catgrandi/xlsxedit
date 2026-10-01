@@ -179,7 +179,7 @@ wb.save("out.xlsx", include_orphans=True)  # keep that cargo
 ```
 
 2. **Removing a worksheet removes what only it reached.**  
-   `remove_worksheet` drops the parts no other relationship chain reaches once the sheet is gone (its drawings, charts, chart styles, tables, …) instead of leaving them as unreachable cargo; parts the workbook or another sheet still reaches, such as a shared image, stay. Pass `keep_unreachable=True` to keep them in the package. It also drops `calcChain.xml`; Excel rebuilds it on open. `docProps/app.xml` is left as it was.
+   `remove_worksheet` drops the parts no other relationship chain reaches once the sheet is gone (its drawings, charts, chart styles, tables, …) instead of leaving them as unreachable cargo; parts the workbook or another sheet still reaches, such as a shared image, stay. Pass `keep_unreachable=True` to keep them in the package. It also drops `calcChain.xml`, as `copy_worksheet` does; Excel rebuilds it on open. `docProps/app.xml` is left as it was.
 
 3. **XML parts we *do* understand are re-serialized when they change.**  
    An edited workbook, worksheet, or sharedStrings part is written from its lxml tree, so whitespace, attribute order, or namespace-declaration placement may differ from the source even outside the nodes you edited. Semantic content for unedited nodes remains. A part whose tree did not change keeps its exact bytes.
