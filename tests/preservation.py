@@ -586,18 +586,23 @@ def _cells(root: etree._Element) -> Iterator[tuple[str, etree._Element]]:
     Addresses are uppercase without ``$``; an unparseable ``r`` is yielded as written.
     """
     for number, row in _rows(root):
-        col = 0
-        for c in row.iterchildren(_C):
-            r = c.get("r")
-            pos = _parse_cell(r)
-            if pos is not None:
-                col = pos[0]
-                yield f"{_col_letters(pos[0])}{pos[1]}", c
-            elif r is not None:
-                yield r, c
-            else:
-                col += 1
-                yield f"{_col_letters(col)}{number}", c
+        yield from _row_cells(number, row)
+
+
+def _row_cells(number: int, row: etree._Element) -> Iterator[tuple[str, etree._Element]]:
+    """:func:`_cells` of one ``<row>``, numbered ``number``."""
+    col = 0
+    for c in row.iterchildren(_C):
+        r = c.get("r")
+        pos = _parse_cell(r)
+        if pos is not None:
+            col = pos[0]
+            yield f"{_col_letters(pos[0])}{pos[1]}", c
+        elif r is not None:
+            yield r, c
+        else:
+            col += 1
+            yield f"{_col_letters(col)}{number}", c
 
 
 INVARIANTS: dict[str, str] = {
@@ -614,6 +619,10 @@ INVARIANTS: dict[str, str] = {
     "grid-bounds": (
         "every row, cell and reference in worksheets and tables parses and lies "
         "within A1:XFD1048576"
+    ),
+    "cell-order": (
+        "rows appear once each in ascending r order within sheetData, and cells once "
+        "each in ascending column order within the row their r names"
     ),
     "table-columns": "tableColumns/@count == number of tableColumn children == ref column width",
     "table-name": "table displayNames are unique workbook-wide (case-insensitively)",
@@ -667,6 +676,7 @@ def consistency_violations(pkg: Package) -> list[Violation]:
         _check_formulas,
         _check_calc_chain,
         _check_grid_bounds,
+        _check_cell_order,
         _check_tables,
         _check_cell_metadata,
         _check_x14_cf,
@@ -956,6 +966,41 @@ def _reference_carriers(root: etree._Element) -> Iterator[etree._Element]:
 def _out_of_grid(value: str) -> list[str]:
     tokens = value.split() or [value]
     return [t for t in tokens if (box := _parse_ref(t)) is None or not _in_grid(box)]
+
+
+def _check_cell_order(book: _Book) -> None:
+    """Rows and cells that grid-bounds reports are left to it."""
+    for sheet in book.worksheets():
+        bad: list[str] = []
+        rows_seen: set[int] = set()
+        last_row = 0
+        for number, row in _rows(book.tree(sheet.member)):
+            if not 1 <= number <= MAX_ROW:
+                continue
+            if number in rows_seen:
+                bad.append(f"row {number} repeated")
+            elif number < last_row:
+                bad.append(f"row {number} after row {last_row}")
+            rows_seen.add(number)
+            last_row = max(last_row, number)
+            cols_seen: set[int] = set()
+            last_col = 0
+            for addr, _c in _row_cells(number, row):
+                pos = _parse_cell(addr)
+                if pos is None or not _in_grid((*pos, *pos)):
+                    continue
+                col, cell_row = pos
+                if cell_row != number:
+                    bad.append(f"{addr} in row {number}")
+                    continue
+                if col in cols_seen:
+                    bad.append(f"{addr} repeated")
+                elif col < last_col:
+                    bad.append(f"{addr} after {_col_letters(last_col)}{number}")
+                cols_seen.add(col)
+                last_col = max(last_col, col)
+        if bad:
+            book.flag("cell-order", sheet.member, f"sheetData out of order: {_summarise(bad)}")
 
 
 def _check_tables(book: _Book) -> None:
