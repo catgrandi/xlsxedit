@@ -1,4 +1,8 @@
-"""Benchmark bulk export (run with BENCH_ROWS=100000 for full scale)."""
+"""Benchmark bulk export.
+
+Deselected by default (see ``addopts`` in pyproject.toml). Run it with
+``pytest -m bench -s``; set ``BENCH_ROWS=100000`` for full scale.
+"""
 
 from __future__ import annotations
 
