@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import mimetypes
 import re
+import uuid
 from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterator
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
 XDR_NS = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 CHART_NS = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+A16_NS = "http://schemas.microsoft.com/office/drawing/2014/main"
 
 _XDR_WSDR = f"{{{XDR_NS}}}wsDr"
 _XDR_TWO_CELL = f"{{{XDR_NS}}}twoCellAnchor"
@@ -81,6 +83,7 @@ _WS_DRAWING = f"{{{SML_NS}}}drawing"
 _TABLE_PARTS = f"{{{SML_NS}}}tableParts"
 _TABLE_PART = f"{{{SML_NS}}}tablePart"
 _A_XFRM = f"{{{A_NS}}}xfrm"
+_A16_CREATION_ID = f"{{{A16_NS}}}creationId"
 _C_FORMAT_CODE = f"{{{CHART_NS}}}formatCode"
 _SHEET_DATA = f"{{{SML_NS}}}sheetData"
 _SHEET_FORMAT_PR = f"{{{SML_NS}}}sheetFormatPr"
@@ -508,6 +511,12 @@ def _cnvpr(obj_elm: _Element) -> _Element | None:
     return None
 
 
+def _iter_cnvpr(root: _Element) -> Iterator[_Element]:
+    for elm in root.iter():
+        if isinstance(elm.tag, str) and elm.tag.endswith("}cNvPr"):
+            yield elm
+
+
 class _AnchoredObject:
     """Cell-anchor geometry shared by :class:`Picture` and :class:`Chart`."""
 
@@ -911,6 +920,21 @@ def ensure_drawing_part(worksheet: Worksheet) -> DrawingPart:
     drawing_elm.set(f"{{{OFFICE_REL_NS}}}id", worksheet._part.relate_to(part, RT.DRAWING))
     insert_worksheet_child(worksheet._part.element, drawing_elm)
     return part
+
+
+def assign_new_object_ids(element: _Element, drawing_root: _Element) -> None:
+    """Give each ``cNvPr`` in ``element`` a fresh id and ``a16:creationId``.
+
+    Ids continue after the largest ``cNvPr/@id`` in ``drawing_root``, which
+    ``element`` is about to join.
+    """
+    ids = [int(cnv.get("id", "")) for cnv in _iter_cnvpr(drawing_root) if cnv.get("id", "").isdigit()]
+    next_id = max(ids, default=1) + 1
+    for cnv in _iter_cnvpr(element):
+        cnv.set("id", str(next_id))
+        next_id += 1
+        for creation_id in cnv.iter(_A16_CREATION_ID):
+            creation_id.set("id", f"{{{str(uuid.uuid4()).upper()}}}")
 
 
 def table_parts_for_worksheet(worksheet: Worksheet) -> list[Table]:

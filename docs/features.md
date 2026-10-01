@@ -124,6 +124,8 @@ Setting `width` or `height` writes `xdr:spPr/a:xfrm/a:ext` and resizes the ancho
 
 A move that would put a corner outside the sheet raises `ValueError`.
 
+Each picture `add_image` creates gets a `cNvPr/@id` unique within the drawing part and a fresh `a16:creationId`.
+
 ---
 
 ## Chart
@@ -141,6 +143,8 @@ From `ws.charts` or `ws.add_chart(...)`.
 | `chart.set_series_formula(index, formula, worksheet=None)` | Update series range; with `worksheet`, rebuild the series cache from its cells |
 
 A rebuilt series cache has `c:ptCount` equal to the size of the range. A numeric cache (`c:numCache`) holds only numeric cells: blank, text, boolean, and error cells get no `c:pt`, so point indexes can skip. Its `c:formatCode` is the number format of the first numeric cell, and a point whose cell has another format carries that format. A string cache (`c:strCache`) leaves out blank cells.
+
+Each chart `add_chart` creates gets a `cNvPr/@id` unique within the drawing part and a fresh `a16:creationId`.
 
 ---
 
