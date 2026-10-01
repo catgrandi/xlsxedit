@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import io
 import warnings
 from pathlib import Path
 
@@ -37,20 +36,6 @@ def _ids(paths: list[Path]) -> list[str]:
     return [p.stem for p in paths]
 
 
-# insert_columns still breaks these consistency invariants on some fixtures
-# (issue #7). The insert_columns test below asserts schema validity,
-# so it opts out of the suite guard and tolerates exactly these codes; every
-# other invariant must still hold. The strict xfails in test_consistency.py
-# report when the bugs are fixed. Remove a code here when its issue lands.
-_KNOWN_STRUCTURAL_BUGS = frozenset({"table-columns"})
-
-
-def _assert_consistent_apart_from_known_bugs(wb: Workbook) -> None:
-    buffer = io.BytesIO()
-    wb.save(buffer)
-    check_consistency(buffer.getvalue(), waive=_KNOWN_STRUCTURAL_BUGS)
-
-
 def test_fixtures_are_found():
     assert len(FIXTURE_PATHS) >= 11
 
@@ -75,12 +60,12 @@ def test_fixture_validates_after_insert_rows(path: Path):
 
 
 @pytest.mark.parametrize("path", FIXTURE_PATHS, ids=_ids(FIXTURE_PATHS))
-def test_fixture_validates_after_insert_columns(path: Path, unchecked_workbooks):
+def test_fixture_validates_after_insert_columns(path: Path):
     wb = Workbook.open(path)
     for ws in wb.worksheets:
         ws.insert_columns([["inserted", 1]], at_col="B")
     assert_valid_package(wb)
-    _assert_consistent_apart_from_known_bugs(wb)
+    check_consistency(wb)
 
 
 @pytest.mark.parametrize("path", FIXTURE_PATHS, ids=_ids(FIXTURE_PATHS))
