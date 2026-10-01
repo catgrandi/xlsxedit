@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import subprocess
+import hashlib
 import zipfile
 from pathlib import Path
 
@@ -14,6 +14,8 @@ TEMPLATES = _default_xlsx_path().parent
 
 # Serialized size of default-bar-chart after parse_template_xml (compact baseline).
 _COMPACT_BAR_CHART_BYTES = 6031
+# SHA-256 of that same compact serialization; line endings of the source file do not matter.
+_COMPACT_BAR_CHART_SHA256 = "fc0226b5c207baf89a1a4f9fa720e970f229432919eccccafad42bdf48fb45f3"
 
 
 def test_parse_template_xml_strips_indentation():
@@ -63,17 +65,14 @@ def test_add_chart_writes_compact_chart_part(tmp_path: Path):
     assert len(chart_blob) < 7000
 
 
-def test_matches_historical_minified_bar_chart_if_available():
-    """Guard against template edits: compact output should match last minified roundtrip."""
-    result = subprocess.run(
-        ["git", "show", "HEAD:src/xlsxedit/templates/default-bar-chart.xml"],
-        capture_output=True,
-        cwd=Path(__file__).resolve().parents[1],
-    )
-    if result.returncode != 0:
-        return
-    historical = serialize_xml(parse_xml(result.stdout))
-    current = serialize_xml(
+def test_bar_chart_template_matches_pinned_digest():
+    """Guard against template edits: compact output must match the minified original.
+
+    The digest was taken from the minified template shipped in 1.0.0, before it was
+    pretty-printed in 39137a0, so it also proves that reformatting changed no content.
+    If you edit ``default-bar-chart.xml`` on purpose, update the digest.
+    """
+    compact = serialize_xml(
         parse_template_xml((TEMPLATES / "default-bar-chart.xml").read_bytes())
     )
-    assert current == historical
+    assert hashlib.sha256(compact).hexdigest() == _COMPACT_BAR_CHART_SHA256
