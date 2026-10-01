@@ -156,6 +156,7 @@ def test_merge_non_anchor_leftover_blanked():
     row2 = ws._ensure_row(2)
     c = etree.SubElement(row2, f"{{{SML_NS}}}c")
     c.set("r", "A2")
+    row2.insert(0, c)  # ahead of B2, in column order
     _ensure_v(c).text = "999"
 
     assert ws.values() == [["v", 1], ["", 2], ["", 3]]

@@ -62,6 +62,12 @@ _MERGE_CELL = f"{{{SML_NS}}}mergeCell"
 _DIMENSION = f"{{{SML_NS}}}dimension"
 
 
+def _column_key(address: str) -> tuple[int, str]:
+    """Sort key for the column of an uppercase cell address (``Z1`` before ``AA1``)."""
+    letters = address.rstrip("0123456789")
+    return len(letters), letters
+
+
 class Worksheet:
     def __init__(self, name: str, part: WorksheetPart, workbook: Workbook):
         self._name = name
@@ -73,6 +79,7 @@ class Worksheet:
         self._bulk_indexes_built = False
         self._row_index: dict[int, etree._Element] = {}
         self._cell_index: dict[str, etree._Element] = {}
+        self._cell_indexed_rows: set[int] = set()
         self._bulk_max_row_num = 0
 
     def __repr__(self) -> str:
@@ -117,62 +124,88 @@ class Worksheet:
         self._bulk_indexes_built = False
         self._row_index.clear()
         self._cell_index.clear()
+        self._cell_indexed_rows.clear()
         self._bulk_max_row_num = 0
 
     def _build_bulk_indexes(self) -> None:
+        """Index rows by number: the one lookup behind both bulk and cell writes.
+
+        A row's cells are indexed when a lookup first reaches that row, so one
+        edit on a large sheet does not index every cell. Lookups check what the
+        index returns and rebuild it when the XML changed underneath, as it
+        does when another ``Worksheet`` proxy of the same part writes.
+        """
         if self._bulk_indexes_built:
             return
         self._row_index.clear()
         self._cell_index.clear()
+        self._cell_indexed_rows.clear()
         max_row = 0
-        sheet_data = self._sheet_data()
-        for row in sheet_data.findall(_ROW):
-            row_num = int(row.get("r", "0"))
+        for row in self._sheet_data().iterchildren(_ROW):
+            row_num = int(row.get("r") or 0)
             if row_num:
                 self._row_index[row_num] = row
                 max_row = max(max_row, row_num)
-            for c_elm in row.findall(_C):
-                addr = c_elm.get("r")
-                if addr:
-                    self._cell_index[addr.upper()] = c_elm
         self._bulk_max_row_num = max_row
         self._bulk_indexes_built = True
 
+    def _index_row_cells(self, row_num: int, row_elm: etree._Element) -> None:
+        if row_num in self._cell_indexed_rows:
+            return
+        for c_elm in row_elm.iterchildren(_C):
+            addr = c_elm.get("r")
+            if addr:
+                self._cell_index[addr.upper()] = c_elm
+        self._cell_indexed_rows.add(row_num)
+
     def _bulk_ensure_row(self, row_num: int) -> etree._Element:
-        self._build_bulk_indexes()
-        existing = self._row_index.get(row_num)
-        if existing is not None:
-            return existing
-        sheet_data = self._sheet_data()
-        row = etree.Element(_ROW, nsmap={None: SML_NS})
-        row.set("r", str(row_num))
-        # Sequential bulk export appends rows in order — avoid O(n²) scan per row.
-        if row_num > self._bulk_max_row_num:
-            sheet_data.append(row)
-        else:
-            inserted = False
-            for i, child in enumerate(sheet_data):
-                if child.tag != _ROW:
-                    continue
-                existing_num = int(child.get("r", "0"))
-                if existing_num > row_num:
-                    sheet_data.insert(i, row)
-                    inserted = True
-                    break
-            if not inserted:
-                sheet_data.append(row)
-        self._row_index[row_num] = row
-        if row_num > self._bulk_max_row_num:
-            self._bulk_max_row_num = row_num
-        return row
+        return self._ensure_row(row_num)
 
     def _bulk_get_or_create_cell(self, address: str, row_elm: etree._Element) -> etree._Element:
+        """Cell at ``address`` in ``row_elm``, a row that ``_ensure_row`` returned.
+
+        A new cell that sorts after the row's last one is appended without a
+        scan, so left-to-right bulk export stays O(1) per cell.
+        """
         address = address.upper()
         existing = self._cell_index.get(address)
-        if existing is not None:
+        if existing is not None and existing.get("r", "").upper() == address:
             return existing
+        try:
+            last = row_elm[-1]
+        except IndexError:
+            last = None
+        if last is not None:
+            # Addresses in one row share their digits: length, then text, orders columns.
+            r = last.get("r", "")
+            if last.tag != _C or len(r) > len(address) or (len(r) == len(address) and r >= address):
+                return self._insert_cell_element(address, row_elm)
         c_elm = etree.SubElement(row_elm, _C)
         c_elm.set("r", address)
+        self._cell_index[address] = c_elm
+        return c_elm
+
+    def _insert_cell_element(self, address: str, row_elm: etree._Element) -> etree._Element:
+        """Create ``<c r=address>`` in column order in ``row_elm`` and index it.
+
+        A cell already at ``address`` that the index missed is returned instead.
+        """
+        key = _column_key(address)
+        preceding = None
+        for c_elm in row_elm.iterchildren(_C, reversed=True):
+            addr = c_elm.get("r", "").upper()
+            if addr == address:
+                self._cell_index[address] = c_elm
+                return c_elm
+            if _column_key(addr) < key:
+                preceding = c_elm
+                break
+        c_elm = etree.SubElement(row_elm, _C)
+        c_elm.set("r", address)
+        if preceding is not None:
+            preceding.addnext(c_elm)
+        else:
+            row_elm.insert(0, c_elm)
         self._cell_index[address] = c_elm
         return c_elm
 
@@ -203,46 +236,67 @@ class Worksheet:
         return sheet_data
 
     def _find_row_element(self, row_num: int) -> etree._Element | None:
-        for row in self._sheet_data().findall(_ROW):
-            if row.get("r") == str(row_num):
-                return row
-        return None
+        self._build_bulk_indexes()
+        row = self._row_index.get(row_num)
+        if row is not None and int(row.get("r") or 0) != row_num:
+            self._invalidate_bulk_indexes()
+            self._build_bulk_indexes()
+            row = self._row_index.get(row_num)
+        return row
 
     def _find_cell_element(self, address: str) -> etree._Element | None:
-        for row in self._sheet_data().findall(_ROW):
-            for c_elm in row.findall(_C):
-                if c_elm.get("r") == address:
-                    return c_elm
-        return None
+        address = address.upper()
+        _, row_num = split_address(address)
+        row = self._find_row_element(row_num)
+        if row is None:
+            return None
+        self._index_row_cells(row_num, row)
+        c_elm = self._cell_index.get(address)
+        if c_elm is not None and c_elm.get("r", "").upper() != address:
+            self._invalidate_bulk_indexes()
+            return self._find_cell_element(address)
+        return c_elm
 
     def _ensure_row(self, row_num: int) -> etree._Element:
+        """Row ``row_num``, inserted in row order if absent, with its cells indexed."""
+        row = self._find_row_element(row_num)
+        if row is not None:
+            self._index_row_cells(row_num, row)
+            return row
         sheet_data = self._sheet_data()
-        rows = list(sheet_data.findall(_ROW))
-        for row in rows:
-            if row.get("r") == str(row_num):
-                return row
-        row = etree.Element(_ROW, nsmap={None: SML_NS})
+        try:
+            last = sheet_data[-1]
+        except IndexError:
+            last = None
+        following = None
+        # Sequential bulk export appends rows in order — avoid O(n²) scan per row.
+        if row_num <= self._bulk_max_row_num or last is not self._row_index.get(
+            self._bulk_max_row_num
+        ):
+            for child in sheet_data.iterchildren(_ROW):
+                child_num = int(child.get("r") or 0)
+                if child_num == row_num:
+                    self._invalidate_bulk_indexes()
+                    return self._ensure_row(row_num)
+                if child_num > row_num:
+                    following = child
+                    break
+        row = etree.SubElement(sheet_data, _ROW)
         row.set("r", str(row_num))
-        inserted = False
-        for i, existing in enumerate(rows):
-            if int(existing.get("r", "0")) > row_num:
-                sheet_data.insert(i, row)
-                inserted = True
-                break
-        if not inserted:
-            sheet_data.append(row)
+        if following is not None:
+            following.addprevious(row)
+        self._row_index[row_num] = row
+        self._cell_indexed_rows.add(row_num)
+        self._bulk_max_row_num = max(self._bulk_max_row_num, row_num)
         return row
 
     def _get_or_create_cell_element(self, address: str) -> etree._Element:
-        address = self._resolve_write_address(address)
+        address = self._resolve_write_address(address).upper()
         existing = self._find_cell_element(address)
         if existing is not None:
             return existing
-        col, row_num = split_address(address)
-        row_elm = self._ensure_row(row_num)
-        c_elm = etree.SubElement(row_elm, _C)
-        c_elm.set("r", address)
-        return c_elm
+        _, row_num = split_address(address)
+        return self._bulk_get_or_create_cell(address, self._ensure_row(row_num))
 
     def __getitem__(self, address: str) -> Cell:
         return Cell(self._get_or_create_cell_element(address), self)

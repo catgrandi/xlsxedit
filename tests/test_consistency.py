@@ -185,6 +185,34 @@ def test_grid_bounds_in_tables():
     assert "table/@ref 'A1:C1048577'" in _only(pkg, "grid-bounds")
 
 
+@pytest.mark.parametrize(("new", "what"), [(9, "row 3 after row 9"), (3, "row 3 repeated")])
+def test_cell_order_of_rows(new: int, what: str):
+    pkg = _edit(_pkg("SimpleFormula"), SHEET, b'<row r="2" ', f'<row r="{new}" '.encode())
+    for col in "ABC":
+        _edit(pkg, SHEET, f'<c r="{col}2" '.encode(), f'<c r="{col}{new}" '.encode())
+    assert what in _only(pkg, "cell-order")
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "what"),
+    [
+        (b'<c r="A2" ', b'<c r="D2" ', "B2 after D2"),
+        (b'<c r="B2" ', b'<c r="A2" ', "A2 repeated"),
+        (b'<c r="C2" ', b'<c r="C9" ', "C9 in row 2"),
+    ],
+)
+def test_cell_order_within_a_row(old: bytes, new: bytes, what: str):
+    pkg = _edit(_pkg("SimpleFormula"), SHEET, old, new)
+    assert what in _only(pkg, "cell-order")
+
+
+def test_cell_order_numbers_rows_and_cells_without_r():
+    pkg = _edit(_pkg("SimpleFormula"), SHEET, b'<row r="3" ', b"<row ")
+    for col in "ABC":
+        _edit(pkg, SHEET, f'<c r="{col}3"'.encode(), b"<c")
+    assert _codes(pkg) == []
+
+
 def test_table_columns_count_attribute():
     pkg = _edit(
         _pkg("ChartsAndTables"), TABLE, b'<tableColumns count="3">', b'<tableColumns count="4">'
