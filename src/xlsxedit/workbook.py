@@ -173,42 +173,12 @@ class Workbook:
         self._package._remove_part(part)
 
     _CALC_PR = f"{{{SML_NS}}}calcPr"
-    _WB_CHILD_RANK: dict[str, int] = {
-        name: i
-        for i, name in enumerate(
-            (
-                "fileVersion",
-                "fileSharing",
-                "workbookPr",
-                "workbookProtection",
-                "bookViews",
-                "sheets",
-                "functionGroups",
-                "externalReferences",
-                "definedNames",
-                "calcPr",
-                "oleSize",
-                "customWorkbookViews",
-                "pivotCaches",
-                "smartTagPr",
-                "smartTagTypes",
-                "webPublishing",
-                "fileRecoveryPr",
-                "webPublishObjects",
-                "extLst",
-            )
-        )
-    }
 
     def _workbook_child_insert_index(self, wb_elm: etree._Element, localname: str) -> int:
-        rank = self._WB_CHILD_RANK.get(localname)
-        if rank is None:
-            return len(list(wb_elm))
-        for i, child in enumerate(wb_elm):
-            child_rank = self._WB_CHILD_RANK.get(etree.QName(child).localname)
-            if child_rank is not None and child_rank > rank:
-                return i
-        return len(list(wb_elm))
+        from xlsxedit._ooxml_order import ORDER
+        from xlsxedit.worksheet_order import ordered_insert_index
+
+        return ordered_insert_index(wb_elm, localname, ORDER["CT_Workbook"])
 
     def set_full_calc_on_load(self) -> None:
         """Set ``calcPr/@fullCalcOnLoad`` so Excel recalculates on open.
