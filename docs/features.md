@@ -125,7 +125,7 @@ Values aimed at cells that a merge covers follow the rule in [large-data-export.
 
 `bold`, `italic`, `underline`, `font_size`, `font_name`, `font_color`, `bg_color`, `horizontal_align`, `vertical_align`, `num_format`, `is_date`, `is_percent`
 
-`font_size` is an `int`, or a `float` for a fractional size such as `10.5`.
+`font_size` is an `int`, or a `float` for a fractional size such as `10.5`. `font_color` is a `xlsxedit.styles.Color` with `rgb`, `theme`, `tint`, `indexed`, and `auto` fields, or `None` when the font sets no colour; it compares equal to its `rgb` string, so `font_color == "FFFF0000"` works. `bg_color` is the fill's `rgb` string or `None`.
 
 ---
 

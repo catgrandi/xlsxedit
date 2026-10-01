@@ -6,7 +6,7 @@ from lxml import etree
 
 from xlsxedit import Workbook
 from xlsxedit.opc.constants import SML_NS
-from xlsxedit.styles import Styles
+from xlsxedit.styles import Color, Styles
 from tests.conftest import INSPECT_FIXTURES
 from tests.preservation import assert_preserved, read_pkg
 from tests.schema_validate import assert_valid_package
@@ -419,3 +419,43 @@ def test_style_reads_of_an_unstyled_cell_report_the_default_style():
     assert cell.style.font_name == "Calibri"
     assert cell.style.font_size == 12
     assert not cell.style.bold
+
+
+# --- font colour reads -------------------------------------------------------
+
+
+def test_font_color_distinguishes_rgb_and_theme():
+    wb = Workbook.open(INSPECT_FIXTURES["TextSytle"])
+    ws = wb["Sheet1"]
+
+    red = ws["A3"].style.font_color
+    themed = ws["A1"].style.font_color
+
+    assert red == "FFFF0000"
+    assert red == Color(rgb="FFFF0000")
+    assert themed == Color(theme=1)
+    assert themed.rgb is None
+    assert themed != "1"
+
+
+def test_font_color_reads_tint_indexed_and_auto():
+    fonts = (
+        '<font><color theme="4" tint="-0.249977111117893"/></font>'
+        '<font><color indexed="10"/></font>'
+        '<font><color auto="1"/></font>'
+        "<font><sz val=\"11\"/></font>"
+    )
+    xfs = "".join(f'<xf numFmtId="0" fontId="{i}"/>' for i in range(4))
+    styles = Styles(
+        etree.fromstring(
+            f'<styleSheet xmlns="{SML_NS}"><fonts count="4">{fonts}</fonts>'
+            f'<cellXfs count="4">{xfs}</cellXfs></styleSheet>'
+        )
+    )
+
+    assert styles.font_color(0) == Color(theme=4, tint=-0.249977111117893)
+    assert styles.font_color(1) == Color(indexed=10)
+    assert styles.font_color(2) == Color(auto=True)
+    assert styles.font_color(3) is None
+    assert styles.font_color_rgb(0) is None
+    assert {Color(rgb="FF00FF00"), "FF00FF00"} == {"FF00FF00"}
