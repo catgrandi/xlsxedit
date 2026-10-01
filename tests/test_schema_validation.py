@@ -9,9 +9,12 @@ import pytest
 from lxml import etree
 
 from xlsxedit import Workbook
+from xlsxedit.drawing import Chart
 from xlsxedit.opc.constants import OFFICE_REL_NS, SML_NS
+from xlsxedit.oxml.parser import parse_template_xml
 from tests.conftest import ASSETS, FIXTURES
 from tests.schema_validate import (
+    CHART_ALLOWLIST,
     SchemaWarning,
     apply_markup_compatibility,
     assert_valid_package,
@@ -143,19 +146,26 @@ def test_ignorable_extension_content_keeps_ext_valid():
     assert schema_errors(styles) == []
 
 
-def test_known_chart_violation_is_silent():
-    template = (TEMPLATES / "default-bar-chart.xml").read_bytes()
-    errors = schema_errors(template)
-    assert len(errors) == 1
-    assert "showDLblsOverMax" in errors[0]
-
+def _workbook_with_chart() -> tuple[Workbook, Chart]:
     wb = Workbook.create()
     ws = wb["Sheet1"]
     ws["A1"].value = "Day"
     ws["B1"].value = "N"
     ws["A2"].value = "Mon"
     ws["B2"].value = 1
-    ws.add_chart("bar", anchor="D2", data_range="A1:B2", title="T")
+    return wb, ws.add_chart("bar", anchor="D2", data_range="A1:B2", title="T")
+
+
+def test_known_chart_violation_is_rewritten_not_reported():
+    template = parse_template_xml((TEMPLATES / "default-bar-chart.xml").read_bytes())
+    errors = schema_errors(template)
+    assert len(errors) == 1
+    assert "showDLblsOverMax" in errors[0]
+    for _reason, rewrite in CHART_ALLOWLIST:
+        rewrite(template)
+    assert schema_errors(template) == []
+
+    wb, _chart = _workbook_with_chart()
     with warnings.catch_warnings():
         warnings.simplefilter("error", SchemaWarning)
         checked = assert_valid_package(wb)
@@ -163,16 +173,21 @@ def test_known_chart_violation_is_silent():
 
 
 def test_unexpected_chart_violation_warns():
-    wb = Workbook.create()
-    ws = wb["Sheet1"]
-    ws["A1"].value = "Day"
-    ws["B1"].value = "N"
-    ws["A2"].value = "Mon"
-    ws["B2"].value = 1
-    chart = ws.add_chart("bar", anchor="D2", data_range="A1:B2", title="T")
+    wb, chart = _workbook_with_chart()
     root = chart._chart_root()
     chart_elm = root.find(f"{{{_C}}}chart")
     chart_elm.remove(chart_elm.find(f"{{{_C}}}plotArea"))
     chart._save_chart_root(root)
     with pytest.warns(SchemaWarning, match=r"xl/charts/chart1\.xml line \d+: .*plotArea"):
+        assert_valid_package(wb)
+
+
+def test_chart_error_after_the_known_violation_still_warns():
+    """libxml2 reports one content-model error per element, so the known one
+    must not stand in for a later ``c:chart`` error."""
+    wb, chart = _workbook_with_chart()
+    root = chart._chart_root()
+    etree.SubElement(root.find(f"{{{_C}}}chart"), f"{{{_C}}}legend")
+    chart._save_chart_root(root)
+    with pytest.warns(SchemaWarning, match=r"xl/charts/chart1\.xml line \d+: .*legend"):
         assert_valid_package(wb)

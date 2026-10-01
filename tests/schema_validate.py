@@ -7,8 +7,9 @@ imports:
 
 - SpreadsheetML, spreadsheet drawing, and theme parts must be valid.
 - Chart parts only warn with ``SchemaWarning``, because charts that Excel
-  writes are not schema-valid. ``CHART_ALLOWLIST`` names the known Excel
-  violations, which stay silent.
+  writes are not schema-valid. ``CHART_ALLOWLIST`` names each known Excel
+  violation with a rewrite that puts it into schema order before
+  validation, so a known violation neither warns nor hides a later error.
 
 Parts without a schema in the vendored subset (relationships, content types,
 document properties, VML, Microsoft extension parts) are skipped.
@@ -20,6 +21,7 @@ import io
 import re
 import warnings
 import zipfile
+from collections.abc import Callable
 from copy import deepcopy
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
@@ -37,6 +39,7 @@ SCHEMA = Path(__file__).resolve().parents[1] / "schemas" / "transitional" / "sml
 MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 XML_NS = "http://www.w3.org/XML/1998/namespace"
 _CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+_C_NS = "http://schemas.openxmlformats.org/drawingml/2006/chart"
 
 _SPREADSHEETML_CT = re.compile(
     r"application/vnd\.openxmlformats-officedocument\.spreadsheetml\.[\w.]+\+xml"
@@ -56,17 +59,28 @@ _DRAWINGML_KIND = {
     "application/vnd.openxmlformats-officedocument.drawingml.chartshapes+xml": "chart",
 }
 
-# Schema errors that Excel's own chart parts produce, with where they come
-# from. A chart error matching none of these patterns is warned about.
-CHART_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
+
+def _show_dlbls_over_max_before_ext_lst(chart_space: etree._Element) -> None:
+    chart = chart_space.find(f"{{{_C_NS}}}chart")
+    if chart is None:
+        return
+    ext_lst = chart.find(f"{{{_C_NS}}}extLst")
+    show = chart.find(f"{{{_C_NS}}}showDLblsOverMax")
+    if ext_lst is not None and show is not None and chart.index(show) > chart.index(ext_lst):
+        ext_lst.addprevious(show)
+
+
+# Schema violations that Excel writes in its own chart parts, each with where
+# it comes from and the rewrite that puts it into schema order. Rewriting
+# instead of filtering error messages matters: libxml2 reports only the first
+# content-model error in an element, so a filtered message would hide any
+# later error in the same element.
+CHART_ALLOWLIST: tuple[tuple[str, Callable[[etree._Element], None]], ...] = (
     (
-        re.compile(
-            r"\{http://schemas\.openxmlformats\.org/drawingml/2006/chart\}"
-            r"showDLblsOverMax': This element is not expected"
-        ),
         "Excel writes c:extLst before c:showDLblsOverMax in CT_Chart "
         "(fixtures/ChartsAndTables.xlsx, xl/charts/chart1.xml and chart2.xml); "
         "src/xlsxedit/templates/default-bar-chart.xml copies that chart",
+        _show_dlbls_over_max_before_ext_lst,
     ),
 )
 
@@ -74,7 +88,7 @@ _PARSER = etree.XMLParser(resolve_entities=False, no_network=True, huge_tree=Tru
 
 
 class SchemaWarning(UserWarning):
-    """A chart part fails schema validation in a way the allow-list does not explain."""
+    """A chart part fails schema validation after the allow-list rewrites."""
 
 
 @lru_cache(maxsize=1)
@@ -136,15 +150,7 @@ def _strip_ignorable(
         _strip_ignorable(child, ignorable, inside_ext=inside_ext or child_is_ext)
 
 
-def schema_errors(xml: bytes | etree._Element) -> list[str]:
-    """Return the schema errors of one part after Markup Compatibility preprocessing.
-
-    An element argument is copied, not modified.
-    """
-    if isinstance(xml, bytes):
-        root = etree.fromstring(xml, _PARSER)
-    else:
-        root = deepcopy(xml)
+def _validate(root: etree._Element) -> list[str]:
     apply_markup_compatibility(root)
     schema = _schema()
     if schema.validate(root):
@@ -152,8 +158,14 @@ def schema_errors(xml: bytes | etree._Element) -> list[str]:
     return [f"line {error.line}: {error.message}" for error in schema.error_log]
 
 
-def _is_known_chart_violation(error: str) -> bool:
-    return any(pattern.search(error) for pattern, _reason in CHART_ALLOWLIST)
+def schema_errors(xml: bytes | etree._Element) -> list[str]:
+    """Return the schema errors of one part after Markup Compatibility preprocessing.
+
+    An element argument is copied, not modified.
+    """
+    if isinstance(xml, bytes):
+        return _validate(etree.fromstring(xml, _PARSER))
+    return _validate(deepcopy(xml))
 
 
 def _part_kind(content_type: str | None) -> str | None:
@@ -212,13 +224,14 @@ def assert_valid_package(
             if kind is None:
                 continue
             checked[name] = kind
-            errors = schema_errors(package.read(name))
+            root = etree.fromstring(package.read(name), _PARSER)
             if kind != "chart":
-                failures.extend(f"{name} {error}" for error in errors)
+                failures.extend(f"{name} {error}" for error in _validate(root))
                 continue
-            for error in errors:
-                if not _is_known_chart_violation(error):
-                    warnings.warn(f"{name} {error}", SchemaWarning, stacklevel=2)
+            for _reason, rewrite in CHART_ALLOWLIST:
+                rewrite(root)
+            for error in _validate(root):
+                warnings.warn(f"{name} {error}", SchemaWarning, stacklevel=2)
     if failures:
         raise AssertionError("schema-invalid package parts:\n" + "\n".join(failures))
     return checked
