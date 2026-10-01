@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import Counter
+
 from lxml import etree
 
 from xlsxedit.opc.constants import CT, CT_NS
@@ -18,7 +20,13 @@ _DEFAULT_CONTENT_TYPES = {
 class PackageWriter:
     @staticmethod
     def write(pkg_file, pkg_rels, parts) -> None:
+        """Write ``parts`` and their relationships as a ZIP package.
+
+        Raises ``ValueError`` before writing anything if two items would
+        share a name.
+        """
         parts = list(parts)
+        PackageWriter._check_unique_names(parts)
         phys = PhysPkgWriter(pkg_file)
         PackageWriter._write_content_types(phys, parts)
         phys.write(PACKAGE_URI.rels_uri, pkg_rels.xml)
@@ -28,6 +36,18 @@ class PackageWriter:
             if len(part.rels):
                 phys.write(part.partname.rels_uri, part.rels.xml)
         phys.close()
+
+    @staticmethod
+    def _check_unique_names(parts) -> None:
+        """Part names are case-insensitive, so ``/xl/A.xml`` and ``/xl/a.xml`` collide too."""
+        names = [CONTENT_TYPES_URI, PACKAGE_URI.rels_uri]
+        for part in parts:
+            names.append(part.partname)
+            if len(part.rels):
+                names.append(part.partname.rels_uri)
+        duplicates = sorted(n for n, k in Counter(n.lower() for n in names).items() if k > 1)
+        if duplicates:
+            raise ValueError(f"package would contain duplicate part names: {', '.join(duplicates)}")
 
     @staticmethod
     def _write_content_types(phys, parts) -> None:

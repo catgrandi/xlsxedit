@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 from xlsxedit.opc.constants import CT, CT_NS
-from xlsxedit.opc.packuri import CONTENT_TYPES_URI, PACKAGE_URI, PackURI
+from xlsxedit.opc.packuri import (
+    CONTENT_TYPES_URI,
+    PACKAGE_URI,
+    PackURI,
+    encode_partname,
+    is_partname,
+)
 from xlsxedit.opc.phys_pkg import PhysPkgReader
 from xlsxedit.opc.rel import Relationships
 from xlsxedit.oxml.parser import parse_xml
@@ -113,16 +119,28 @@ class PackageReader:
 
     @classmethod
     def _load_orphans(cls, phys, content_types: ContentTypeMap, sparts):
-        related = {partname for partname, *_ in sparts}
+        """Unrelated members, renamed to legal part names (``[trash]/x`` -> ``%5Btrash%5D/x``).
+
+        Part names compare case-insensitively. A member whose name cannot be
+        made legal, or matches a related part or an earlier orphan, is skipped.
+        """
+        members = [m for m in phys.iter_part_membernames() if not _is_bookkeeping_part(m)]
+        legal = {member.lower() for member in members if is_partname(member)}
+        taken = {partname.lower() for partname, *_ in sparts}
         orphans = []
-        for partname in phys.iter_part_membernames():
-            if _is_bookkeeping_part(partname):
+        for member in members:
+            if is_partname(member):
+                partname = member
+            else:
+                encoded = encode_partname(member)
+                if encoded is None or encoded.lower() in legal:
+                    continue
+                partname = PackURI(encoded)
+            if partname.lower() in taken:
                 continue
-            if partname in related:
-                continue
-            blob = phys.blob_for(partname)
-            content_type = content_types.content_type_for(partname)
-            orphans.append((partname, content_type, blob))
+            taken.add(partname.lower())
+            content_type = content_types.content_type_for(member)
+            orphans.append((partname, content_type, phys.blob_for(member)))
         return orphans
 
     @classmethod
