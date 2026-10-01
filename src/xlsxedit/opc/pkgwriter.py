@@ -10,7 +10,7 @@ from xlsxedit.opc.constants import CT, CT_NS
 from xlsxedit.opc.packuri import CONTENT_TYPES_URI, PACKAGE_URI
 from xlsxedit.opc.phys_pkg import PhysPkgWriter
 from xlsxedit.opc.pkgreader import ContentTypeMap
-from xlsxedit.oxml.parser import serialize_xml
+from xlsxedit.opc.serialize import serialize_part_xml
 
 
 class PackageWriter:
@@ -71,4 +71,4 @@ class PackageWriter:
             elm = etree.SubElement(root, f"{{{CT_NS}}}Override")
             elm.set("PartName", str(part.partname))
             elm.set("ContentType", part.content_type)
-        return serialize_xml(root)
+        return serialize_part_xml(root)

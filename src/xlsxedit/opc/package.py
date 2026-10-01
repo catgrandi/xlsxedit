@@ -118,3 +118,6 @@ class Unmarshaller:
             else:
                 target = parts[srel.target_partname]
                 source.load_rel(srel.reltype, target, srel.rId)
+        package.rels.keep_source(pkg_reader.pkg_rels)
+        for partname, _ct, _rt, _blob, srels in pkg_reader.iter_sparts():
+            parts[partname].rels.keep_source(srels)
