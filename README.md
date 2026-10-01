@@ -83,7 +83,7 @@ pip install xlsxedit[pandas]   # optional: ExcelWriter / read_excel engine
 npx skills add jonas-kupferschmid/xlsxedit --skill xlsxedit
 ```
 
-Source: [`.agents/skills/xlsxedit/SKILL.md`](.agents/skills/xlsxedit/SKILL.md)
+Source in this repository: [`.agents/skills/xlsxedit/SKILL.md`](.agents/skills/xlsxedit/SKILL.md)
 
 Development:
 
@@ -226,7 +226,7 @@ The OPC package layer (`src/xlsxedit/opc/**` and `src/xlsxedit/oxml/parser.py`) 
 
 ## License
 
-xlsxedit is licensed under the [Apache License 2.0](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/LICENSE). Portions adapted from python-docx / python-pptx remain under their original MIT license; see [`NOTICE`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/NOTICE) and [`THIRD_PARTY_LICENSES`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/THIRD_PARTY_LICENSES). Contributions are accepted under the [Contributor License Agreement](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/CLA.md) — see [`CONTRIBUTING.md`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/CONTRIBUTING.md).
+xlsxedit is licensed under the [Apache License 2.0](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/LICENSE). Portions adapted from python-docx / python-pptx remain under their original MIT license; see [`NOTICE`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/NOTICE) and [`THIRD_PARTY_LICENSES`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/THIRD_PARTY_LICENSES). Contributions to the upstream project are accepted under its [Contributor License Agreement](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/CLA.md). For how contributions to this fork are handled, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Example projects
 
