@@ -96,10 +96,10 @@ flowchart LR
 ### Save path
 
 1. Collect all loaded parts. Two parts under one name (part names compare case-insensitively) raise `ValueError` before anything is written.
-2. Write `[Content_Types].xml`: its source bytes while they still describe the in-memory parts exactly, otherwise regenerated from them. A regenerated `[Content_Types].xml` keeps the source `Default` entries and adds an `Override` only for a part whose content type differs from its extension’s `Default`. Regenerate each part’s `.rels` from the in-memory graph.
+2. Write `[Content_Types].xml` and each part’s `.rels`: their source bytes while those still describe the in-memory graph exactly, otherwise regenerated from it. A regenerated `[Content_Types].xml` keeps the source `Default` entries and adds an `Override` only for a part whose content type differs from its extension’s `Default`.
 3. Write every part’s `blob`:
    - opaque `Part` → original bytes unchanged
-   - `XmlPart` → re-serialize the live lxml tree
+   - `XmlPart` → original bytes while the live lxml tree is unchanged (never handed out, or serializing exactly as a fresh parse of the original bytes does); otherwise the tree, serialized with Excel’s XML declaration
 4. Produce a new ZIP.
 
 ---
@@ -120,9 +120,8 @@ Everything else (theme, drawings, charts, pivot caches, VBA, slicers, customXml,
 
 So for a text-only replace:
 
-- `styles.xml` and `theme/theme1.xml` typically round-trip **byte-identical** (`StylesPart` keeps the original blob until you change a style).
-- Sheet XML is re-serialized if loaded as `XmlPart`, even when you only changed the SST (attribute order / insignificant whitespace can change; structure and `s` on cells stay unless you edit them).
-- Shared strings XML is re-serialized with your text changes.
+- Every part the replace does not change round-trips **byte-identical**: theme, styles, drawings, untouched sheets, `.rels` items, and `[Content_Types].xml`.
+- Shared strings XML is re-serialized with your text changes, and so is a sheet whose inline strings changed (attribute order / insignificant whitespace can change; structure and `s` on cells stay unless you edit them). The workbook part is re-serialized too, because a replace that changes a cell sets `calcPr/@fullCalcOnLoad`.
 
 ---
 
@@ -150,7 +149,7 @@ That is why formatting survives: style indexes and property XML are left alone.
 | Chart, drawing, image, pivot cache, VBA, slicer, timeline, custom XML part, future Microsoft part | Loaded via the relationship graph → opaque `Part` → **same bytes on save** |
 | New content type you have never registered | Same — default is opaque `Part` |
 | Relationships pointing at those parts | Re-emitted on save from the in-memory graph |
-| Cell style indexes (`s`), column widths, merged-region XML inside a sheet | Left alone by `replace` (sheet may still be re-serialized as XML) |
+| Cell style indexes (`s`), column widths, merged-region XML inside a sheet | Left alone by `replace` (the sheet is re-serialized only if a cell in it changed) |
 
 **Politeness:** do not interpret what you do not understand; do not drop it from the package.
 
@@ -179,11 +178,11 @@ if wb.orphan_partnames:
 wb.save("out.xlsx", include_orphans=True)  # keep that cargo
 ```
 
-2. **XML parts we *do* understand are re-serialized.**  
-   Workbook, worksheets, and sharedStrings may change whitespace, attribute order, or namespace prefixes even when you only change one string. Semantic content for unedited nodes should remain; byte-identity is **not** promised for those parts.
+2. **XML parts we *do* understand are re-serialized when they change.**  
+   An edited workbook, worksheet, or sharedStrings part is written from its lxml tree, so whitespace, attribute order, or namespace-declaration placement may differ from the source even outside the nodes you edited. Semantic content for unedited nodes remains. A part whose tree did not change keeps its exact bytes.
 
-3. **Package bookkeeping is regenerated.**  
-   `.rels` items are rebuilt from the loaded graph. `[Content_Types].xml` keeps its source bytes while it still describes the package and is rebuilt once a part is added or removed. Targets and types are preserved; exact original XML formatting is not. A rebuilt `[Content_Types].xml` keeps the source `Default` entries, adds an `Override` only for a part whose type differs from its extension’s `Default`, and drops entries for parts no longer in the package. Orphans included via `include_orphans=True` get content-type entries when written.
+3. **Package bookkeeping is regenerated when the graph changes.**  
+   `[Content_Types].xml` and each `.rels` item keep their source bytes while they still describe the package; once a part or relationship is added or removed they are rebuilt from the loaded graph. Targets and types are preserved; exact original XML formatting is not. A rebuilt `[Content_Types].xml` keeps the source `Default` entries, adds an `Override` only for a part whose type differs from its extension’s `Default`, and drops entries for parts no longer in the package. Orphans included via `include_orphans=True` get content-type entries when written.
 
 4. **We do not implement every Excel behavior.**  
    Unknown features are preserved as cargo, not edited. `replace` will not search text inside charts, text boxes, headers as drawing text, or pivot caches — only worksheet string cells / SST / inlineStr as documented.
@@ -197,8 +196,8 @@ After open → replace → save on a “fancy” workbook:
 
 | Expect kept | Expect maybe re-serialized | Expect ignored by replace |
 |-------------|----------------------------|---------------------------|
-| Charts, images, theme, styles (byte-identical unless mutated) | `sharedStrings.xml`, worksheets, workbook | Chart titles, comments UI drawing text*, pivots |
-| VBA / customXml / slicers (as blob) | `[Content_Types].xml`, `.rels` | Non-string cell values |
+| Charts, images, theme, styles, untouched sheets (byte-identical) | `sharedStrings.xml`, sheets whose cells changed, workbook | Chart titles, comments UI drawing text*, pivots |
+| VBA / customXml / slicers (as blob), `[Content_Types].xml`, `.rels` | `[Content_Types].xml`, `.rels` only when parts or relationships are added or removed | Non-string cell values |
 | Orphan ZIP members | only if `include_orphans=True` | never edited |
 
 \*Comments and some UI text live in other parts; v1 does not target them.
@@ -211,10 +210,10 @@ After open → replace → save on a “fancy” workbook:
 |--|---------------|----------------|
 | Source of truth | Live package XML / blobs | Python object model |
 | Unknown feature | Opaque part round-trips | Often dropped when writing a model that does not know it |
-| Change one string | Touch SST (and maybe serialize sheet shells) | May rewrite styles / sheets heavily |
+| Change one string | Rewrites the SST (and a sheet only if its cells changed) | May rewrite styles / sheets heavily |
 | Goal | Preserve on-disk fidelity while editing text | Rich authoring API |
 
-Neither approach is “byte-identical ZIP.” The promise here is **semantic preservation of parts we do not edit**, especially unknown ones on the relationship graph.
+Neither approach produces a byte-identical ZIP: the container itself (member order, compression, timestamps) is rewritten. The promise here is that **parts an edit does not change keep their exact bytes**, and that unknown parts on the relationship graph always survive.
 
 ---
 
