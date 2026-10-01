@@ -110,7 +110,7 @@ def test_sheet_with_legacy_drawing_validates_after_edits():
     ws["A5"].value = "link"
     ws["A5"].hyperlink.url = "https://example.com"
     ws.add_image(ASSETS / "coco-happy-swiss-nature.jpg", anchor="F2")
-    ws.add_table("A1:B2", ["Day", "N"], name="T1")
+    ws.add_table("A1:B2", ["Day", "N"], name="Days")
     assert_valid_package(wb)
 
 
