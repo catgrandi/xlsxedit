@@ -273,3 +273,149 @@ def test_fractional_font_size_round_trips():
     cell.apply_style(font_size=10.5)
 
     assert cell.style.font_size == 10.5
+
+
+# --- effective style ---------------------------------------------------------
+
+
+def _styled_xfs(wb: Workbook) -> tuple[int, int, int]:
+    """Three new xfs: yellow fill, blue fill, green fill."""
+    styles = wb.styles
+    return tuple(
+        styles.allocate_cell_style(bg_color=color) for color in ("FFFFFF00", "FF0000FF", "FF00FF00")
+    )
+
+
+def _style_row(ws, row: int, xf: int, *, custom_format: bool = True) -> None:
+    row_elm = ws._ensure_row(row)
+    row_elm.set("s", str(xf))
+    if custom_format:
+        row_elm.set("customFormat", "1")
+
+
+def _style_column(ws, column: int, xf: int) -> None:
+    ws.column_dimensions["A"].width = 12  # creates <cols> in schema position
+    cols = ws._part.element.find(f"{_NS}cols")
+    col = etree.SubElement(cols, f"{_NS}col")
+    col.attrib.update({"min": str(column), "max": str(column), "width": "9", "style": str(xf)})
+
+
+def test_effective_xf_index_resolution_order():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    yellow, blue, green = _styled_xfs(wb)
+    _style_row(ws, 2, yellow)
+    _style_row(ws, 3, blue, custom_format=False)
+    _style_column(ws, 3, green)
+    ws["C2"].apply_style(bold=True)
+    explicit = int(ws["C2"].style_index)
+    effective = wb.styles.effective_xf_index
+
+    assert effective(ws, "C2") == explicit
+    assert effective(ws, "B2") == yellow
+    assert effective(ws, "C3") == green
+    assert effective(ws, "B3") == 0
+    assert effective(ws, "C40") == green
+    assert effective(ws, "Z99") == 0
+
+
+def test_apply_style_builds_on_the_row_style():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    yellow, _, _ = _styled_xfs(wb)
+    _style_row(ws, 5, yellow)
+
+    assert ws["B5"].style.bg_color == "FFFFFF00"
+    ws["B5"].apply_style(bold=True)
+
+    assert ws["B5"].style.bold
+    assert ws["B5"].style.bg_color == "FFFFFF00"
+    assert ws["B5"].style_index is not None
+    assert_valid_package(wb)
+
+
+def test_apply_style_builds_on_the_column_style():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    _, _, green = _styled_xfs(wb)
+    _style_column(ws, 3, green)
+
+    ws["C9"].apply_number_format("0.0")
+    ws["C10"].apply_style(italic=True)
+
+    assert ws["C9"].style.bg_color == "FF00FF00"
+    assert ws["C9"].style.num_format == "0.0"
+    assert ws["C10"].style.italic
+    assert ws["C10"].style.bg_color == "FF00FF00"
+    assert_valid_package(wb)
+
+
+def test_column_styles_follow_inserted_columns():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    yellow, blue, _ = _styled_xfs(wb)
+    _style_column(ws, 2, yellow)
+    assert ws["B1"].style.bg_color == "FFFFFF00"
+
+    ws.insert_columns([[1]], at_col="A")  # shifts the styled <col> to C
+
+    assert ws["B1"].style.bg_color is None
+    assert ws["C1"].style.bg_color == "FFFFFF00"
+
+
+def test_template_rows_carry_row_and_column_styles():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    yellow, _, green = _styled_xfs(wb)
+    _style_row(ws, 2, yellow)
+    _style_column(ws, 3, green)
+    ws["A3"].value = "plain template cell"
+
+    ws.write_rows([("a", 1, 2), ("b", 3, 4)], at_row=10, template_rows=[2, 3])
+
+    assert ws["A10"].style_index == str(yellow)
+    assert ws["C10"].style_index == str(yellow)
+    assert ws["A11"].style_index is None
+    assert ws["C11"].style_index == str(green)
+
+
+def test_a_cell_with_a_value_keeps_style_zero():
+    """Excel shows an allocated cell without ``s`` in style 0, whatever its row or column."""
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    yellow, _, _ = _styled_xfs(wb)
+    date_xf = wb.styles.allocate_cell_style(num_format="yyyy-mm-dd")
+    _style_row(ws, 5, yellow)
+    _style_column(ws, 2, date_xf)
+    ws["C5"].value = "x"
+    ws["B9"].value = 45306
+
+    assert wb.styles.effective_xf_index(ws, "C5") == 0
+    assert ws["B9"].value == 45306
+    ws["C5"].apply_style(bold=True)
+    assert ws["C5"].style.bold
+    assert ws["C5"].style.bg_color is None
+
+
+def test_typed_date_replace_formats_a_cell_in_a_date_column():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    date_xf = wb.styles.allocate_cell_style(num_format="yyyy-mm-dd")
+    _style_column(ws, 2, date_xf)
+    ws["B2"].value = "{ship_date}"
+
+    wb.replace("{ship_date}", "2024-01-15", value_type="date")
+
+    assert ws["B2"].style_index is not None
+    assert ws["B2"].style.is_date
+
+
+def test_style_reads_of_an_unstyled_cell_report_the_default_style():
+    wb = Workbook.open(INSPECT_FIXTURES["TextSytle"])
+    cell = wb["Sheet1"]["A2"]
+
+    assert cell.style_index is None
+    assert cell.style.style_index == "0"
+    assert cell.style.font_name == "Calibri"
+    assert cell.style.font_size == 12
+    assert not cell.style.bold
