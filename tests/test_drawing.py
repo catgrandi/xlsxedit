@@ -1,4 +1,4 @@
-"""Drawing and chart parts: one live tree per part."""
+"""Drawing and chart parts: live trees, picture anchors and sizes."""
 
 from __future__ import annotations
 
@@ -6,11 +6,13 @@ import io
 from pathlib import Path
 
 import pytest
+from lxml import etree
 
 from tests.conftest import INSPECT_FIXTURES
 from tests.preservation import assert_preserved, read_pkg, worksheet_members
+from tests.schema_validate import assert_valid_package
 from xlsxedit import Workbook
-from xlsxedit.drawing import drawing_parts_for_worksheet
+from xlsxedit.drawing import A_NS, EMU_PER_PIXEL, XDR_NS, drawing_parts_for_worksheet
 from xlsxedit.parts import ChartPart, DrawingPart
 
 PNG = (
@@ -18,6 +20,9 @@ PNG = (
     b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00"
     b"\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
 )
+
+_XDR = f"{{{XDR_NS}}}"
+_A = f"{{{A_NS}}}"
 
 
 @pytest.fixture
@@ -31,6 +36,15 @@ def _reopen(wb: Workbook) -> Workbook:
     buf = io.BytesIO()
     wb.save(buf)
     return Workbook.open(io.BytesIO(buf.getvalue()))
+
+
+def _drawing_xml(wb: Workbook, member: str = "xl/drawings/drawing1.xml") -> etree._Element:
+    return etree.fromstring(read_pkg(wb)[member])
+
+
+def _marker(anchor: etree._Element, corner: str) -> tuple[int, int, int, int]:
+    marker = anchor.find(f"{_XDR}{corner}")
+    return tuple(int(marker.findtext(f"{_XDR}{tag}")) for tag in ("col", "colOff", "row", "rowOff"))
 
 
 def _drawing_payload(member: str) -> bool:
@@ -151,3 +165,117 @@ def test_chart_title_edit_changes_only_its_chart_part():
     chart.title = "Renamed"
     assert_preserved(path, wb, expected_changed={chart.partname.lstrip("/")})
     assert _reopen(wb)["bar chart"].charts[0].title == "Renamed"
+
+
+# --- Picture.anchor / resize ------------------------------------------------
+
+
+def test_picture_anchor_translates_two_cell_to():
+    wb = Workbook.open(INSPECT_FIXTURES["images"])
+    pic = wb["Sheet1"].images[0]
+    anchor = pic._anchor
+    assert anchor.tag == f"{_XDR}twoCellAnchor"
+    from_before, to_before = _marker(anchor, "from"), _marker(anchor, "to")
+
+    pic.anchor = "D10"
+
+    anchor = _drawing_xml(_reopen(wb)).find(f"{_XDR}twoCellAnchor")
+    from_after, to_after = _marker(anchor, "from"), _marker(anchor, "to")
+    assert from_after == (3, from_before[1], 9, from_before[3])
+    d_col, d_row = 3 - from_before[0], 9 - from_before[2]
+    assert to_after == (to_before[0] + d_col, to_before[1], to_before[2] + d_row, to_before[3])
+    assert to_after[2] > from_after[2]
+
+
+def test_picture_anchor_outside_the_sheet_raises_and_changes_nothing():
+    wb = Workbook.open(INSPECT_FIXTURES["images"])
+    pic = wb["Sheet1"].images[0]
+    with pytest.raises(ValueError, match="outside the sheet"):
+        pic.anchor = "A1048576"
+    assert pic.anchor == "B1"
+
+
+def test_two_cell_picture_resize_recomputes_to():
+    wb = Workbook.open(INSPECT_FIXTURES["images"])
+    ws = wb["Sheet1"]
+    for col in "BCDEF":
+        ws.column_dimensions[col].width = 9.140625  # 64 px
+    for row in range(1, 30):
+        ws.row_dimensions[row].height = 15  # 20 px
+    pic = ws.images[0]
+    assert _marker(pic._anchor, "from") == (1, 0, 0, 1)
+
+    pic.width = 100
+    pic.height = 50
+
+    anchor = _drawing_xml(_reopen(wb)).find(f"{_XDR}twoCellAnchor")
+    # 100 px from column B at offset 0: B is 64 px, so 36 px into C.
+    # 50 px (+1 EMU) from row 1: two 20 px rows, then 10 px into row 3.
+    assert _marker(anchor, "to") == (2, 36 * EMU_PER_PIXEL, 2, 10 * EMU_PER_PIXEL + 1)
+    sp_pr = anchor.find(f"{_XDR}pic/{_XDR}spPr")
+    assert sp_pr.find(f"{_A}ext") is None
+    ext = sp_pr.find(f"{_A}xfrm/{_A}ext")
+    assert (ext.get("cx"), ext.get("cy")) == (str(100 * EMU_PER_PIXEL), str(50 * EMU_PER_PIXEL))
+    assert_valid_package(wb)
+
+
+def test_two_cell_picture_size_without_xfrm_reads_the_anchor_box():
+    wb = Workbook.open(INSPECT_FIXTURES["images"])
+    ws = wb["Sheet1"]
+    for col in "BCD":
+        ws.column_dimensions[col].width = 9.140625
+    pic = ws.images[0]
+    xfrm = pic._pic.find(f"{_XDR}spPr/{_A}xfrm")
+    xfrm.getparent().remove(xfrm)
+    pic.width = 90
+
+    assert pic.width == 90
+    pic._pic.find(f"{_XDR}spPr").remove(pic._pic.find(f"{_XDR}spPr/{_A}xfrm"))
+    assert pic.width == 90  # from xdr:from / xdr:to
+
+
+def test_resize_creates_xfrm_as_first_sppr_child(png: Path):
+    wb = Workbook.create()
+    pic = wb["Sheet1"].add_image(png, anchor="B2", width=40, height=40)
+    sp_pr = pic._pic.find(f"{_XDR}spPr")
+    sp_pr.remove(sp_pr.find(f"{_A}xfrm"))
+
+    pic.height = 70
+
+    sp_pr = _drawing_xml(_reopen(wb)).find(f"{_XDR}oneCellAnchor/{_XDR}pic/{_XDR}spPr")
+    assert etree.QName(sp_pr[0]).localname == "xfrm"
+    assert [etree.QName(e).localname for e in sp_pr[0]] == ["ext"]
+    assert sp_pr[0][0].get("cy") == str(70 * EMU_PER_PIXEL)
+
+
+def test_resize_drops_a_bare_ext_left_by_older_releases(png: Path):
+    wb = Workbook.create()
+    pic = wb["Sheet1"].add_image(png, anchor="B2", width=40, height=40)
+    etree.SubElement(pic._pic.find(f"{_XDR}spPr"), f"{_A}ext", cx="1", cy="1")
+
+    pic.width = 60
+
+    sp_pr = _drawing_xml(_reopen(wb)).find(f"{_XDR}oneCellAnchor/{_XDR}pic/{_XDR}spPr")
+    assert sp_pr.find(f"{_A}ext") is None
+    assert sp_pr.find(f"{_A}xfrm/{_A}ext").get("cx") == str(60 * EMU_PER_PIXEL)
+    assert_valid_package(wb)
+
+
+def test_one_cell_picture_resize_sets_anchor_ext_and_xfrm(png: Path):
+    wb = Workbook.create()
+    pic = wb["Sheet1"].add_image(png, anchor="B2", width=40, height=40)
+    pic.width = 120
+
+    anchor = _drawing_xml(_reopen(wb)).find(f"{_XDR}oneCellAnchor")
+    cx = str(120 * EMU_PER_PIXEL)
+    assert anchor.find(f"{_XDR}ext").get("cx") == cx
+    assert anchor.find(f"{_XDR}pic/{_XDR}spPr/{_A}xfrm/{_A}ext").get("cx") == cx
+    assert _reopen(wb)["Sheet1"].images[0].width == 120
+
+
+@pytest.mark.parametrize("value", [0, -5])
+def test_picture_size_must_be_positive(png: Path, value: int):
+    wb = Workbook.create()
+    pic = wb["Sheet1"].add_image(png, anchor="B2")
+    with pytest.raises(ValueError):
+        pic.width = value

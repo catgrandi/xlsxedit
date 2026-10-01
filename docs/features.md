@@ -114,11 +114,15 @@ From `ws.images` or `ws.add_image(...)`.
 | API | Summary |
 |-----|---------|
 | `pic.name` | Drawing name get/set |
-| `pic.anchor` | Top-left anchor cell get/set |
+| `pic.anchor` | Top-left anchor cell get/set; a two-cell anchor's bottom-right corner moves by the same number of cells |
 | `pic.offset_x`, `pic.offset_y` | Inset within anchor cell (pixels; default 0 = flush) |
-| `pic.width`, `pic.height` | Size in pixels get/set |
+| `pic.width`, `pic.height` | Size in pixels get/set (positive) |
 | `pic.media_path` | Path inside package, e.g. `xl/media/image1.jpeg` |
 | `pic.replace(image_path)` | Swap image bytes |
+
+Setting `width` or `height` writes `xdr:spPr/a:xfrm/a:ext` and resizes the anchor. A one-cell or absolute anchor takes the size in `xdr:ext`. A two-cell anchor gets a new bottom-right corner (`xdr:to`), computed from the sheet's column widths and row heights for Excel's default 11-point body font; hidden columns and rows count as zero. Reading the size uses `a:xfrm/a:ext`, then `xdr:ext`, then the two-cell anchor box. Resizing also removes a bare `a:ext` that earlier releases wrote directly under `xdr:spPr`.
+
+A move that would put a corner outside the sheet raises `ValueError`.
 
 ---
 
