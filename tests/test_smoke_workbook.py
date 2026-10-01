@@ -10,7 +10,7 @@ from lxml import etree
 
 from xlsxedit import Workbook
 from xlsxedit.opc.constants import SML_NS
-from tests.smoke_workbook import OUTPUT, build_smoke_workbook
+from tests.smoke_workbook import build_smoke_workbook
 
 
 def _assert_hyperlinks_after_sheet_data(blob: bytes) -> None:
@@ -86,15 +86,15 @@ def _assert_cell_is_has_dxf(wb: Workbook, sheet_name: str = "CF") -> None:
     assert int(dxfs.get("count", "0")) > 0
 
 
-def test_smoke_workbook_round_trip_and_xml() -> None:
+def test_smoke_workbook_round_trip_and_xml(tmp_path: Path) -> None:
+    out = tmp_path / "api_smoke.xlsx"
     wb = build_smoke_workbook()
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    wb.save(OUTPUT)
+    wb.save(out)
 
-    assert OUTPUT.is_file()
-    _assert_content_types(OUTPUT)
+    assert out.is_file()
+    _assert_content_types(out)
 
-    wb2 = Workbook.open(OUTPUT)
+    wb2 = Workbook.open(out)
     expected_sheets = [
         "Index", "Values", "Layout", "Styles", "Formulas", "SAR",
         "Links", "CF", "Chart", "Table", "Photos",
@@ -137,5 +137,4 @@ def test_smoke_workbook_round_trip_and_xml() -> None:
     assert styles_part is not None
     _assert_styles_xml_order(styles_part.blob)
 
-    print(f"Saved → {OUTPUT}  (open in Excel to verify visually)")
     print("Smoke workbook OK")
