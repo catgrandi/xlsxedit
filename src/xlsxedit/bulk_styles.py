@@ -40,21 +40,21 @@ def spec_cache_key(spec: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
 
 
 class BulkStyleCache:
-    """Allocate and cache cellXf indices for inline bulk style specs."""
+    """Allocate and cache cellXf indices per ``(base_xf, spec)`` for bulk writes."""
 
-    def __init__(self, styles: Styles, *, base_xf: int = 0):
+    def __init__(self, styles: Styles):
         self._styles = styles
-        self._base_xf = base_xf
-        self._cache: dict[tuple[tuple[str, Any], ...], int] = {}
+        self._cache: dict[tuple[int, tuple[tuple[str, Any], ...]], int] = {}
 
-    def index_for(self, spec: dict[str, Any]) -> int | None:
+    def index_for(self, spec: dict[str, Any] | None, *, base_xf: int = 0) -> int | None:
+        """Return the xf for ``spec`` applied on top of ``base_xf``; ``None`` for an empty spec."""
         normalized = normalize_style_spec(spec)
         if not normalized:
             return None
-        key = spec_cache_key(normalized)
+        key = (base_xf, spec_cache_key(normalized))
         if key not in self._cache:
             self._cache[key] = self._styles.allocate_cell_style(
-                base_xf=self._base_xf,
+                base_xf=base_xf,
                 **normalized,
             )
         return self._cache[key]
