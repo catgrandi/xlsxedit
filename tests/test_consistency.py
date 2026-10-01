@@ -442,7 +442,6 @@ def test_insert_rows_moves_array_formula_refs():
     check_consistency(wb)
 
 
-@_known_bug("#7", "table-columns", reason="write_dataframe resizes a table it did not write into")
 def test_write_dataframe_leaves_other_tables_alone():
     wb = Workbook.open(INSPECT_FIXTURES["ChartsAndTables"])
     wb.write_dataframe([("a", 1), ("b", 2)], sheet="Table", at_cell="F1", header=False)

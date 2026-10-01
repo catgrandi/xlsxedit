@@ -48,6 +48,24 @@ wb.write_dataframe(df, at_cell="A5", header=False, mode="insert")
 
 A value aimed at a cell that a merged range covers is not written there. It goes to the merge's top-left cell, as `ws["B1"].value = ...` does, unless it is `None` or the same write also writes that top-left cell (even with `None`, which clears it). When several such values in one write go to the same top-left cell, the last one is kept. The covered cell still gets the row's style.
 
+## Tables in the slot
+
+In overwrite mode, `write_dataframe` resizes the Excel table that the written rows overlap so that it ends at the last written row (`resize_table=True`, the default). The table keeps its columns and, when you write only the body, its header row. Rows that overlap no table leave every table as it is, so to grow a table by writing directly below it, name it with `table`:
+
+```python
+# Table "Sales" spans A4:D5: the header row and one sample row.
+wb.write_dataframe(df, at_cell="A5", header=False)  # 3 rows: Sales now spans A4:D7
+wb.write_dataframe(more, at_cell="A8", header=False, table="Sales")  # appends below it
+```
+
+`table` takes a table name or a `Table` from `ws.tables`. Before writing anything, `write_dataframe` raises `xlsxedit.exceptions.TableError` instead of resizing when:
+
+- The rows overlap more than one table, or the resized table would overlap another one.
+- The rows do not span exactly the table's columns.
+- The table's header row would not hold its column names: a written header (`header=True`) differs from them, or body rows start at or above the header row without repeating them.
+
+Pass `resize_table=False` to write such rows and leave every table as it is.
+
 Pandas is optional — only `lxml` is required. Use any object with `.columns` and `.itertuples()` / `.values`.
 
 To use xlsxedit as a pandas `ExcelWriter` / `read_excel` engine (`engine="xlsxedit"`), start with `tutorial/pandas_tutorial.py` or see [pandas.md](pandas.md).
@@ -113,6 +131,8 @@ Do not mix `template_rows` with `row_styles` (raises `ValueError`). `column_styl
 | `template_rows=[7, 8]` | Zebra from template rows (`int` or `list[int]`) |
 | `row_styles` / `column_styles` | Inline styles (lists of dicts; allocated once, cached) |
 | `mode="overwrite"` \| `"insert"` | Overwrite slot vs push rows down |
+| `resize_table=False` | Overwrite mode only — leave Excel tables as they are (see [Tables in the slot](#tables-in-the-slot)) |
+| `table="Sales"` | Resize this table (name or `Table`) instead of the one the rows overlap |
 
 ## Anti-patterns
 

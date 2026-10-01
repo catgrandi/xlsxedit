@@ -11,11 +11,17 @@ from typing import BinaryIO
 from lxml import etree
 
 from xlsxedit.api import _default_xlsx_path
-from xlsxedit.exceptions import DuplicateWorksheetError, WorksheetNotFoundError
+from xlsxedit.exceptions import (
+    DuplicateWorksheetError,
+    InvalidRangeError,
+    TableError,
+    WorksheetNotFoundError,
+)
 from xlsxedit.drawing import (
     EMU_PER_PIXEL,
     Picture,
     Chart,
+    Table,
     drawing_parts_for_worksheet,
     iter_charts,
     iter_pictures,
@@ -264,6 +270,7 @@ class Workbook:
         row_styles: list[dict] | None = None,
         column_styles: list[dict] | None = None,
         resize_table: bool = True,
+        table: str | Table | None = None,
         clear_range: str | None = None,
         expand_conditional_formatting: bool = False,
         string_columns: set[int] | None = None,
@@ -271,9 +278,23 @@ class Workbook:
         """Write a pandas-like DataFrame to a worksheet.
 
         ``mode`` is ``"overwrite"`` (default) or ``"insert"`` (shifts rows below down).
+
+        In overwrite mode, ``resize_table`` resizes the table that the written
+        rows overlap so that it ends at the last written row; ``table`` (a
+        table name or :class:`Table` on the sheet) picks the table instead,
+        for example to grow it by writing below it. Before anything is
+        written, :class:`~xlsxedit.exceptions.TableError` is raised when the
+        rows overlap several tables, do not span exactly the table's columns,
+        or would put anything but its column names in its header row, or when
+        the resized table would overlap another table.
         """
         if mode not in ("overwrite", "insert"):
             raise ValueError(f"mode must be 'overwrite' or 'insert', got {mode!r}")
+        if table is not None and (mode != "overwrite" or not resize_table):
+            raise ValueError(
+                "table= picks the table to resize, so it needs mode='overwrite' "
+                "and resize_table=True"
+            )
 
         if sheet is None:
             ws = self._sheets[0]
@@ -282,9 +303,6 @@ class Workbook:
 
         start_col, start_row = split_address(at_cell)
         start_col_idx = col_to_index(start_col)
-
-        if mode == "overwrite" and clear_range is not None:
-            ws.clear_range(clear_range)
 
         rows_to_write = []
         if header and hasattr(df, "columns"):
@@ -299,6 +317,28 @@ class Workbook:
 
         rows_to_write.extend(data_rows)
         data_start_row = start_row + (1 if header and hasattr(df, "columns") else 0)
+
+        # Plan the table resize before anything is written, so a refusal
+        # leaves the sheet as it was.
+        target = _find_table(ws, table) if table is not None else None
+        resize = None
+        if mode == "overwrite" and resize_table and data_rows:
+            resize = _plan_table_resize(
+                ws,
+                target,
+                rows_to_write,
+                start_row=start_row,
+                start_col=start_col_idx,
+                header_row=header and hasattr(df, "columns"),
+            )
+        elif mode == "overwrite" and resize_table and rows_to_write:
+            _check_header_row_write(
+                ws, rows_to_write[0], start_row=start_row, start_col=start_col_idx
+            )
+
+        if mode == "overwrite" and clear_range is not None:
+            ws.clear_range(clear_range)
+
         effective_template = template_rows
         if effective_template is None and header and mode == "overwrite":
             effective_template = start_row
@@ -326,38 +366,9 @@ class Workbook:
         data_rows_written = count - (1 if header and hasattr(df, "columns") else 0)
         if data_rows_written > 0 and mode == "overwrite":
             end_row = data_start_row + data_rows_written - 1
-            num_cols = len(data_rows[0]) if data_rows else 0
-            end_col_letter = index_to_col(start_col_idx + num_cols - 1)
-            data_ref = (
-                f"{join_address(start_col, data_start_row)}:{join_address(end_col_letter, end_row)}"
-                if num_cols
-                else join_address(start_col, end_row)
-            )
-            if resize_table and ws.tables:
-                table = ws.tables[0]
-                if header and hasattr(df, "columns"):
-                    table_ref = (
-                        f"{join_address(start_col, start_row)}:"
-                        f"{join_address(end_col_letter, end_row)}"
-                    )
-                else:
-                    # Keep existing table header row when writing body only
-                    # (header=False). Shrinking to data_ref alone drops the
-                    # header and Excel repairs the table part.
-                    try:
-                        _, table_top, _, _ = parse_range(table.ref or data_ref)
-                    except Exception:
-                        table_top = data_start_row
-                    top_row = (
-                        table_top
-                        if table_top < data_start_row
-                        else data_start_row
-                    )
-                    table_ref = (
-                        f"{join_address(start_col, top_row)}:"
-                        f"{join_address(end_col_letter, end_row)}"
-                    )
-                table.resize(table_ref)
+            if resize is not None:
+                resized, new_ref = resize
+                resized.resize(new_ref)
             if expand_conditional_formatting:
                 ws.expand_conditional_formatting(end_row)
         elif data_rows_written > 0 and mode == "insert" and expand_conditional_formatting:
@@ -881,3 +892,203 @@ class Workbook:
         rel_elm.set(f"{{{OFFICE_REL_NS}}}id", r_id)
 
         return Table(table_elm, table_part)
+
+# --- Table part helpers ------------------------------------------------------
+
+_MAX_ROW = 1048576
+_MAX_COL = 16384  # columns A..XFD
+
+_TABLE_COLUMNS = f"{{{SML_NS}}}tableColumns"
+_TABLE_COLUMN = f"{{{SML_NS}}}tableColumn"
+
+
+def _range_box(ref: str) -> tuple[int, int, int, int]:
+    """``(first column index, first row, last column index, last row)`` of an A1 range.
+
+    Raises ``InvalidRangeError`` unless the range is ordered and inside the grid.
+    """
+    c1, r1, c2, r2 = parse_range(ref)
+    box = (col_to_index(c1), r1, col_to_index(c2), r2)
+    if not (0 <= box[0] <= box[2] < _MAX_COL and 1 <= box[1] <= box[3] <= _MAX_ROW):
+        raise InvalidRangeError(f"range {ref!r} is reversed or outside A1:XFD1048576")
+    return box
+
+
+def _box_ref(box: tuple[int, int, int, int]) -> str:
+    c1, r1, c2, r2 = box
+    return f"{join_address(index_to_col(c1), r1)}:{join_address(index_to_col(c2), r2)}"
+
+
+def _boxes_overlap(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> bool:
+    return a[0] <= b[2] and b[0] <= a[2] and a[1] <= b[3] and b[1] <= a[3]
+
+
+def _table_box(table: Table) -> tuple[int, int, int, int] | None:
+    """The box of ``table.ref``, or ``None`` when the ref is missing or malformed."""
+    try:
+        return _range_box(table.ref or "")
+    except InvalidRangeError:
+        return None
+
+
+def _holds(value) -> str:
+    return "is empty" if value is None else f"holds {value!r}"
+
+
+def _find_table(ws: Worksheet, table) -> Table:
+    """The table on ``ws`` that ``table``, a table name or ``Table``, refers to."""
+    if isinstance(table, Table):
+        for candidate in ws.tables:
+            if table._part is not None and candidate._part is table._part:
+                return candidate
+        raise TableError(f"{table!r} is not a table on sheet {ws.name!r}")
+    if not isinstance(table, str):
+        raise TypeError(f"table must be a table name or a Table, got {type(table)!r}")
+
+    def is_named(candidate: Table) -> bool:
+        names = (candidate._element.get("name"), candidate._element.get("displayName"))
+        return table.casefold() in {n.casefold() for n in names if n}
+
+    for candidate in ws.tables:
+        if is_named(candidate):
+            return candidate
+    for other in ws._workbook.worksheets:
+        if other.name != ws.name and any(is_named(c) for c in other.tables):
+            raise TableError(f"table {table!r} is on sheet {other.name!r}, not {ws.name!r}")
+    raise TableError(f"the workbook has no table named {table!r}")
+
+
+def _plan_table_resize(
+    ws: Worksheet,
+    target: Table | None,
+    rows: list,
+    *,
+    start_row: int,
+    start_col: int,
+    header_row: bool,
+) -> tuple[Table, str] | None:
+    """The table that writing ``rows`` from ``start_row``/``start_col`` resizes, and its ref.
+
+    Without a ``target`` this is the one table on ``ws`` that the written
+    range overlaps, if any. ``header_row`` says whether the first row holds
+    the column names. The table keeps its columns, and its header row unless
+    the rows start at or above it. Raises ``TableError`` when the resize
+    would desync the table part: the rows overlap several tables, do not
+    span exactly the table's columns, or would put anything but the column
+    names in its header row, or the resized table would overlap another.
+    """
+    width = max(len(row) if isinstance(row, (list, tuple)) else 1 for row in rows)
+    if not width:
+        return None
+    written = (start_col, start_row, start_col + width - 1, start_row + len(rows) - 1)
+    tables = ws.tables
+    if target is None:
+        hits = []
+        for candidate in tables:
+            box = _table_box(candidate)
+            if box is not None and _boxes_overlap(box, written):
+                hits.append(candidate)
+        if not hits:
+            return None
+        if len(hits) > 1:
+            names = ", ".join(repr(t.name) for t in hits)
+            raise TableError(
+                f"the written range {_box_ref(written)} overlaps tables {names}; "
+                "write within one table, or pass resize_table=False"
+            )
+        target = hits[0]
+
+    box = _table_box(target)
+    if box is None:
+        raise TableError(f"table {target.name!r} has a malformed ref {target.ref!r}")
+    first_col, table_top, last_col, _ = box
+    if (written[0], written[2]) != (first_col, last_col):
+        raise TableError(
+            f"the written range {_box_ref(written)} does not span exactly the columns of "
+            f"table {target.name!r} ({target.ref}); write those columns, or pass "
+            "resize_table=False"
+        )
+    cols_elm = target._element.find(_TABLE_COLUMNS)
+    names = _column_names(target)
+    count = None if cols_elm is None else cols_elm.get("count")
+    if len(names) != width or (count is not None and count != str(len(names))):
+        raise TableError(
+            f"table {target.name!r} has {len(names)} tableColumn elements (count={count}) "
+            f"but its ref {target.ref} is {width} columns wide"
+        )
+
+    # Body-only writes keep the table's header row: dropping it from the ref
+    # would make Excel repair the table part.
+    top = written[1] if header_row else min(table_top, written[1])
+    bottom = written[3]
+    new_box = (first_col, top, last_col, bottom)
+    new_ref = _box_ref(new_box)
+    for other in tables:
+        other_box = _table_box(other)
+        if other._part is not target._part and other_box and _boxes_overlap(other_box, new_box):
+            raise TableError(
+                f"resizing table {target.name!r} to {new_ref} would overlap table "
+                f"{other.name!r} ({other.ref})"
+            )
+    if _has_header_row(target) and top == written[1]:
+        if bottom == top:
+            raise TableError(
+                f"resizing table {target.name!r} to {new_ref} would leave it without a data row"
+            )
+        first = rows[0] if isinstance(rows[0], (list, tuple)) else (rows[0],)
+        labels = [*first, *[None] * (width - len(first))]
+        problems = _label_mismatches(labels, names, first_col, top)
+        if problems:
+            raise TableError(
+                f"the first written row would become the header row of table "
+                f"{target.name!r} but does not hold its column names: {'; '.join(problems)}; "
+                "write the column names there, or start below the header row with header=False"
+            )
+    return target, new_ref
+
+
+def _check_header_row_write(
+    ws: Worksheet, labels: list, *, start_row: int, start_col: int
+) -> None:
+    """Refuse header ``labels`` that would overwrite a table's header with other names.
+
+    For a header-only write, which resizes no table.
+    """
+    written = (start_col, start_row, start_col + len(labels) - 1, start_row)
+    for table in ws.tables:
+        box = _table_box(table)
+        if box is None or box[1] != start_row or not _has_header_row(table):
+            continue
+        if not _boxes_overlap(box, written):
+            continue
+        first, last = max(box[0], written[0]), min(box[2], written[2])
+        names = _column_names(table)[first - box[0] : last - box[0] + 1]
+        heads = labels[first - start_col : last - start_col + 1]
+        problems = _label_mismatches(heads, names, first, start_row)
+        if problems:
+            raise TableError(
+                f"the header row would overwrite the header of table {table.name!r} with "
+                f"other text: {'; '.join(problems)}; write its column names, or pass "
+                "resize_table=False"
+            )
+
+
+def _column_names(table: Table) -> list[str | None]:
+    cols_elm = table._element.find(_TABLE_COLUMNS)
+    return [] if cols_elm is None else [c.get("name") for c in cols_elm.findall(_TABLE_COLUMN)]
+
+
+def _has_header_row(table: Table) -> bool:
+    from xlsxedit._ooxml_order import ATTRIBUTE_DEFAULTS
+
+    default = ATTRIBUTE_DEFAULTS["CT_Table"]["headerRowCount"]
+    return table._element.get("headerRowCount", default) != "0"
+
+
+def _label_mismatches(labels: list, names: list, first_col: int, row: int) -> list[str]:
+    """Describe each label, heading the columns from ``first_col`` on, that is not its name."""
+    return [
+        f"{join_address(index_to_col(first_col + i), row)} {_holds(label)}, expected {name!r}"
+        for i, (label, name) in enumerate(zip(labels, names))
+        if not (isinstance(label, str) and label == name)
+    ]
