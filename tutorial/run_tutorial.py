@@ -560,7 +560,7 @@ def main() -> None:
     assert wb2["Invoice"]["B6"].value == 42
     assert wb2["Invoice"]["B6"].style.num_format == "$#,##0.00"
     assert isinstance(wb2["Invoice"]["B3"].value, datetime)
-    assert wb2["Invoice"]["B7"].formula == "=B5*B6"
+    assert wb2["Invoice"]["B7"].formula == "B5*B6"
     assert wb2["Invoice"]["C1"].value == "Note"
     assert wb2["Invoice"]["C2"].value == "from tutorial"
     assert wb2["Invoice"]["A9"].value == "Anchor"

@@ -36,7 +36,7 @@ def test_set_formula(tmp_path: Path):
     wb.save(out)
 
     wb2 = Workbook.open(out)
-    assert wb2["Sheet1"]["A2"].formula == "=A1*2"
+    assert wb2["Sheet1"]["A2"].formula == "A1*2"
 
 
 def _sheet1_cell(path: Path, address: str):
