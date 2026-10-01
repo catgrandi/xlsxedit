@@ -17,6 +17,7 @@ import pytest
 from lxml import etree
 
 from xlsxedit import Workbook
+from xlsxedit.exceptions import GridOverflowError
 from xlsxedit.opc.constants import SML_NS
 from tests.conftest import BOOK1, INSPECT_FIXTURES
 from tests.preservation import (
@@ -402,12 +403,12 @@ def test_insert_rows_moves_x14_conditional_formatting():
     check_consistency(wb)
 
 
-@_known_bug("#5", "grid-bounds", reason="insert_rows pushes cells past row 1048576")
 def test_insert_rows_stays_inside_the_grid():
     wb = Workbook.create()
     ws = wb.worksheets[0]
     ws["A1048576"].value = 1
-    ws.insert_rows([[None]], at_row=1)
+    with pytest.raises(GridOverflowError, match="cell A1048576"):
+        ws.insert_rows([[None]], at_row=1)
     check_consistency(wb)
 
 

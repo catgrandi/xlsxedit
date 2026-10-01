@@ -8,12 +8,12 @@ from xlsxedit.exceptions import InvalidRangeError
 from xlsxedit.oxml.address import col_to_index, index_to_col, join_address, split_address
 
 _RANGE_RE = re.compile(
-    r"^([A-Za-z]+)(\d+)(?::([A-Za-z]+)(\d+))?$"
+    r"^\$?([A-Za-z]+)\$?(\d+)(?::\$?([A-Za-z]+)\$?(\d+))?$"
 )
 
 
 def parse_range(ref: str) -> tuple[str, int, str, int]:
-    """Parse ``A1:C3`` into top-left and bottom-right coordinates."""
+    """Parse ``A1:C3`` (``$`` allowed) into top-left and bottom-right coordinates."""
     m = _RANGE_RE.match(ref)
     if not m:
         raise InvalidRangeError(f"invalid range: {ref!r}")
