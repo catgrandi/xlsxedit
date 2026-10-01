@@ -197,9 +197,15 @@ def test_changes_worksheet_diff_does_not_model_are_still_described():
 
 
 def test_content_types_are_compared_as_an_effective_map():
-    src = INSPECT_FIXTURES["images"]
-    report = assert_preserved(src, Workbook.open(src))
-    assert CONTENT_TYPES in report.reserialised  # jpeg/jpg Defaults became Overrides
+    before = read_pkg(INSPECT_FIXTURES["images"])
+    after = dict(before)
+    after[CONTENT_TYPES] = _replace(
+        after[CONTENT_TYPES],
+        b'<Default Extension="jpeg" ContentType="image/jpeg"/>',
+        b'<Override PartName="/xl/media/image1.jpeg" ContentType="image/jpeg"/>',
+    )
+    report = assert_preserved(before, after)
+    assert report.reserialised == {CONTENT_TYPES}
 
     before = read_pkg(BOOK1)
     after = dict(before)

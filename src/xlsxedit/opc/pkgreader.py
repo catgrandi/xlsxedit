@@ -33,9 +33,18 @@ def _is_bookkeeping_part(partname: PackURI) -> bool:
 
 
 class ContentTypeMap:
+    """The ``Default`` and ``Override`` entries of a ``[Content_Types].xml``.
+
+    Extensions and part names match case-insensitively. ``xml`` holds the
+    bytes the map was read from, ``default_entries`` its ``Default`` entries
+    as written, in document order.
+    """
+
     def __init__(self):
         self._defaults: dict[str, str] = {}
         self._overrides: dict[str, str] = {}
+        self.default_entries: list[tuple[str, str]] = []
+        self.xml: bytes | None = None
 
     def __getitem__(self, partname: PackURI) -> str:
         key = str(partname).lower()
@@ -58,12 +67,33 @@ class ContentTypeMap:
                 return CT.OPC_RELATIONSHIPS
             return _OCTET_STREAM
 
+    def describes(self, parts) -> bool:
+        """True if these entries type exactly ``parts`` and their ``.rels`` items.
+
+        Every part resolves to its own content type, every ``Override`` names
+        one of the parts, and ``rels`` defaults to the relationships type.
+        """
+        if self._defaults.get("rels") != CT.OPC_RELATIONSHIPS:
+            return False
+        partnames = set()
+        for part in parts:
+            partnames.add(str(part.partname).lower())
+            try:
+                if self[part.partname] != part.content_type:
+                    return False
+            except KeyError:
+                return False
+        return self._overrides.keys() <= partnames
+
     @classmethod
     def from_xml(cls, xml: bytes) -> ContentTypeMap:
         root = parse_xml(xml)
         ct_map = cls()
+        ct_map.xml = xml
         for elm in root.findall(_DEFAULT_TAG):
-            ct_map._defaults[elm.get("Extension").lower()] = elm.get("ContentType")
+            ext, content_type = elm.get("Extension"), elm.get("ContentType")
+            ct_map._defaults[ext.lower()] = content_type
+            ct_map.default_entries.append((ext, content_type))
         for elm in root.findall(_OVERRIDE_TAG):
             ct_map._overrides[elm.get("PartName").lower()] = elm.get("ContentType")
         return ct_map

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from xlsxedit.opc.packuri import PACKAGE_URI, PackURI
 from xlsxedit.opc.part import Part, PartFactory
-from xlsxedit.opc.pkgreader import PackageReader
+from xlsxedit.opc.pkgreader import ContentTypeMap, PackageReader
 from xlsxedit.opc.pkgwriter import PackageWriter
 from xlsxedit.opc.rel import Relationships
 
@@ -16,6 +16,7 @@ class OpcPackage:
         self._rels = Relationships("/")
         self._parts: dict[PackURI, Part] = {}
         self._orphan_parts: dict[PackURI, Part] = {}
+        self._content_types: ContentTypeMap | None = None
         self._large = False
 
     @classmethod
@@ -23,6 +24,7 @@ class OpcPackage:
         pkg = cls()
         pkg._large = large
         reader = PackageReader.from_file(pkg_file)
+        pkg._content_types = reader.content_types
         Unmarshaller.unmarshal(reader, pkg, PartFactory)
         return pkg
 
@@ -30,7 +32,7 @@ class OpcPackage:
         parts = list(self.iter_parts())
         if include_orphans:
             parts.extend(self.iter_orphan_parts())
-        PackageWriter.write(pkg_file, self.rels, parts)
+        PackageWriter.write(pkg_file, self.rels, parts, self._content_types)
 
     @property
     def rels(self) -> Relationships:
