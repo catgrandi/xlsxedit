@@ -74,7 +74,7 @@ To use xlsxedit as a pandas `ExcelWriter` / `read_excel` engine (`engine="xlsxed
 
 ### A. Template sample rows (copy from Excel)
 
-Put formatted sample cells on template rows (e.g. 7–8 for zebra). Bulk write copies the `s` style index per column:
+Put formatted sample cells on template rows (e.g. 7–8 for zebra). Bulk write copies each template cell's style to the same column of the written rows. Where the template row has no cell in a column, or only an empty unstyled one, the style of the row (a row formatted as a whole) or of the column is copied instead:
 
 ```python
 wb.write_dataframe(df, at_cell="A7", header=False, template_rows=[7, 8])
