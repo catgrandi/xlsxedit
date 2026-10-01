@@ -1,8 +1,9 @@
-"""Drawing and chart parts: live trees, picture anchors and sizes, series caches."""
+"""Drawing and chart parts: live trees, anchors, sizes, series caches, ids."""
 
 from __future__ import annotations
 
 import io
+import re
 import warnings
 from datetime import date
 from pathlib import Path
@@ -26,6 +27,8 @@ PNG = (
 _XDR = f"{{{XDR_NS}}}"
 _A = f"{{{A_NS}}}"
 _C = f"{{{CHART_NS}}}"
+_A16_CREATION_ID = "{http://schemas.microsoft.com/office/drawing/2014/main}creationId"
+_GUID = re.compile(r"\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\}")
 
 
 @pytest.fixture
@@ -362,3 +365,36 @@ def test_blank_series_name_gives_an_empty_string_cache():
     name_cache = _series_caches(wb).find(f".//{_C}tx/{_C}strRef/{_C}strCache")
     assert name_cache.find(f"{_C}ptCount").get("val") == "1"
     assert name_cache.find(f"{_C}pt") is None
+
+
+# --- unique ids -------------------------------------------------------------
+
+
+def _cnvpr_ids(root: etree._Element) -> list[int]:
+    return [int(e.get("id")) for e in root.iter(f"{_XDR}cNvPr")]
+
+
+def test_added_objects_get_unique_ids_and_fresh_creation_ids(png: Path):
+    wb = Workbook.open(INSPECT_FIXTURES["images"])
+    ws = wb["Sheet1"]
+    ws["J1"].value = "k"
+    ws["K1"].value = "v"
+    ws["J2"].value = "x"
+    ws["K2"].value = 1
+    ws.add_image(png, anchor="H2")
+    ws.add_image(png, anchor="H20")
+    ws.add_chart("bar", anchor="M2", data_range="J1:K2")
+    ws.add_chart("bar", anchor="M30", data_range="J1:K2")
+
+    root = _drawing_xml(_reopen(wb))
+    assert _cnvpr_ids(root) == [3, 4, 5, 6, 7]
+    creation_ids = [e.get("id") for e in root.iter(_A16_CREATION_ID)]
+    assert len(creation_ids) == 5
+    assert len(set(creation_ids)) == 5
+    assert all(_GUID.fullmatch(value) for value in creation_ids)
+
+
+def test_first_object_on_a_new_drawing_gets_id_2(png: Path):
+    wb = Workbook.create()
+    wb["Sheet1"].add_image(png, anchor="B2")
+    assert _cnvpr_ids(_drawing_xml(wb)) == [2]
