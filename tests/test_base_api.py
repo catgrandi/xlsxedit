@@ -354,8 +354,8 @@ def test_add_table_and_resize(tmp_path: Path):
     ws["B1"].value = "Price"
     ws["A2"].value = "Widget"
     ws["B2"].value = 10
-    table = ws.add_table("A1:B2", ["Item", "Price"], name="T1")
-    assert table.name == "T1"
+    table = ws.add_table("A1:B2", ["Item", "Price"], name="Prices")
+    assert table.name == "Prices"
     assert table.ref == "A1:B2"
     table.resize("A1:B5")
     assert table.ref == "A1:B5"

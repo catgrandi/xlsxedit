@@ -1,5 +1,5 @@
-"""Table part integrity: ``write_dataframe`` resizing, ``add_table`` naming,
-and ``copy_worksheet`` clones.
+"""Table part integrity: ``write_dataframe`` resizing, ``add_table`` naming and
+validation, and ``copy_worksheet`` clones.
 
 Every test reads the table parts back from the saved package; the suite guard
 in ``tests/conftest.py`` also runs ``check_consistency`` on every workbook
@@ -15,10 +15,11 @@ import pytest
 from lxml import etree
 
 from xlsxedit import Table, Workbook
-from xlsxedit.exceptions import TableError
+from xlsxedit.exceptions import InvalidRangeError, TableError
 from xlsxedit.opc.constants import SML_NS
 from tests.conftest import INSPECT_FIXTURES
 from tests.preservation import assert_preserved, check_consistency, read_pkg
+from tests.schema_validate import assert_valid_package
 
 # Sheet "Table" holds Table2 (id 2) over A1:C11: Item, Price, Quantity.
 TABLES = INSPECT_FIXTURES["ChartsAndTables"]
@@ -310,6 +311,163 @@ def test_add_table_gives_each_table_fresh_revision_uids():
         uids.append(uid)
     assert len(set(uids)) == 2
     assert FIXTURE_UID not in uids
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "My Table",
+        "T1",
+        "xfd1048576",
+        "R1C1",
+        "RC",
+        "r",
+        "C3",
+        "1st",
+        "Sales-2024",
+        "Sales!",
+        "",
+        "S" * 256,
+    ],
+)
+def test_add_table_rejects_invalid_names(name):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    _fill(ws, "A1", ["x", "y"], rows=1)
+    with pytest.raises(TableError, match=f"^table name {re.escape(repr(name))} "):
+        ws.add_table("A1:B2", ["x", "y"], name=name)
+    with pytest.raises(TableError, match=f"^table display_name {re.escape(repr(name))} "):
+        ws.add_table("A1:B2", ["x", "y"], name="Valid", display_name=name)
+    assert ws.tables == []
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Sales",
+        "_Sales",
+        "\\Sales",
+        "Sales.2024",
+        "Data2024",
+        "R2D2",
+        "Tabelle_Ä",
+        "S" * 255,
+        "YTD2024",  # column YTD lies past XFD, so this is no cell reference
+        "XFE1",
+    ],
+)
+def test_add_table_accepts_valid_names(name):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    _fill(ws, "A1", ["x", "y"], rows=1)
+    ws.add_table("A1:B2", ["x", "y"], name=name)
+    assert _identity(_saved_tables(wb)[TABLE]) == ("1", name, name)
+
+
+def test_add_table_rejects_names_already_in_use():
+    wb = Workbook.open(TABLES)
+    _add_defined_name(wb, "Sales")
+    ws = wb.add_worksheet("New")
+    _fill(ws, "A1", ["x", "y"], rows=1)
+    in_use = "is already used by a table or defined name in this workbook"
+    with pytest.raises(TableError, match=f"table name 'table2' {in_use}"):
+        ws.add_table("A1:B2", ["x", "y"], name="table2")
+    with pytest.raises(TableError, match=f"table display_name 'TABLE2' {in_use}"):
+        ws.add_table("A1:B2", ["x", "y"], name="Fresh", display_name="TABLE2")
+    with pytest.raises(TableError, match=f"table name 'SALES' {in_use}"):
+        ws.add_table("A1:B2", ["x", "y"], name="SALES")
+    assert ws.tables == []
+
+
+# --- add_table: columns, range, overlap and header cells -----------------------
+
+
+@pytest.mark.parametrize(
+    ("columns", "message"),
+    [
+        ([], "columns must not be empty"),
+        (["x", ""], "column names must be non-empty strings, got ''"),
+        (["x", 2], "column names must be non-empty strings, got 2"),
+        (["Qty", "qty"], "duplicate column name 'qty'"),
+        (["x", "y", "z"], "table range A1:B2 is 2 columns wide but 3 column names were given"),
+    ],
+)
+def test_add_table_rejects_bad_column_names(columns, message):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    _fill(ws, "A1", ["x", "y"], rows=1)
+    with pytest.raises(TableError, match=re.escape(message)):
+        ws.add_table("A1:B2", columns)
+    assert ws.tables == []
+
+
+@pytest.mark.parametrize(
+    ("cell_range", "error"),
+    [
+        ("A1:B1", TableError),
+        ("B2:A1", InvalidRangeError),
+        ("A0:B2", InvalidRangeError),
+        ("XFD1:XFE2", InvalidRangeError),
+        ("A1048576:B1048577", InvalidRangeError),
+        ("$A$1:$B$2", InvalidRangeError),
+    ],
+)
+def test_add_table_rejects_ranges_that_cannot_hold_a_table(cell_range, error):
+    ws = Workbook.create()["Sheet1"]
+    with pytest.raises(error):
+        ws.add_table(cell_range, ["x", "y"], write_header=True)
+    assert ws.tables == []
+
+
+def test_add_table_normalises_the_range():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws.add_table("a1:b3", ["x", "y"], write_header=True)
+    assert _summary(_saved_tables(wb)[TABLE])["ref"] == "A1:B3"
+
+
+def test_add_table_rejects_a_range_that_overlaps_a_table_on_the_sheet():
+    wb = _side_by_side()
+    ws = wb["Sheet1"]
+    before = read_pkg(wb)
+    with pytest.raises(TableError, match=r"table range B3:C5 overlaps table 'Left' \(A1:B3\)"):
+        ws.add_table("B3:C5", ["y", "z"], write_header=True)
+    assert_preserved(before, read_pkg(wb))
+
+    other = wb.add_worksheet("Other")
+    other.add_table("A1:B3", ["x", "y"], write_header=True)
+    assert len(_saved_tables(wb)) == 3
+
+
+def test_add_table_header_cells_must_hold_the_column_names():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A1"].value = "Item"
+    ws["B1"].value = 7
+    ws["C1"].formula = '"Qty"'
+    before = read_pkg(wb)
+    with pytest.raises(TableError) as excinfo:
+        ws.add_table("A1:D2", ["Item", "Price", "Qty", "Note"])
+    assert str(excinfo.value) == (
+        "the header cells of table range A1:D2 do not match the column names: "
+        "B1 holds 7, expected 'Price'; C1 holds a formula, expected 'Qty'; "
+        "D1 is empty, expected 'Note'; write the header first or pass write_header=True"
+    )
+    assert_preserved(before, read_pkg(wb))
+
+
+def test_add_table_write_header_writes_the_names_in_column_order():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["B1"].formula = "1+1"
+    ws["D1"].value = "kept"
+    ws.add_table("A1:C2", ["x", "y", "z"], write_header=True)
+    sheet = etree.fromstring(read_pkg(wb)["xl/worksheets/sheet1.xml"])
+    row = sheet.find(f"{_sml('sheetData')}/{_sml('row')}")
+    assert [c.get("r") for c in row] == ["A1", "B1", "C1", "D1"]
+    assert [ws[a].value for a in ("A1", "B1", "C1", "D1")] == ["x", "y", "z", "kept"]
+    assert not ws["B1"].has_formula
+    assert_valid_package(wb)
 
 
 # --- copy_worksheet ------------------------------------------------------------

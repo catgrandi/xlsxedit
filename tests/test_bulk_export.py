@@ -175,8 +175,8 @@ def test_table_resize_on_write_dataframe(tmp_path: Path):
     ws["B1"].value = "Qty"
     ws["A2"].value = "Old"
     ws["B2"].value = 1
-    table = ws.add_table("A1:B2", ["Item", "Qty"], name="T1")
-    assert table.name == "T1"
+    table = ws.add_table("A1:B2", ["Item", "Qty"], name="Items")
+    assert table.name == "Items"
     df = SimpleFrame(["Item", "Qty"], [("New", 9), ("More", 2)])
     wb.write_dataframe(df, at_cell="A1", template_rows=1, header=True, resize_table=True)
     assert ws.tables[0].ref == "A1:B3"

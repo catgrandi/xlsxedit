@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import mimetypes
+import re
 import uuid
 from copy import deepcopy
 from datetime import date, datetime
@@ -835,20 +836,68 @@ class Workbook:
         *,
         name: str | None,
         display_name: str | None,
+        write_header: bool = False,
     ) -> "Table":
         from xlsxedit.drawing import Table
 
+        columns = list(columns)
         if not columns:
-            raise ValueError("columns must not be empty")
+            raise TableError("columns must not be empty")
+        seen: set[str] = set()
+        for col_name in columns:
+            if not isinstance(col_name, str) or not col_name:
+                raise TableError(f"column names must be non-empty strings, got {col_name!r}")
+            if col_name.casefold() in seen:
+                raise TableError(f"duplicate column name {col_name!r} (names ignore case)")
+            seen.add(col_name.casefold())
+
+        box = _range_box(ref)
+        ref = _box_ref(box)
+        first_col, header_row, last_col, last_row = box
+        if last_row == header_row:
+            raise TableError(f"table range {ref} needs a header row and at least one data row")
+        if last_col - first_col + 1 != len(columns):
+            raise TableError(
+                f"table range {ref} is {last_col - first_col + 1} columns wide "
+                f"but {len(columns)} column names were given"
+            )
+        for other in ws.tables:
+            other_box = _table_box(other)
+            if other_box is not None and _boxes_overlap(box, other_box):
+                raise TableError(f"table range {ref} overlaps table {other.name!r} ({other.ref})")
 
         used_names, used_ids = _table_names_and_ids(self)
         table_id = max(used_ids, default=0) + 1
+        table_name = _next_table_name(used_names, table_id) if name is None else name
+        disp = table_name if display_name is None else display_name
+        for label, value in (("name", table_name), ("display_name", disp)):
+            problem = _table_name_problem(value)
+            if problem is None and value.casefold() in used_names:
+                problem = "is already used by a table or defined name in this workbook"
+            if problem is not None:
+                raise TableError(f"table {label} {value!r} {problem}")
+
+        cells = _row_cells(ws, header_row)
+        if write_header:
+            row_elm = ws._ensure_row(header_row)
+            for offset, col_name in enumerate(columns):
+                address = join_address(index_to_col(first_col + offset), header_row)
+                c_elm = cells.get(address)
+                if c_elm is None:
+                    c_elm = _insert_cell(row_elm, address)
+                Cell(c_elm, ws).value = col_name
+            ws._invalidate_bulk_indexes()
+        else:
+            problems = _header_mismatches(ws, cells, header_row, first_col, columns)
+            if problems:
+                raise TableError(
+                    f"the header cells of table range {ref} do not match the column names: "
+                    f"{'; '.join(problems)}; write the header first or pass write_header=True"
+                )
 
         templates = _default_xlsx_path().parent
         table_elm = parse_template_xml((templates / "default-table.xml").read_bytes())
 
-        table_name = name or _next_table_name(used_names, table_id)
-        disp = display_name or table_name
         table_elm.set("ref", ref)
         table_elm.set("name", table_name)
         table_elm.set("displayName", disp)
@@ -891,11 +940,14 @@ class Workbook:
 
         return Table(table_elm, table_part)
 
+
 # --- Table part helpers ------------------------------------------------------
 
 _MAX_ROW = 1048576
 _MAX_COL = 16384  # columns A..XFD
 
+_CELL = f"{{{SML_NS}}}c"
+_EXT_LST = f"{{{SML_NS}}}extLst"
 _DEFINED_NAMES = f"{{{SML_NS}}}definedNames"
 _DEFINED_NAME = f"{{{SML_NS}}}definedName"
 _TABLE_COLUMNS = f"{{{SML_NS}}}tableColumns"
@@ -909,6 +961,13 @@ _REVISION_NAMESPACES = frozenset(
         "http://schemas.microsoft.com/office/spreadsheetml/2016/revision3",
     }
 )
+
+# Table names follow the defined-name rules: a letter, underscore or
+# backslash, then letters, digits, underscores and periods, and never
+# something Excel would read as an A1 or R1C1 reference inside the grid.
+_TABLE_NAME_RE = re.compile(r"(?:[^\W\d]|\\)[\w.]*")
+_A1_NAME_RE = re.compile(r"([A-Za-z]{1,3})(\d+)")
+_R1C1_NAME_RE = re.compile(r"[Rr](\d*)(?:[Cc](\d*))?|[Cc](\d*)")
 
 
 def _new_revision_uid() -> str:
@@ -928,6 +987,36 @@ def _refresh_revision_uids(root: etree._Element) -> None:
             qname = etree.QName(attr)
             if qname.localname == "uid" and qname.namespace in _REVISION_NAMESPACES:
                 elm.set(attr, fresh.setdefault(value.upper(), _new_revision_uid()))
+
+
+def _table_name_problem(name) -> str | None:
+    """Why ``name`` cannot name a table, or ``None`` when it can."""
+    if not isinstance(name, str) or not name:
+        return "must be a non-empty string"
+    if len(name) > 255:
+        return "is longer than 255 characters"
+    if not _TABLE_NAME_RE.fullmatch(name):
+        return (
+            "must start with a letter, underscore or backslash and continue with "
+            "letters, digits, underscores or periods"
+        )
+    if _is_cell_reference(name):
+        return "looks like a cell reference"
+    return None
+
+
+def _is_cell_reference(name: str) -> bool:
+    """Whether Excel reads ``name`` as an A1 or R1C1 reference inside the grid."""
+    a1 = _A1_NAME_RE.fullmatch(name)
+    if a1:
+        return col_to_index(a1[1]) < _MAX_COL and 1 <= int(a1[2]) <= _MAX_ROW
+    r1c1 = _R1C1_NAME_RE.fullmatch(name)
+    if r1c1 is None:
+        return False
+    row, col, lone_col = r1c1.groups()
+    if row is None:
+        col = lone_col
+    return (not row or 1 <= int(row) <= _MAX_ROW) and (not col or 1 <= int(col) <= _MAX_COL)
 
 
 def _table_names_and_ids(
@@ -996,8 +1085,52 @@ def _table_box(table: Table) -> tuple[int, int, int, int] | None:
         return None
 
 
+def _row_cells(ws: Worksheet, row: int) -> dict[str, etree._Element]:
+    """``{address: <c>}`` of the cells stored in ``row``, without resolving merges."""
+    row_elm = ws._find_row_element(row)
+    if row_elm is None:
+        return {}
+    return {c.get("r", "").upper(): c for c in row_elm.iterchildren(_CELL)}
+
+
+def _header_mismatches(
+    ws: Worksheet,
+    cells: dict[str, etree._Element],
+    row: int,
+    first_col: int,
+    names: list[str],
+) -> list[str]:
+    """Describe each header cell that does not hold its column name as plain text."""
+    problems = []
+    for offset, name in enumerate(names):
+        address = join_address(index_to_col(first_col + offset), row)
+        c_elm = cells.get(address)
+        cell = None if c_elm is None else Cell(c_elm, ws)
+        if cell is not None and cell.has_formula:
+            problems.append(f"{address} holds a formula, expected {name!r}")
+            continue
+        value = None if cell is None else cell.value
+        if not (isinstance(value, str) and value == name):
+            problems.append(f"{address} {_holds(value)}, expected {name!r}")
+    return problems
+
+
 def _holds(value) -> str:
     return "is empty" if value is None else f"holds {value!r}"
+
+
+def _insert_cell(row_elm: etree._Element, address: str) -> etree._Element:
+    """A new ``<c r=address>`` in ``row_elm``, before the first cell to its right."""
+    col = col_to_index(split_address(address)[0])
+    c_elm = etree.Element(_CELL)
+    c_elm.set("r", address)
+    for child in row_elm.iterchildren(_CELL, _EXT_LST):
+        r = child.get("r")
+        if child.tag == _EXT_LST or (r and col_to_index(split_address(r)[0]) > col):
+            child.addprevious(c_elm)
+            return c_elm
+    row_elm.append(c_elm)
+    return c_elm
 
 
 def _find_table(ws: Worksheet, table) -> Table:
