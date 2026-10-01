@@ -95,7 +95,7 @@ flowchart LR
 
 ### Save path
 
-1. Collect all loaded parts.
+1. Collect all loaded parts. Two parts under one name (part names compare case-insensitively) raise `ValueError` before anything is written.
 2. Regenerate `[Content_Types].xml` and each part’s `.rels` from the in-memory graph.
 3. Write every part’s `blob`:
    - opaque `Part` → original bytes unchanged
@@ -170,7 +170,7 @@ You never parse the chart XML, so you cannot corrupt it by misunderstanding it.
 ### Important caveats (honest limits)
 
 1. **Relationship-unreachable ZIP members are “orphans.”**  
-   OPC is a graph, not “every ZIP member.” Related unknown features (charts, VBA, …) are always kept. Members with **no** relationship chain are still **discovered** on open as `Workbook.orphan_partnames`, but they are only written on save when you pass `include_orphans=True`. Default `save()` stays OPC-strict and omits them.
+   OPC is a graph, not “every ZIP member.” Related unknown features (charts, VBA, …) are always kept. Members with **no** relationship chain are still **discovered** on open as `Workbook.orphan_partnames`, but they are only written on save when you pass `include_orphans=True`. Default `save()` stays OPC-strict and omits them. An orphan whose name is not a legal OPC part name, such as `[trash]/0000.dat`, is listed and written percent-encoded (`/%5Btrash%5D/0000.dat`). An orphan is skipped when its name cannot be made legal (an empty segment, or a segment ending in `.`) or would equal, case-insensitively, the name of a related part or of an orphan already kept. Numbered parts the library adds (sheets, drawings, charts, tables, media) never take an orphan’s name.
 
 ```python
 wb = Workbook.open("report.xlsx")

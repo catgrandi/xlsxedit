@@ -3,6 +3,33 @@
 from __future__ import annotations
 
 import posixpath
+import re
+
+# ECMA-376 Part 2 part-name segment: one or more pchar (RFC 3986), not ending in "."
+_SEGMENT_RE = re.compile(r"(?:[A-Za-z0-9\-._~!$&'()*+,;=:@]|%[0-9A-Fa-f]{2})+")
+_NOT_PCHAR_RE = re.compile(r"%(?![0-9A-Fa-f]{2})|[^A-Za-z0-9\-._~!$&'()*+,;=:@/%]")
+
+
+def is_partname(name: str) -> bool:
+    """True if ``name`` is a legal OPC part name such as ``/xl/workbook.xml``."""
+    if not name.startswith("/"):
+        return False
+    return all(
+        _SEGMENT_RE.fullmatch(segment) and not segment.endswith(".")
+        for segment in name[1:].split("/")
+    )
+
+
+def encode_partname(name: str) -> str | None:
+    """Percent-encode the characters that make ``name`` an illegal part name.
+
+    ``/[trash]/0000.dat`` becomes ``/%5Btrash%5D/0000.dat``. Returns None when
+    encoding cannot help (an empty segment, or one ending in ``.``).
+    """
+    encoded = _NOT_PCHAR_RE.sub(
+        lambda m: "".join(f"%{b:02X}" for b in m.group().encode("utf-8")), name
+    )
+    return encoded if is_partname(encoded) else None
 
 
 class PackURI(str):

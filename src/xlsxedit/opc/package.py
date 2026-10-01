@@ -70,11 +70,12 @@ class OpcPackage:
         self._orphan_parts[part.partname] = part
 
     def next_partname(self, template: str) -> PackURI:
-        """Return the next unused part name matching ``template`` (``%d`` suffix)."""
-        partnames = {part.partname for part in self._parts.values()}
+        """Return the next part name matching ``template`` (``%d`` suffix) that no part,
+        orphans included, already uses; part names compare case-insensitively."""
+        partnames = {name.lower() for name in (*self._parts, *self._orphan_parts)}
         for n in range(1, len(partnames) + 2):
             candidate = PackURI(template % n)
-            if candidate not in partnames:
+            if candidate.lower() not in partnames:
                 return candidate
         raise RuntimeError(f"could not allocate partname from {template!r}")
 
