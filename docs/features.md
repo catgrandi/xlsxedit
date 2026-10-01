@@ -197,7 +197,8 @@ Image SAR: `wb.replace_image(name, path)`, `wb.insert_image_at_placeholder("{log
 | `row_styles` | List of style dicts cycled per row |
 | `column_styles` | List of style dicts per column |
 | `clear_range` | Clear before overwrite when re-exporting fewer rows |
-| `resize_table` | Auto-resize first table after write |
+| `resize_table` | Resize the table the written rows overlap (overwrite mode) |
+| `table` | Table to resize instead (name or `Table`), e.g. to grow a table from below |
 | `expand_conditional_formatting` | Extend conditional-formatting ranges |
 
 Full guide: [large-data-export.md](large-data-export.md)
