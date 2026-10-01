@@ -55,6 +55,7 @@ xlsxedit = ["py.typed", "templates/*", "templates/**/*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+addopts = "-m 'not bench'"
 markers = [
     "bench: large-data export benchmarks (optional, set BENCH_ROWS)",
 ]
