@@ -1026,6 +1026,19 @@ def sort_row_cells(sheet_data: etree._Element, first_row: int, last_row: int) ->
             row.insert(index, c)
 
 
+def place_cell_in_order(c: etree._Element) -> None:
+    """Move ``<c>`` before every sibling it should follow: a cell with a higher
+    column, or the row's ``extLst``."""
+    key = _column_key(c)
+    first_later = None
+    for sibling in c.itersiblings(preceding=True):
+        if sibling.tag == _C and _column_key(sibling) < key:
+            break
+        first_later = sibling
+    if first_later is not None:
+        first_later.addprevious(c)
+
+
 def widen_row_spans(sheet_data: etree._Element, first_row: int, last_row: int) -> None:
     """Grow the ``spans`` hint of rows ``first_row..last_row`` to cover their cells."""
     for row in sheet_data.iterchildren(_ROW):

@@ -97,6 +97,8 @@ They refuse an insert, changing nothing, by raising:
 - `ValueError` when a `template_rows` merge would overlap a merge, or when both `template_rows` and `row_styles` are given;
 - `TypeError` or `ValueError` for a value or inline style they cannot write.
 
+Values aimed at cells that a merge covers follow the rule in [large-data-export.md](large-data-export.md).
+
 ---
 
 ## Cell

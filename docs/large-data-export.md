@@ -46,6 +46,8 @@ wb.write_dataframe(df, at_cell="A5", header=False, mode="insert")
 
 `write_dataframe` only overwrites cells it writes. It does **not** clear extra cells outside the new data rectangle. Use `clear_range` when re-filling a slot with **fewer** rows than a previous export.
 
+A value aimed at a cell that a merged range covers is not written there. It goes to the merge's top-left cell, as `ws["B1"].value = ...` does, unless it is `None` or the same write also writes that top-left cell (even with `None`, which clears it). When several such values in one write go to the same top-left cell, the last one is kept. The covered cell still gets the row's style.
+
 Pandas is optional — only `lxml` is required. Use any object with `.columns` and `.itertuples()` / `.values`.
 
 To use xlsxedit as a pandas `ExcelWriter` / `read_excel` engine (`engine="xlsxedit"`), start with `tutorial/pandas_tutorial.py` or see [pandas.md](pandas.md).
