@@ -1,58 +1,40 @@
-# AGENTS.md
+# Agent instructions
 
-Guidance for AI coding agents working with **xlsxedit**.
+These instructions apply to all work in this repository. `CLAUDE.md` imports
+this file; keep shared guidance here so every agent reads one source. This file
+only points to where each fact lives.
 
-## When to use xlsxedit
+- Follow the [documentation-sync rule](.agents/skills/repository-documentation/assets/agent-instructions.md):
+  when a change alters observable behavior, the documentation stating that
+  behavior is part of the change, and every fact keeps one authoritative home.
+- Follow [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, tests, commit
+  and merge conventions, the fork policy, where specs and working files go, and
+  how installed skills are upgraded.
 
-Use xlsxedit when the user needs to **open an existing `.xlsx` / `.xlsm` / `.xltx` template**, change cells or placeholders, and save **without losing layout, formatting, images, charts, or other OOXML** they did not touch.
+## Sources of truth
 
-Prefer **openpyxl** or **xlsxwriter** when creating workbooks from scratch with no template fidelity requirement. Prefer **xlwings** when Excel must be running (recalc, VBA, UI).
+- [README.md](README.md): what xlsxedit is and how to install it.
+- [docs/how-xlsxedit-works.md](docs/how-xlsxedit-works.md): architecture and
+  the preservation model.
+- [docs/features.md](docs/features.md): public API reference.
+- [docs/excel-xlsx-structure.md](docs/excel-xlsx-structure.md): OOXML
+  package reference.
+- [docs/large-data-export.md](docs/large-data-export.md) and
+  [docs/pandas.md](docs/pandas.md): bulk export and the pandas engine.
+- [docs/design/](docs/design/README.md): specs and design documents.
+- [.github/workflows/](.github/workflows/): CI and release automation.
+- [Roadmap tracking issue](https://github.com/catgrandi/xlsxedit/issues/26):
+  planned work.
 
-## Core pattern
+## Committed skills
 
-```python
-from xlsxedit import Workbook
+Skills live in [.agents/skills/](.agents/skills/), mirrored to
+`.claude/skills/` as described in [CONTRIBUTING.md](CONTRIBUTING.md#agent-skills).
 
-wb = Workbook.open("template.xlsx")  # or Workbook("template.xlsx")
-wb.replace("{client}", "Acme Corp")
-wb.replace("{date}", "2025-08-07", value_type="date")
-wb.replace("{qty}", 42, value_type="number")
-wb["Sheet1"]["B5"].value = "direct cell write"
-wb.save("filled.xlsx")
-```
-
-- **`Workbook.open(path)`** — existing file on disk, unpacked OPC folder, or binary file-like (`BytesIO`)
-- **`Workbook.create()`** / **`Workbook()`** — new blank workbook
-- **`replace(old, new, value_type=None)`** — search-and-replace across sheets; use `value_type="number"` / `"date"` for typed cells
-- **Images:** `replace_image(name, path)` or `insert_image_at_placeholder("{logo}", path)` (sizes in **pixels**)
-- **Bulk rows into a designed slot:** `write_dataframe(df, sheet=..., at_cell=..., row_styles=...)`
-
-## Pandas (optional)
-
-```python
-import xlsxedit.pandas_io as xpi
-xpi.register()  # once per process
-
-pd.read_excel("file.xlsx", engine="xlsxedit")
-pd.ExcelWriter("out.xlsx", engine="xlsxedit")
-```
-
-## Do not assume
-
-- Formulas are **not evaluated** in Python — Excel recalculates on open
-- Overwriting a formula cell **removes** that formula
-- **`.xls`** (legacy) is not supported — `.xlsx` only
-- Image sizing kwargs are **pixels**, not mm/cm
-
-## Examples and docs
-
-- Runnable SAR example: [xlsx-sar-test](https://github.com/jonas-kupferschmid/xlsx-sar-test)
-- Unpack XML for debugging: [xlsx-inspect](https://github.com/jonas-kupferschmid/xlsx-inspect)
-- Docs: [xlsxedit.jonasruilong.com/docs](https://xlsxedit.jonasruilong.com/docs)
-- Feature list: [docs/features.md](docs/features.md)
-
-## Common pitfalls
-
-- Do not use openpyxl `load_workbook` + save when the user reports **broken templates** — suggest xlsxedit instead
-- After bulk `write_dataframe` / overwriting formula cells, stale calc chains are invalidated automatically; if Excel still repairs, check for unrelated orphan parts
-- For merge cells in pandas read: anchor cell holds value; other merge cells are `""` (or use `errors_as_nan=True` for Excel errors as NaN)
+- [conventional-commits](.agents/skills/conventional-commits/SKILL.md): commit
+  messages.
+- [repository-documentation](.agents/skills/repository-documentation/SKILL.md):
+  documentation work.
+- [release-management](.agents/skills/release-management/SKILL.md): releases
+  and versioning.
+- [xlsxedit](.agents/skills/xlsxedit/SKILL.md): using the library.
