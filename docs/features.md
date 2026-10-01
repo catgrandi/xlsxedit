@@ -107,7 +107,7 @@ Values aimed at cells that a merge covers follow the rule in [large-data-export.
 |-----|---------|-------|
 | `cell.value` | Get/set typed value | str, int, float, bool, `date`, `datetime`, `None`; overwriting a formula drops `calcChain.xml` (Excel rebuilds it) |
 | `cell.data_type` | Raw OOXML cell type | `"s"`, `"str"`, `"inlineStr"`, `"b"`, `"e"`, or `None` (numeric) |
-| `cell.formula` | Get/set formula text | Stored and returned without the leading `=` (`"A2*2"`); the setter also accepts `"=A2*2"`. Setting drops the cached result and its type and sets `fullCalcOnLoad`. A shared-formula follower reads `None` and becomes a standalone formula when set; a single-cell array formula stays an array formula. Refused edits raise `FormulaGroupError`. Setting to `None` removes the formula |
+| `cell.formula` | Get/set formula text | Stored and returned without the leading `=` (`"A2*2"`); the setter also accepts `"=A2*2"`. Setting drops the cached result and its type and sets `fullCalcOnLoad`. A shared-formula follower reads `None` and becomes a standalone formula when set; a single-cell array formula stays an array formula. Refused edits raise `FormulaGroupError`. Setting to `None` removes the formula and keeps its cached result as a value; on a shared-formula master the followers lose their formulas too, as with `cell.value` |
 | `cell.formula_type` | Kind of formula (read-only) | `"normal"`, `"shared"`, `"array"`, `"dataTable"`, or `None` without a formula, including the non-anchor cells of an array or data-table range |
 | `cell.clear()` | Clear cell content | Keeps style index; drops calcChain if cell had a formula |
 | `cell.address` | Cell address | |
@@ -224,8 +224,8 @@ All library errors derive from `XlsxeditError`, so you can catch everything with
 | `InvalidColorError` | `ValueError` | Invalid color value |
 | `InvalidImageError` | `ValueError` | Unsupported or corrupt image data |
 | `MissingPartError` | `RuntimeError` | A required package part is absent |
-| `FormulaGroupError` | `ValueError` | An edit would split a formula group: setting `cell.formula` on a shared-formula master that other cells still derive from, or on any cell of a multi-cell array or data-table formula; or overwriting, clearing, or removing the formula of such a multi-cell formula's anchor (`cell.value`, `cell.clear()`, `cell.formula = None`, `clear_range`, bulk writes). The cell is left unchanged; `clear_range` and bulk writes keep the cells they wrote before it |
-| `DTDForbiddenError` | `ValueError` | An XML part xlsxedit reads declares a DTD (`<!DOCTYPE>`), which Excel never writes; raised on open, or when a worksheet is first read. Parsing never expands entities or fetches external resources |
+| `FormulaGroupError` | `ValueError` | An edit would split a formula group: setting `cell.formula` on a shared-formula master that other cells still derive from, or on any cell of a multi-cell array or data-table formula; or overwriting, clearing, or removing the formula of such a multi-cell formula's anchor (`cell.value`, `cell.clear()`, `cell.formula = None`, `clear_range`, bulk writes). The refused cell keeps its content, though a styled bulk write may already have restyled it; `clear_range` and bulk writes keep the cells they wrote before it |
+| `DTDForbiddenError` | `ValueError` | An XML part xlsxedit reads declares a DTD (`<!DOCTYPE>`), which Excel never writes. Raised when the part is first parsed: on open, or when a worksheet, table, drawing, or chart is first used, which can be partway through an edit. Parsing never expands entities or fetches external resources |
 
 ---
 
