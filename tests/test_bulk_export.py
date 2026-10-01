@@ -138,10 +138,10 @@ def test_large_mode_deferred_worksheet_parse(tmp_path: Path):
     assert wb2._large is True
     data_part = wb2["Data"]._part
     assert isinstance(data_part, WorksheetPart)
-    assert data_part._defer_blob is not None or data_part._element is not None
+    assert data_part._element is None
+    assert data_part.blob is data_part._orig_blob
     # Access triggers parse
     assert wb2["Data"]["A1"].value == "s2"
-    assert data_part._defer_blob is None
     assert data_part._element is not None
 
 

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import TYPE_CHECKING
 
 from xlsxedit.opc.packuri import PackURI
 from xlsxedit.opc.rel import Relationships
-from xlsxedit.oxml.parser import parse_xml, serialize_xml
+from xlsxedit.opc.serialize import serialize_part_xml
+from xlsxedit.oxml.parser import parse_xml
 
 if TYPE_CHECKING:
     from lxml.etree import _Element
@@ -70,7 +72,20 @@ class Part:
 
 
 class XmlPart(Part):
-    """Package part whose payload is a live lxml tree."""
+    """Package part whose payload is a live lxml tree.
+
+    A part loaded from a package keeps its source bytes and writes them back
+    while its tree is canonically unchanged: never handed out by
+    :attr:`element`, or serializing exactly as a fresh parse of the source
+    bytes does. An untouched part therefore round-trips byte-identically. A
+    part whose tree changed, or that was marked with :meth:`mark_dirty`, is
+    serialized from the tree.
+    """
+
+    _orig_blob: bytes | None = None
+    _orig_digest: bytes | None = None  # how a fresh parse of _orig_blob serializes
+    _handed_out: bool = False
+    _dirty: bool = False
 
     def __init__(
         self,
@@ -84,15 +99,32 @@ class XmlPart(Part):
 
     @classmethod
     def load(cls, partname: PackURI, content_type: str, blob: bytes, package=None):
-        return cls(partname, content_type, parse_xml(blob), package)
+        part = cls(partname, content_type, parse_xml(blob), package)
+        part._orig_blob = blob
+        return part
 
     @property
     def element(self) -> "_Element":
+        self._handed_out = True
         return self._element
+
+    def mark_dirty(self) -> None:
+        """Serialize the tree on save without comparing it to the source bytes."""
+        self._dirty = True
 
     @property
     def blob(self) -> bytes:
-        return serialize_xml(self._element)
+        if self._orig_blob is None or self._dirty:
+            return serialize_part_xml(self.element)
+        if not self._handed_out:
+            return self._orig_blob
+        xml = serialize_part_xml(self._element)
+        if xml == self._orig_blob:
+            return self._orig_blob
+        if self._orig_digest is None:
+            loaded = serialize_part_xml(parse_xml(self._orig_blob))
+            self._orig_digest = hashlib.sha256(loaded).digest()
+        return self._orig_blob if hashlib.sha256(xml).digest() == self._orig_digest else xml
 
 
 class PartFactory:

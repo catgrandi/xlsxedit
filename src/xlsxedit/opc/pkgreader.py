@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 from xlsxedit.opc.constants import CT, CT_NS
-from xlsxedit.opc.packuri import CONTENT_TYPES_URI, PACKAGE_URI, PackURI
+from xlsxedit.opc.packuri import (
+    CONTENT_TYPES_URI,
+    PACKAGE_URI,
+    PackURI,
+    encode_partname,
+    is_partname,
+)
 from xlsxedit.opc.phys_pkg import PhysPkgReader
 from xlsxedit.opc.rel import Relationships
 from xlsxedit.oxml.parser import parse_xml
@@ -27,9 +33,18 @@ def _is_bookkeeping_part(partname: PackURI) -> bool:
 
 
 class ContentTypeMap:
+    """The ``Default`` and ``Override`` entries of a ``[Content_Types].xml``.
+
+    Extensions and part names match case-insensitively. ``xml`` holds the
+    bytes the map was read from, ``default_entries`` its ``Default`` entries
+    as written, in document order.
+    """
+
     def __init__(self):
         self._defaults: dict[str, str] = {}
         self._overrides: dict[str, str] = {}
+        self.default_entries: list[tuple[str, str]] = []
+        self.xml: bytes | None = None
 
     def __getitem__(self, partname: PackURI) -> str:
         key = str(partname).lower()
@@ -52,12 +67,33 @@ class ContentTypeMap:
                 return CT.OPC_RELATIONSHIPS
             return _OCTET_STREAM
 
+    def describes(self, parts) -> bool:
+        """True if these entries type exactly ``parts`` and their ``.rels`` items.
+
+        Every part resolves to its own content type, every ``Override`` names
+        one of the parts, and ``rels`` defaults to the relationships type.
+        """
+        if self._defaults.get("rels") != CT.OPC_RELATIONSHIPS:
+            return False
+        partnames = set()
+        for part in parts:
+            partnames.add(str(part.partname).lower())
+            try:
+                if self[part.partname] != part.content_type:
+                    return False
+            except KeyError:
+                return False
+        return self._overrides.keys() <= partnames
+
     @classmethod
     def from_xml(cls, xml: bytes) -> ContentTypeMap:
         root = parse_xml(xml)
         ct_map = cls()
+        ct_map.xml = xml
         for elm in root.findall(_DEFAULT_TAG):
-            ct_map._defaults[elm.get("Extension").lower()] = elm.get("ContentType")
+            ext, content_type = elm.get("Extension"), elm.get("ContentType")
+            ct_map._defaults[ext.lower()] = content_type
+            ct_map.default_entries.append((ext, content_type))
         for elm in root.findall(_OVERRIDE_TAG):
             ct_map._overrides[elm.get("PartName").lower()] = elm.get("ContentType")
         return ct_map
@@ -107,22 +143,34 @@ class PackageReader:
     def _load_parts(cls, phys, pkg_rels, content_types):
         sparts = []
         for partname, blob, reltype, srels in cls._walk(phys, pkg_rels):
-            content_type = content_types[partname]
+            content_type = content_types.content_type_for(partname)
             sparts.append((partname, content_type, reltype, blob, srels))
         return sparts
 
     @classmethod
     def _load_orphans(cls, phys, content_types: ContentTypeMap, sparts):
-        related = {partname for partname, *_ in sparts}
+        """Unrelated members, renamed to legal part names (``[trash]/x`` -> ``%5Btrash%5D/x``).
+
+        Part names compare case-insensitively. A member whose name cannot be
+        made legal, or matches a related part or an earlier orphan, is skipped.
+        """
+        members = [m for m in phys.iter_part_membernames() if not _is_bookkeeping_part(m)]
+        legal = {member.lower() for member in members if is_partname(member)}
+        taken = {partname.lower() for partname, *_ in sparts}
         orphans = []
-        for partname in phys.iter_part_membernames():
-            if _is_bookkeeping_part(partname):
+        for member in members:
+            if is_partname(member):
+                partname = member
+            else:
+                encoded = encode_partname(member)
+                if encoded is None or encoded.lower() in legal:
+                    continue
+                partname = PackURI(encoded)
+            if partname.lower() in taken:
                 continue
-            if partname in related:
-                continue
-            blob = phys.blob_for(partname)
-            content_type = content_types.content_type_for(partname)
-            orphans.append((partname, content_type, blob))
+            taken.add(partname.lower())
+            content_type = content_types.content_type_for(member)
+            orphans.append((partname, content_type, phys.blob_for(member)))
         return orphans
 
     @classmethod

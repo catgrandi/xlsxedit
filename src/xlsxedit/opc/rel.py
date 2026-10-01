@@ -8,7 +8,8 @@ from lxml import etree
 
 from xlsxedit.opc.constants import REL_NS
 from xlsxedit.opc.packuri import PackURI
-from xlsxedit.oxml.parser import parse_xml, serialize_xml
+from xlsxedit.opc.serialize import serialize_part_xml
+from xlsxedit.oxml.parser import parse_xml
 
 _REL_TAG = f"{{{REL_NS}}}Relationship"
 _RELS_TAG = f"{{{REL_NS}}}Relationships"
@@ -62,6 +63,8 @@ class Relationships:
     def __init__(self, base_uri: str = "/"):
         self._base_uri = base_uri
         self._rels: dict[str, Relationship] = {}
+        self._xml: bytes | None = None
+        self._source: tuple[bytes, dict[str, tuple[str, str, str]]] | None = None
 
     def __len__(self) -> int:
         return len(self._rels)
@@ -132,8 +135,26 @@ class Relationships:
                 max_id = max(max_id, int(r_id[3:]))
         return f"rId{max_id + 1}"
 
+    def keep_source(self, srels: Relationships) -> None:
+        """Write the rels item ``srels`` was read from while it still lists these relationships."""
+        if srels._xml is not None:
+            self._source = (srels._xml, srels._signature())
+
+    def _signature(self) -> dict[str, tuple[str, str, str]]:
+        """``rId -> (type, mode, target)``; the target is a part name unless external."""
+        return {
+            rel.rId: (
+                rel.reltype,
+                rel.target_mode,
+                rel.target_ref if rel.is_external else str(rel.target_partname),
+            )
+            for rel in self._rels.values()
+        }
+
     @property
     def xml(self) -> bytes:
+        if self._source is not None and self._source[1] == self._signature():
+            return self._source[0]
         root = etree.Element(_RELS_TAG, nsmap={None: REL_NS})
         for rel in self._rels.values():
             elm = etree.SubElement(root, _REL_TAG)
@@ -142,13 +163,14 @@ class Relationships:
             elm.set("Target", rel.target_ref)
             if rel.is_external:
                 elm.set("TargetMode", "External")
-        return serialize_xml(root)
+        return serialize_part_xml(root)
 
     @classmethod
     def from_xml(cls, base_uri: str, xml: bytes | None) -> Relationships:
         rels = cls(base_uri)
         if xml is None:
             return rels
+        rels._xml = xml
         root = parse_xml(xml)
         for elm in root.findall(_REL_TAG):
             rId = elm.get("Id")
