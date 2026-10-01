@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 from lxml import etree
 
@@ -11,6 +12,7 @@ from xlsxedit.merge import parse_range
 from xlsxedit.opc.constants import OFFICE_REL_NS, SML_NS
 from xlsxedit.oxml.address import col_to_index, index_to_col, join_address, split_address
 from xlsxedit.oxml.parser import parse_xml, serialize_xml
+from xlsxedit.range_set import CellRange
 
 _ROW = f"{{{SML_NS}}}row"
 _C = f"{{{SML_NS}}}c"
@@ -29,14 +31,31 @@ _DATA_VALIDATION = f"{{{SML_NS}}}dataValidation"
 _DEFINED_NAMES = f"{{{SML_NS}}}definedNames"
 _DEFINED_NAME = f"{{{SML_NS}}}definedName"
 
-_CELL_TOKEN_RE = re.compile(r"^(\$?)([A-Za-z]+)(\$?)(\d+)$")
-_A1_RANGE_RE = re.compile(
-    r"\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?"
+_SHEETS = f"{{{SML_NS}}}sheets"
+_SHEET = f"{{{SML_NS}}}sheet"
+
+# A reference in formula text: a cell, a range, whole columns or whole rows.
+_REF = (
+    r"(?:\$?[A-Za-z]{1,3}\$?[0-9]+(?::\$?[A-Za-z]{1,3}\$?[0-9]+)?"
+    r"|\$?[A-Za-z]{1,3}:\$?[A-Za-z]{1,3}"
+    r"|\$?[0-9]+:\$?[0-9]+)"
 )
-_QUALIFIED_REF_RE = re.compile(
-    r"(?P<sheet>'(?:[^']|'')+'|[^'!\s]+)"
-    r"!"
-    r"(?P<ref>\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?)"
+# A sheet prefix: quoted, or an unquoted name, or an unquoted 3D span.
+_SHEET_NAME = r"(?:'(?:[^']|'')+'|[^\W\d][\w.]*(?::[^\W\d][\w.]*)?)"
+# A reference ends where no name (which may hold ? and \), call, structured
+# reference or sheet prefix continues.
+_REF_END = r"(?![\w.(\[!$?\\])"
+_FORMULA_TOKEN_RE = re.compile(
+    rf"""
+    (?P<string>"(?:[^"]|"")*")
+  | (?P<bracket>\[(?:'.|[^\]'])*\])  # ' escapes a bracket inside a structured reference
+  | (?P<sheet>{_SHEET_NAME})!(?P<qref>{_REF}{_REF_END}|\#REF!)
+  | '(?:[^']|'')*'  # a quoted prefix to a name, never read inside
+  | (?P<ref>{_REF}){_REF_END}
+  | [\w.$?\\]+
+  | .
+    """,
+    re.VERBOSE | re.DOTALL,
 )
 
 
@@ -258,133 +277,100 @@ def shift_col_dimensions(ws_element: etree._Element, at_col: int, delta: int) ->
         col_elm.set("max", str(new_max))
 
 
-def _unquote_sheet_name(prefix: str) -> str:
-    if prefix.startswith("'") and prefix.endswith("'") and len(prefix) >= 2:
-        return prefix[1:-1].replace("''", "'")
-    return prefix
-
-
-def _sheet_prefix_matches(prefix: str, sheet_name: str) -> bool:
-    if ":" in prefix and not (prefix.startswith("'") and prefix.endswith("'")):
+def _same_sheet(prefix: str, sheet_name: str | None) -> bool:
+    """Whether a reference prefix names exactly ``sheet_name`` (not a 3D span or another book)."""
+    if sheet_name is None:
         return False
-    return _unquote_sheet_name(prefix) == sheet_name
+    if prefix.startswith("'"):
+        name = prefix[1:-1].replace("''", "'")
+        if ":" in name or "[" in name:
+            return False
+    elif ":" in prefix:
+        return False
+    else:
+        name = prefix
+    return name.casefold() == sheet_name.casefold()
 
 
-def _parse_dollar_cell(token: str) -> tuple[bool, str, bool, int] | None:
-    m = _CELL_TOKEN_RE.fullmatch(token)
-    if not m:
-        return None
-    return bool(m.group(1)), m.group(2).upper(), bool(m.group(3)), int(m.group(4))
+def _move_ref_text(ref: str, move: Callable[[CellRange], CellRange | None]) -> str:
+    try:
+        area = CellRange.parse(ref)
+    except InvalidRangeError:
+        return ref  # past the grid, so a name rather than a cell
+    moved = move(area)
+    return "#REF!" if moved is None else str(moved)
 
 
-def _format_dollar_cell(abs_col: bool, col: str, abs_row: bool, row: int) -> str:
-    return f"{'$' if abs_col else ''}{col}{'$' if abs_row else ''}{row}"
+def rewrite_formula_refs(
+    text: str,
+    sheet_name: str,
+    move: Callable[[CellRange], CellRange | None],
+    *,
+    unqualified: bool,
+) -> str:
+    """Move the references to ``sheet_name`` in formula ``text``.
+
+    Rewrites references qualified with that sheet, and, when ``unqualified``,
+    references without a sheet prefix. A reference is a whole token: never
+    part of a sheet name (``Data2024!``), a function name (``LOG10(``,
+    ``DAYS360(``), a defined name or a structured reference. String literals,
+    other sheets, 3D spans and external workbooks are left alone. A reference
+    pushed off the grid becomes ``#REF!``.
+    """
+    out: list[str] = []
+    after_bracket = False
+    for m in _FORMULA_TOKEN_RE.finditer(text):
+        token = m.group(0)
+        qref, ref = m.group("qref"), m.group("ref")
+        if qref is not None and qref != "#REF!" and not after_bracket:
+            if _same_sheet(m.group("sheet"), sheet_name):
+                token = f"{m.group('sheet')}!{_move_ref_text(qref, move)}"
+        elif ref is not None and unqualified and text[m.start() - 1 : m.start()] not in ("!", "]"):
+            token = _move_ref_text(ref, move)
+        out.append(token)
+        after_bracket = m.group("bracket") is not None
+    return "".join(out)
+
+
+def _local_sheet_index(wb_elm: etree._Element, sheet_name: str) -> int | None:
+    """Position of ``sheet_name`` among ``<sheets>``, the index ``localSheetId`` uses."""
+    for index, sheet in enumerate(wb_elm.iterfind(f"{_SHEETS}/{_SHEET}")):
+        if sheet.get("name") == sheet_name:
+            return index
+    return None
 
 
 def shift_dollar_ref(ref: str, at_row: int, delta: int) -> str:
-    """Shift rows in an A1 ref, preserving ``$``."""
-    parts = ref.split(":")
-    cells = [_parse_dollar_cell(p) for p in parts]
-    if any(c is None for c in cells):
-        return ref
-    r2 = cells[-1][3]
-    if r2 < at_row:
-        return ref
-    out = []
-    for abs_c, col, abs_r, row in cells:
-        out.append(
-            _format_dollar_cell(abs_c, col, abs_r, shift_row_number(row, at_row, delta))
-        )
-    return ":".join(out)
+    """Shift rows in an A1 ref, preserving ``$``; an unparseable ref is returned as is."""
+    return _move_ref_text(ref, lambda area: area.shift_rows(at_row, delta))
 
 
 def shift_dollar_ref_cols(ref: str, at_col: int, delta: int) -> str:
     """Shift columns in an A1 ref, preserving ``$`` (``at_col`` is 0-based)."""
-    parts = ref.split(":")
-    cells = [_parse_dollar_cell(p) for p in parts]
-    if any(c is None for c in cells):
-        return ref
-    c2i = col_to_index(cells[-1][1])
-    if c2i < at_col:
-        return ref
-    out = []
-    for abs_c, col, abs_r, row in cells:
-        new_idx = shift_col_index(col_to_index(col), at_col, delta)
-        out.append(_format_dollar_cell(abs_c, index_to_col(new_idx), abs_r, row))
-    return ":".join(out)
-
-
-def _shift_defined_name_text(
-    text: str,
-    sheet_name: str,
-    local: bool,
-    at: int,
-    delta: int,
-    *,
-    cols: bool,
-) -> str:
-    shifter = shift_dollar_ref_cols if cols else shift_dollar_ref
-
-    def repl_qualified(match: re.Match[str]) -> str:
-        prefix = match.group("sheet")
-        if not _sheet_prefix_matches(prefix, sheet_name):
-            return match.group(0)
-        return f"{prefix}!{shifter(match.group('ref'), at, delta)}"
-
-    text = _QUALIFIED_REF_RE.sub(repl_qualified, text)
-    if not local:
-        return text
-
-    def repl_unqualified(match: re.Match[str]) -> str:
-        return shifter(match.group(0), at, delta)
-
-    out = []
-    last = 0
-    for match in _A1_RANGE_RE.finditer(text):
-        start = match.start()
-        if start > 0 and text[start - 1] == "!":
-            out.append(text[last : match.end()])
-            last = match.end()
-            continue
-        out.append(text[last:start])
-        out.append(repl_unqualified(match))
-        last = match.end()
-    out.append(text[last:])
-    return "".join(out)
-
-
-def _sheet_index(workbook, sheet_name: str) -> int:
-    names = list(workbook.sheetnames)
-    return names.index(sheet_name)
+    return _move_ref_text(ref, lambda area: area.shift_cols(at_col + 1, delta))
 
 
 def shift_defined_names(workbook, sheet_name: str, at_row: int, delta: int) -> None:
     """Shift A1 rows in definedNames that refer to ``sheet_name``."""
-    _shift_defined_names(workbook, sheet_name, at_row, delta, cols=False)
+    _shift_defined_names(workbook, sheet_name, lambda area: area.shift_rows(at_row, delta))
 
 
 def shift_defined_names_cols(workbook, sheet_name: str, at_col: int, delta: int) -> None:
     """Shift A1 columns in definedNames that refer to ``sheet_name``."""
-    _shift_defined_names(workbook, sheet_name, at_col, delta, cols=True)
+    _shift_defined_names(workbook, sheet_name, lambda area: area.shift_cols(at_col + 1, delta))
 
 
 def _shift_defined_names(
-    workbook, sheet_name: str, at: int, delta: int, *, cols: bool
+    workbook, sheet_name: str, move: Callable[[CellRange], CellRange | None]
 ) -> None:
     wb_elm = workbook._workbook_part.element
     block = wb_elm.find(_DEFINED_NAMES)
     if block is None:
         return
-    try:
-        index = _sheet_index(workbook, sheet_name)
-    except ValueError:
-        return
+    index = _local_sheet_index(wb_elm, sheet_name)
     for elm in block.findall(_DEFINED_NAME):
-        local_id = elm.get("localSheetId")
-        local = local_id is not None and int(local_id) == index
-        text = elm.text
-        if not text:
+        if not elm.text:
             continue
-        elm.text = _shift_defined_name_text(
-            text, sheet_name, local, at, delta, cols=cols
-        )
+        local_id = elm.get("localSheetId")
+        local = index is not None and local_id is not None and local_id == str(index)
+        elm.text = rewrite_formula_refs(elm.text, sheet_name, move, unqualified=local)
