@@ -84,6 +84,6 @@ def test_replace_leaves_stale_formula_cache():
 
     wb.replace("{qty}", 21, value_type="number")
     assert ws["A1"].value == 21
-    assert ws["C1"].formula == "=A1*2"
+    assert ws["C1"].formula == "A1*2"
     assert ws["C1"].value == 0
     assert _full_calc_on_load(wb) == "1"

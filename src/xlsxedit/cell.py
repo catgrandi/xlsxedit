@@ -8,6 +8,8 @@ from datetime import date, datetime
 from lxml import etree
 from lxml.etree import _Element
 
+from xlsxedit.exceptions import FormulaGroupError, InvalidRangeError
+from xlsxedit.merge import address_in_range, parse_range
 from xlsxedit.opc.constants import SML_NS
 from xlsxedit.shared_strings import si_display_text
 from xlsxedit.styles import CellStyle, serial_to_datetime, datetime_to_serial
@@ -22,6 +24,43 @@ _IS = f"{{{SML_NS}}}is"
 _T = f"{{{SML_NS}}}t"
 _R = f"{{{SML_NS}}}r"
 _XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
+
+_RANGE_FORMULA_TYPES = ("array", "dataTable")
+_RANGE_FORMULAS = etree.XPath(
+    "m:sheetData/m:row/m:c/m:f[@t='array' or @t='dataTable']", namespaces={"m": SML_NS}
+)
+_SHARED_FORMULAS = etree.XPath(
+    "m:sheetData/m:row/m:c/m:f[@t='shared' and @si=$si]", namespaces={"m": SML_NS}
+)
+
+
+def _ref_contains(ref: str | None, address: str) -> bool:
+    if not ref:
+        return False
+    try:
+        return address_in_range(address, ref)
+    except InvalidRangeError:
+        return False
+
+
+def _spans_several_cells(ref: str | None) -> bool:
+    if not ref:
+        return False
+    try:
+        c1, r1, c2, r2 = parse_range(ref)
+    except InvalidRangeError:
+        return False
+    return (c1, r1) != (c2, r2)
+
+
+def _refuse_range_formula_edit(address: str, f_elm: _Element) -> None:
+    """Raise if ``f_elm`` anchors an array or data-table formula over several cells."""
+    kind, ref = f_elm.get("t"), f_elm.get("ref")
+    if kind in _RANGE_FORMULA_TYPES and _spans_several_cells(ref):
+        raise FormulaGroupError(
+            f"{address} anchors the {kind} formula over {ref}; "
+            "editing part of a multi-cell formula is not supported"
+        )
 
 
 def _inline_t_nodes(is_elm: _Element) -> list[_Element]:
@@ -127,6 +166,15 @@ class Cell:
 
     @property
     def formula(self) -> str | None:
+        """Formula text as Excel stores it, without a leading ``=``.
+
+        ``None`` without a formula, and on a shared-formula follower, whose
+        text lives on the group's master. The setter accepts an optional
+        leading ``=``, drops the cached result and its ``t`` type, and sets
+        ``fullCalcOnLoad`` so Excel computes the new formula on open. A
+        follower becomes a standalone formula, and a single-cell array
+        formula stays an array formula. ``None`` removes the formula.
+        """
         f = self._element.find(_F)
         if f is None:
             return None
@@ -140,15 +188,61 @@ class Cell:
                 self._worksheet._workbook._on_formula_removed(self._worksheet, self._element)
                 self._element.remove(f)
             return
+        if not isinstance(expr, str):
+            raise TypeError(f"Cell.formula accepts str or None; got {type(expr)!r}")
+        text = expr[1:] if expr.startswith("=") else expr
+        if not text.strip():
+            raise ValueError(f"formula for {self.address!r} is empty")
+        f = self._element.find(_F)
+        self._refuse_formula_group_edit(f)
+        keep = f is not None and f.get("t", "normal") in ("normal", "array")
+        for child in list(self._element):
+            if child.tag in (_V, _IS) or (child.tag == _F and not keep):
+                self._element.remove(child)
+        self._element.attrib.pop("t", None)
+        if not keep:
+            f = etree.SubElement(self._element, _F)
+            self._element.insert(0, f)
+        f.text = text
+        self._worksheet._workbook.set_full_calc_on_load()
+
+    @property
+    def formula_type(self) -> str | None:
+        """``"normal"``, ``"shared"``, ``"array"``, or ``"dataTable"``; ``None`` without ``<f>``.
+
+        Only an array or data-table formula's anchor cell carries ``<f>``; the
+        other cells of its range return ``None``.
+        """
         f = self._element.find(_F)
         if f is None:
-            f = etree.Element(_F)
-            v = self._element.find(_V)
-            if v is not None:
-                self._element.insert(list(self._element).index(v), f)
-            else:
-                self._element.append(f)
-        f.text = expr
+            return None
+        return f.get("t", "normal")
+
+    def _refuse_formula_group_edit(self, f: _Element | None) -> None:
+        """Raise unless a new formula here leaves every other cell's formula as it was."""
+        address = self.address
+        sheet = self._worksheet._part.element
+        if f is not None:
+            _refuse_range_formula_edit(address, f)
+            si = f.get("si")
+            is_master = f.get("ref") is not None or bool((f.text or "").strip())
+            if f.get("t") == "shared" and is_master and si is not None:
+                others = [m for m in _SHARED_FORMULAS(sheet, si=si) if m is not f]
+                if others:
+                    raise FormulaGroupError(
+                        f"{address} holds shared formula si={si}, which "
+                        f"{len(others)} other cell(s) derive from; give those cells "
+                        f"their own formulas first, or set {address}'s value to turn "
+                        "them into plain values"
+                    )
+        for master in _RANGE_FORMULAS(sheet):
+            if master is not f and _ref_contains(master.get("ref"), address):
+                anchor = master.getparent().get("r", "?")
+                raise FormulaGroupError(
+                    f"{address} lies in the {master.get('t')} formula anchored at {anchor} "
+                    f"over {master.get('ref')}; editing part of a multi-cell formula "
+                    "is not supported"
+                )
 
     @property
     def style(self) -> CellStyle:

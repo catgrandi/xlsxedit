@@ -87,7 +87,8 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 |-----|---------|-------|
 | `cell.value` | Get/set typed value | str, int, float, bool, `date`, `datetime`, `None`; overwriting a formula drops `calcChain.xml` (Excel rebuilds it) |
 | `cell.data_type` | Raw OOXML cell type | `"s"`, `"str"`, `"inlineStr"`, `"b"`, `"e"`, or `None` (numeric) |
-| `cell.formula` | Get/set formula string | e.g. `"=A2*2"`; setting to `None` removes the formula |
+| `cell.formula` | Get/set formula text | Stored and returned without the leading `=` (`"A2*2"`); the setter also accepts `"=A2*2"`. Setting drops the cached result and its type and sets `fullCalcOnLoad`. A shared-formula follower reads `None` and becomes a standalone formula when set; a single-cell array formula stays an array formula. Refused edits raise `FormulaGroupError`. Setting to `None` removes the formula |
+| `cell.formula_type` | Kind of formula (read-only) | `"normal"`, `"shared"`, `"array"`, `"dataTable"`, or `None` without a formula, including the non-anchor cells of an array or data-table range |
 | `cell.clear()` | Clear cell content | Keeps style index; drops calcChain if cell had a formula |
 | `cell.address` | Cell address | |
 | `cell.worksheet` | Owning worksheet | |
@@ -199,6 +200,7 @@ All library errors derive from `XlsxeditError`, so you can catch everything with
 | `InvalidColorError` | `ValueError` | Invalid color value |
 | `InvalidImageError` | `ValueError` | Unsupported or corrupt image data |
 | `MissingPartError` | `RuntimeError` | A required package part is absent |
+| `FormulaGroupError` | `ValueError` | An edit would split a formula group: setting `cell.formula` on a shared-formula master that other cells still derive from, or on any cell of a multi-cell array or data-table formula; or overwriting, clearing, or removing the formula of such a multi-cell formula's anchor (`cell.value`, `cell.clear()`, `cell.formula = None`, `clear_range`, bulk writes). The cell is left unchanged; `clear_range` and bulk writes keep the cells they wrote before it |
 
 ---
 
