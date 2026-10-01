@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import warnings
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from xlsxedit.drawing import Chart
 from xlsxedit.opc.constants import OFFICE_REL_NS, SML_NS
 from xlsxedit.oxml.parser import parse_template_xml
 from tests.conftest import ASSETS, FIXTURES
+from tests.preservation import check_consistency
 from tests.schema_validate import (
     CHART_ALLOWLIST,
     SchemaWarning,
@@ -35,6 +37,20 @@ def _ids(paths: list[Path]) -> list[str]:
     return [p.stem for p in paths]
 
 
+# insert_rows and insert_columns still break these consistency invariants on
+# some fixtures (issues #5 and #7). The two tests below assert schema validity,
+# so they opt out of the suite guard and tolerate exactly these codes; every
+# other invariant must still hold. The strict xfails in test_consistency.py
+# report when the bugs are fixed. Remove a code here when its issue lands.
+_KNOWN_STRUCTURAL_BUGS = frozenset({"shared-formula", "calc-chain", "x14-cf", "table-columns"})
+
+
+def _assert_consistent_apart_from_known_bugs(wb: Workbook) -> None:
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    check_consistency(buffer.getvalue(), waive=_KNOWN_STRUCTURAL_BUGS)
+
+
 def test_fixtures_are_found():
     assert len(FIXTURE_PATHS) >= 11
 
@@ -49,20 +65,22 @@ def test_fixture_validates(path: Path):
 
 
 @pytest.mark.parametrize("path", FIXTURE_PATHS, ids=_ids(FIXTURE_PATHS))
-def test_fixture_validates_after_insert_rows(path: Path):
+def test_fixture_validates_after_insert_rows(path: Path, unchecked_workbooks):
     wb = Workbook.open(path)
     for ws in wb.worksheets:
         ws.insert_rows([["inserted", 1], ["inserted", 2]], at_row=2)
     checked = assert_valid_package(wb)
+    _assert_consistent_apart_from_known_bugs(wb)
     assert sum(kind == "spreadsheetml" for kind in checked.values()) >= 3
 
 
 @pytest.mark.parametrize("path", FIXTURE_PATHS, ids=_ids(FIXTURE_PATHS))
-def test_fixture_validates_after_insert_columns(path: Path):
+def test_fixture_validates_after_insert_columns(path: Path, unchecked_workbooks):
     wb = Workbook.open(path)
     for ws in wb.worksheets:
         ws.insert_columns([["inserted", 1]], at_col="B")
     assert_valid_package(wb)
+    _assert_consistent_apart_from_known_bugs(wb)
 
 
 @pytest.mark.parametrize("path", FIXTURE_PATHS, ids=_ids(FIXTURE_PATHS))
