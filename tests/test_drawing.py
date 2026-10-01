@@ -1,8 +1,10 @@
-"""Drawing and chart parts: live trees, picture anchors and sizes."""
+"""Drawing and chart parts: live trees, picture anchors and sizes, series caches."""
 
 from __future__ import annotations
 
 import io
+import warnings
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -10,9 +12,9 @@ from lxml import etree
 
 from tests.conftest import INSPECT_FIXTURES
 from tests.preservation import assert_preserved, read_pkg, worksheet_members
-from tests.schema_validate import assert_valid_package
+from tests.schema_validate import SchemaWarning, assert_valid_package
 from xlsxedit import Workbook
-from xlsxedit.drawing import A_NS, EMU_PER_PIXEL, XDR_NS, drawing_parts_for_worksheet
+from xlsxedit.drawing import A_NS, CHART_NS, EMU_PER_PIXEL, XDR_NS, drawing_parts_for_worksheet
 from xlsxedit.parts import ChartPart, DrawingPart
 
 PNG = (
@@ -23,6 +25,7 @@ PNG = (
 
 _XDR = f"{{{XDR_NS}}}"
 _A = f"{{{A_NS}}}"
+_C = f"{{{CHART_NS}}}"
 
 
 @pytest.fixture
@@ -279,3 +282,83 @@ def test_picture_size_must_be_positive(png: Path, value: int):
     pic = wb["Sheet1"].add_image(png, anchor="B2")
     with pytest.raises(ValueError):
         pic.width = value
+
+
+# --- series caches ----------------------------------------------------------
+
+
+def _series_caches(wb: Workbook) -> etree._Element:
+    return etree.fromstring(read_pkg(wb)["xl/charts/chart1.xml"])
+
+
+def test_num_cache_holds_only_numbers_with_sparse_points():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A1"].value = "Item"
+    ws["B1"].value = "Qty"
+    labels = ["a", "b", None, "d", 5, "f"]
+    values = [3, True, None, "text", date(2024, 1, 2), 2.5]
+    for row, (label, value) in enumerate(zip(labels, values), start=2):
+        if label is not None:
+            ws[f"A{row}"].value = label
+        if value is not None:
+            ws[f"B{row}"].value = value
+    ws["B6"].apply_date_format()
+    ws["B7"].apply_number_format("0.00")
+    cells_before = len(ws.cells)
+
+    ws.add_chart("bar", anchor="D2", data_range="A1:B7")
+
+    assert len(ws.cells) == cells_before  # reading the range creates no cells
+    root = _series_caches(wb)
+    num_cache = root.find(f".//{_C}numRef/{_C}numCache")
+    assert num_cache.findtext(f"{_C}formatCode") == "General"
+    assert num_cache.find(f"{_C}ptCount").get("val") == "6"
+    points = {
+        int(pt.get("idx")): (pt.findtext(f"{_C}v"), pt.get("formatCode"))
+        for pt in num_cache.iter(f"{_C}pt")
+    }
+    assert points == {0: ("3", None), 4: ("45293", "mm-dd-yy"), 5: ("2.5", "0.00")}
+    for text, _ in points.values():
+        float(text)
+
+    cat_cache = root.find(f".//{_C}cat/{_C}strRef/{_C}strCache")
+    assert cat_cache.find(f"{_C}ptCount").get("val") == "6"
+    assert {int(pt.get("idx")): pt.findtext(f"{_C}v") for pt in cat_cache.iter(f"{_C}pt")} == {
+        0: "a",
+        1: "b",
+        3: "d",
+        4: "5",
+        5: "f",
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", SchemaWarning)
+        assert_valid_package(wb)
+
+
+def test_num_cache_format_code_comes_from_the_source_cells():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A1"].value = "Item"
+    ws["B1"].value = "Share"
+    for row, share in ((2, 0.25), (3, 0.5)):
+        ws[f"A{row}"].value = f"item {row}"
+        ws[f"B{row}"].value = share
+        ws[f"B{row}"].apply_number_format("0.0%")
+
+    ws.add_chart("bar", anchor="D2", data_range="A1:B3")
+
+    num_cache = _series_caches(wb).find(f".//{_C}numCache")
+    assert num_cache.findtext(f"{_C}formatCode") == "0.0%"
+    assert all(pt.get("formatCode") is None for pt in num_cache.iter(f"{_C}pt"))
+
+
+def test_blank_series_name_gives_an_empty_string_cache():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A2"].value = "x"
+    ws["B2"].value = 1
+    ws.add_chart("bar", anchor="D2", data_range="A1:B2")
+    name_cache = _series_caches(wb).find(f".//{_C}tx/{_C}strRef/{_C}strCache")
+    assert name_cache.find(f"{_C}ptCount").get("val") == "1"
+    assert name_cache.find(f"{_C}pt") is None
