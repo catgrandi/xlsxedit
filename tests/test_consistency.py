@@ -464,7 +464,6 @@ def test_add_table_names_each_table_uniquely():
     check_consistency(wb)
 
 
-@_known_bug("#8", "calc-chain", reason="remove_worksheet keeps calcChain entries of the sheet")
 def test_remove_worksheet_drops_its_calc_chain_entries():
     wb = Workbook.open(INSPECT_FIXTURES["SimpleFormula"])
     wb.add_worksheet("Other")
