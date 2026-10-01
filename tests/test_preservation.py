@@ -1,4 +1,4 @@
-"""The preservation harness itself: canonical form, package and worksheet diffs."""
+"""The preservation harness itself: canonical form, package and worksheet diffs, the guard."""
 
 from __future__ import annotations
 
@@ -14,11 +14,15 @@ from tests.conftest import BOOK1, INSPECT_FIXTURES
 from tests.preservation import (
     CONTENT_TYPES,
     CellState,
+    ConsistencyGuardError,
     assert_preserved,
     canon,
+    checking_workbooks,
     child_order,
     content_types,
     read_pkg,
+    waived,
+    waives,
     worksheet_diff,
 )
 
@@ -303,3 +307,69 @@ def test_child_order():
         "sheetData",
         "pageMargins",
     )
+
+
+def _break(wb: Workbook):
+    """Give A1 a cell-metadata index the workbook cannot resolve; return the <c>."""
+    cell = wb.worksheets[0]["A1"]
+    cell.value = 1
+    cell._element.set("cm", "1")
+    return cell._element
+
+
+def test_guard_checks_saved_packages(unchecked_workbooks, tmp_path):
+    with checking_workbooks():
+        wb = Workbook.create()
+        c = _break(wb)
+        with pytest.raises(ConsistencyGuardError, match="cell-metadata"):
+            wb.save(io.BytesIO())
+        with pytest.raises(ConsistencyGuardError, match="cell-metadata"):
+            wb.save(tmp_path / "out.xlsx")
+        with open(tmp_path / "handle.xlsx", "wb") as handle:
+            wb.save(handle)  # a file object is not read back
+        del c.attrib["cm"]
+
+
+def test_guard_checks_workbooks_that_are_never_saved(unchecked_workbooks):
+    with pytest.raises(ConsistencyGuardError, match="cell-metadata"):
+        with checking_workbooks():
+            _break(Workbook.create())
+
+
+def test_guard_waivers_tolerate_and_must_match(unchecked_workbooks):
+    with checking_workbooks(waive={"cell-metadata"}):
+        wb = Workbook.create()
+        _break(wb)
+        wb.save(io.BytesIO())
+    with pytest.raises(ConsistencyGuardError, match=r"no longer violated: table-name \(#7\)"):
+        with checking_workbooks(waive={"table-name": "#7"}):
+            Workbook.create()
+
+
+def test_guard_abandon_skips_the_exit_checks(unchecked_workbooks):
+    with checking_workbooks(waive={"table-name": "#7"}) as guard:
+        _break(Workbook.create())
+        guard.abandon()
+
+
+def test_guard_restores_the_workbook_class(unchecked_workbooks):
+    assert not hasattr(Workbook.save, "__wrapped__")
+    with checking_workbooks():
+        assert hasattr(Workbook.save, "__wrapped__") and hasattr(Workbook.__init__, "__wrapped__")
+    assert not hasattr(Workbook.save, "__wrapped__") and not hasattr(
+        Workbook.__init__, "__wrapped__"
+    )
+
+
+def test_waives_declares_invariants_on_the_test():
+    @waives("#7", "table-name")
+    @waives("#5", "x14-cf", "calc-chain")
+    def test():
+        pass
+
+    assert waived(test) == {"x14-cf": "#5", "calc-chain": "#5", "table-name": "#7"}
+    assert waived(test_waives_declares_invariants_on_the_test) == {}
+    with pytest.raises(ValueError, match="needs invariant codes"):
+        waives("#5", "x14-cfs")
+    with pytest.raises(ValueError, match="needs invariant codes"):
+        waives("#5")
