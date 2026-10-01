@@ -83,12 +83,12 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 
 `insert_rows` and `insert_columns` move everything in the workbook that names the shifted cells:
 
-- on the sheet: cells, merges, conditional formats, data validations, hyperlinks, tables, shared, array and data-table formula ranges and, for columns, the `<cols>` widths;
-- elsewhere: defined names, reference by reference.
+- on the sheet: cells, merges, conditional formats and data validations (with their x14 extensions and sparklines), hyperlinks, tables, shared, array and data-table formula ranges and, for columns, the `<cols>` widths;
+- elsewhere: defined names, reference by reference, and other sheets' x14 formulas, conditional-format values and internal hyperlink locations that point at the sheet.
 
-A range that straddles the insert point grows; one that spans every row (column) ignores a row (column) insert. They do **not** rewrite formulas in cells, conditional-format `<formula>` or validation `formula1`/`formula2` text, charts, drawings, comments or pivot tables. Inserting columns strictly inside a table does not add table columns yet.
+A range that straddles the insert point grows; one that spans every row (column) ignores a row (column) insert. They do **not** rewrite formulas in cells, conditional-format `<formula>` or validation `formula1`/`formula2` text (an x14 `xm:f` or a `cfvo` value that is one reference does move), charts, drawings, comments or pivot tables. Inserting columns strictly inside a table does not add table columns yet.
 
-Merges, formats, validations, hyperlinks and other ranges pushed past the last row or column are dropped; a reference in a defined name pushed off becomes `#REF!`. Both methods drop `calcChain.xml`, set `fullCalcOnLoad`, and return the number of rows (columns) inserted.
+Merges, formats, validations, hyperlinks and other ranges pushed past the last row or column are dropped; a single reference pushed off becomes `#REF!`. Both methods drop `calcChain.xml`, set `fullCalcOnLoad`, and return the number of rows (columns) inserted.
 
 They refuse an insert, changing nothing, by raising:
 

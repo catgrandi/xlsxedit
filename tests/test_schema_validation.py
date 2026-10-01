@@ -37,12 +37,12 @@ def _ids(paths: list[Path]) -> list[str]:
     return [p.stem for p in paths]
 
 
-# insert_rows and insert_columns still break these consistency invariants on
-# some fixtures (issues #5 and #7). The two tests below assert schema validity,
-# so they opt out of the suite guard and tolerate exactly these codes; every
+# insert_columns still breaks these consistency invariants on some fixtures
+# (issue #7). The insert_columns test below asserts schema validity,
+# so it opts out of the suite guard and tolerates exactly these codes; every
 # other invariant must still hold. The strict xfails in test_consistency.py
 # report when the bugs are fixed. Remove a code here when its issue lands.
-_KNOWN_STRUCTURAL_BUGS = frozenset({"x14-cf", "table-columns"})
+_KNOWN_STRUCTURAL_BUGS = frozenset({"table-columns"})
 
 
 def _assert_consistent_apart_from_known_bugs(wb: Workbook) -> None:
@@ -65,12 +65,12 @@ def test_fixture_validates(path: Path):
 
 
 @pytest.mark.parametrize("path", FIXTURE_PATHS, ids=_ids(FIXTURE_PATHS))
-def test_fixture_validates_after_insert_rows(path: Path, unchecked_workbooks):
+def test_fixture_validates_after_insert_rows(path: Path):
     wb = Workbook.open(path)
     for ws in wb.worksheets:
         ws.insert_rows([["inserted", 1], ["inserted", 2]], at_row=2)
     checked = assert_valid_package(wb)
-    _assert_consistent_apart_from_known_bugs(wb)
+    check_consistency(wb)
     assert sum(kind == "spreadsheetml" for kind in checked.values()) >= 3
 
 
