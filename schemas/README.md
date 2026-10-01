@@ -5,8 +5,14 @@ SpreadsheetML in ECMA-376 Part 4, *Transitional Migration Features*, 5th
 edition (December 2016): `sml.xsd` and the nine schemas it imports directly
 or indirectly.
 
-[`tests/schema_validate.py`](../tests/schema_validate.py) validates the parts
-of saved workbooks against them during the test suite.
+Two tools read them:
+
+- [`scripts/gen_ooxml_order.py`](../scripts/gen_ooxml_order.py) generates
+  the child-element order tables in `src/xlsxedit/_ooxml_order.py`. Run it
+  again after changing a schema; `tests/test_ooxml_order.py` fails until the
+  generated module matches.
+- [`tests/schema_validate.py`](../tests/schema_validate.py) validates the
+  parts of saved workbooks during the test suite.
 
 The directory is outside `src/`, and `MANIFEST.in` does not include it, so
 the schemas never ship in the wheel or the source distribution.
@@ -67,5 +73,5 @@ charge. The schema files carry no copyright or license notice of their own.
 The [Ecma text copyright policy](https://ecma-international.org/policies/by-ipr/ecma-text-copyright-policy/)
 permits copying and distributing Ecma standards with the copyright notice,
 and permits using a standard to implement its functionality in conforming
-products. This repository uses the files only to run its tests and does not
-include them in its distributions.
+products. This repository uses the files only to generate code and to run
+its tests, and does not include them in its distributions.
