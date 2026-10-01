@@ -26,6 +26,10 @@ class InvalidRangeError(XlsxeditError, ValueError):
     """Raised for a malformed cell address or range string (e.g. ``"A1:C3"``)."""
 
 
+class GridOverflowError(InvalidRangeError):
+    """Raised when an edit would put cells past row 1,048,576 or column XFD."""
+
+
 class InvalidColorError(XlsxeditError, ValueError):
     """Raised for an invalid color value."""
 
