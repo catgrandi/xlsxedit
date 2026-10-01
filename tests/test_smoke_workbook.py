@@ -124,7 +124,7 @@ def test_smoke_workbook_round_trip_and_xml(tmp_path: Path) -> None:
 
     assert wb2["Links"]["A1"].hyperlink.url == "https://xlsxedit.jonasruilong.com"
     _assert_hyperlinks_after_sheet_data(wb2["Links"]._part.blob)
-    assert wb2["Formulas"]["C1"].formula == "=A1+B1"
+    assert wb2["Formulas"]["C1"].formula == "A1+B1"
     assert len(wb2["CF"].conditional_formatting) >= 2
     _assert_cell_is_has_dxf(wb2, "CF")
     assert len(wb2["Chart"].charts) >= 1

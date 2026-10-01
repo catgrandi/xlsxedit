@@ -203,14 +203,19 @@ class Workbook:
         calc_pr.set("fullCalcOnLoad", "1")
 
     def _on_formula_removed(self, worksheet: Worksheet, c_elm) -> None:
-        """Bookkeeping after a cell loses its ``<f>`` element.
+        """Bookkeeping before a cell loses its ``<f>`` element.
 
-        Drops stale ``calcChain.xml``. If the cell was a shared-formula master,
-        also strips ``<f>`` from same-``si`` followers on that sheet.
+        Raises ``FormulaGroupError``, changing nothing, if the cell anchors an
+        array or data-table formula over several cells: removing the anchor
+        would leave the rest of the range as orphaned values. Otherwise drops
+        stale ``calcChain.xml``. If the cell was a shared-formula master, also
+        strips ``<f>`` from same-``si`` followers on that sheet.
         """
-        from xlsxedit.cell import _F
+        from xlsxedit.cell import _F, _refuse_range_formula_edit
 
         f_elm = c_elm.find(_F)
+        if f_elm is not None:
+            _refuse_range_formula_edit(c_elm.get("r", ""), f_elm)
         if f_elm is not None and f_elm.get("t") == "shared" and (f_elm.text or "").strip():
             si = f_elm.get("si")
             if si is not None:

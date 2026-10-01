@@ -72,12 +72,14 @@ def test_read_excel_sparse_sheet(tmp_path: Path):
 
 
 def test_read_excel_formula_cached_value(tmp_path: Path):
+    from xlsxedit.cell import _ensure_v
+
     path = tmp_path / "formula.xlsx"
     wb = Workbook.create()
     ws = wb["Sheet1"]
     ws["A1"].value = 10
-    ws["B1"].value = 11
     ws["B1"].formula = "=A1+1"
+    _ensure_v(ws["B1"]._element).text = "11"
     wb.save(path)
 
     df = pd.read_excel(path, engine="xlsxedit", header=None)

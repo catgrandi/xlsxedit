@@ -7,6 +7,7 @@ from xlsxedit.dimensions import ColumnDimension, RowDimension
 from xlsxedit.drawing import Chart, Picture, Table
 from xlsxedit.exceptions import (
     DuplicateWorksheetError,
+    FormulaGroupError,
     GridOverflowError,
     InvalidColorError,
     InvalidImageError,
@@ -45,5 +46,6 @@ __all__ = [
     "InvalidColorError",
     "InvalidImageError",
     "MissingPartError",
+    "FormulaGroupError",
 ]
 __version__ = "1.0.1"

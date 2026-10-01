@@ -44,3 +44,7 @@ class MissingPartError(XlsxeditError, RuntimeError):
 
 class TableError(XlsxeditError, ValueError):
     """Raised when a table edit would leave an invalid or inconsistent table part."""
+
+
+class FormulaGroupError(XlsxeditError, ValueError):
+    """Raised when an edit would split a shared, array, or data-table formula."""
