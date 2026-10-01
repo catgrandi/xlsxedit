@@ -42,7 +42,7 @@ def _ids(paths: list[Path]) -> list[str]:
 # so they opt out of the suite guard and tolerate exactly these codes; every
 # other invariant must still hold. The strict xfails in test_consistency.py
 # report when the bugs are fixed. Remove a code here when its issue lands.
-_KNOWN_STRUCTURAL_BUGS = frozenset({"shared-formula", "calc-chain", "x14-cf", "table-columns"})
+_KNOWN_STRUCTURAL_BUGS = frozenset({"x14-cf", "table-columns"})
 
 
 def _assert_consistent_apart_from_known_bugs(wb: Workbook) -> None:
