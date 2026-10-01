@@ -40,6 +40,8 @@ from xlsxedit.row_shift import (
     check_values_writable,
     plan_insert_columns,
     plan_insert_rows,
+    sort_row_cells,
+    widen_row_spans,
 )
 from xlsxedit.merge import MergeMap, normalize_range, parse_range, ranges_overlap
 from xlsxedit.opc.constants import CT, OFFICE_REL_NS, RT, SML_NS
@@ -636,6 +638,9 @@ class Worksheet:
                 column_styles=column_styles,
                 string_columns=string_columns,
             )
+            last_row = start_row + len(row_list) - 1
+            sort_row_cells(self._sheet_data(), start_row, last_row)
+            widen_row_spans(self._sheet_data(), start_row, last_row)
         self.update_dimension()
         return count
 
