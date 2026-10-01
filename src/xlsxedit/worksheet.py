@@ -33,16 +33,19 @@ from xlsxedit.drawing import (
     iter_pictures,
     table_parts_for_worksheet,
 )
+from xlsxedit.range_set import column_number
 from xlsxedit.row_shift import (
-    shift_col_dimensions,
-    shift_defined_names,
-    shift_defined_names_cols,
-    shift_sheet_col_references,
-    shift_sheet_data_cols,
-    shift_sheet_data_rows,
-    shift_sheet_row_references,
-    shift_table_parts,
-    shift_table_parts_cols,
+    append_merges,
+    check_block_in_grid,
+    check_merges_disjoint,
+    check_style_specs,
+    check_values_writable,
+    place_cell_in_order,
+    plan_insert_columns,
+    plan_insert_rows,
+    sort_row_cells,
+    template_row_merges,
+    widen_row_spans,
 )
 from xlsxedit.merge import MergeMap, normalize_range, parse_range, ranges_overlap
 from xlsxedit.opc.constants import CT, OFFICE_REL_NS, RT, SML_NS
@@ -362,6 +365,7 @@ class Worksheet:
         start_row: int,
         start_col_idx: int,
         template_rows: int | list[int] | None = None,
+        template_maps: list[dict[int, str]] | None = None,
         row_styles: list[dict[str, Any]] | None = None,
         column_styles: list[dict[str, Any]] | None = None,
         string_columns: set[int] | None = None,
@@ -371,9 +375,10 @@ class Worksheet:
             row_styles=row_styles,
         )
 
-        template_maps = self._resolve_template_style_maps(
-            template_rows=template_rows,
-        )
+        if template_maps is None:  # insert_* resolve them before shifting
+            template_maps = self._resolve_template_style_maps(
+                template_rows=template_rows,
+            )
         styles = self._workbook.styles
         inline_cache: BulkStyleCache | None = None
         if row_styles is not None:
@@ -384,6 +389,16 @@ class Worksheet:
         string_columns = string_columns or set()
         count = 0
         max_width = 0
+        has_merges = bool(self.merged_ranges)
+
+        def writes_cell(address: str) -> bool:
+            """Whether this call also writes ``address`` itself."""
+            col, row = split_address(address)
+            if not 0 <= row - start_row < len(row_list):
+                return False
+            values = row_list[row - start_row]
+            width = len(values) if isinstance(values, (list, tuple)) else 1
+            return 0 <= col_to_index(col) - start_col_idx < width
 
         for offset, row_values in enumerate(row_list):
             row_num = start_row + offset
@@ -431,6 +446,17 @@ class Worksheet:
 
                 if style_index is not None:
                     c_elm.set("s", style_index)
+
+                anchor = self._resolve_write_address(address) if has_merges else address
+                if anchor != address:
+                    # A merge covers this cell: its value goes to the anchor, as with
+                    # ws[address], unless it is None or this call writes the anchor too.
+                    if value is None or writes_cell(anchor):
+                        continue
+                    c_elm = self._bulk_get_or_create_cell(
+                        anchor, self._bulk_ensure_row(split_address(anchor)[1])
+                    )
+                    place_cell_in_order(c_elm)
 
                 write_cell_value(
                     c_elm,
@@ -518,7 +544,12 @@ class Worksheet:
         column_styles: list[dict[str, Any]] | None = None,
         string_columns: set[int] | None = None,
     ) -> int:
-        """Insert rows at ``at_row``, shifting existing content down."""
+        """Insert rows at ``at_row``, shifting existing content down.
+
+        What moves with the rows, and when the insert is refused without any
+        change, is described under "Inserting rows and columns" in
+        ``docs/features.md``. Returns the number of rows inserted.
+        """
         if at_cell is not None:
             start_col, at_row = split_address(at_cell)
             start_col_idx = col_to_index(start_col)
@@ -532,26 +563,42 @@ class Worksheet:
             return 0
 
         count = len(row_list)
-        template_merge_bands = self._snapshot_template_row_merges(template_rows)
-        sheet_data = self._sheet_data()
-        shift_sheet_data_rows(sheet_data, at_row, count)
-        shift_sheet_row_references(self._part.element, at_row, count)
-        shift_table_parts(self, at_row, count)
-        shift_defined_names(self._workbook, self.name, at_row, count)
+        validate_style_sources(template_rows=template_rows, row_styles=row_styles)
+        check_style_specs(row_styles, column_styles)
+        width = max(len(r) if isinstance(r, (list, tuple)) else 1 for r in row_list)
+        check_block_in_grid("insert_rows", at_row, start_col_idx, count, width)
+        check_values_writable(
+            "insert_rows",
+            row_list,
+            start_col_idx=start_col_idx,
+            string_columns=string_columns,
+            has_shared_strings=self.shared_strings is not None,
+        )
+        plan = plan_insert_rows(self, at_row, count)
+        template_maps = self._resolve_template_style_maps(template_rows=template_rows)
+        new_merges = template_row_merges(
+            self.merged_ranges, normalize_template_rows(template_rows), at_row, count
+        )
+        check_merges_disjoint(plan.merges, new_merges)
+        plan.apply()
+        # Merge first, so the write treats the cells the new merges cover like any other.
+        append_merges(self._part.element, new_merges)
+        self._invalidate_merge_map()
         self._invalidate_bulk_indexes()
 
-        written = self._write_bulk_rows(
-            row_list,
-            start_row=at_row,
-            start_col_idx=start_col_idx,
-            template_rows=template_rows,
-            row_styles=row_styles,
-            column_styles=column_styles,
-            string_columns=string_columns,
-        )
-        self._apply_template_row_merges(at_row, written, template_merge_bands)
+        if width:
+            self._write_bulk_rows(
+                row_list,
+                start_row=at_row,
+                start_col_idx=start_col_idx,
+                template_rows=template_rows,
+                template_maps=template_maps,
+                row_styles=row_styles,
+                column_styles=column_styles,
+                string_columns=string_columns,
+            )
         self.update_dimension()
-        return written
+        return count
 
     def insert_columns(
         self,
@@ -566,8 +613,9 @@ class Worksheet:
     ) -> int:
         """Insert columns at ``at_col``, shifting existing content right.
 
-        ``cols`` is a sequence of column vectors (each top→bottom). Does not
-        rewrite formula text or move drawing/chart anchors.
+        ``cols`` is a sequence of column vectors (each top→bottom). Behaves
+        like ``insert_rows`` on the column axis (see ``docs/features.md``).
+        Returns the number of columns inserted.
         """
         if at_cell is not None:
             start_col, start_row = split_address(at_cell)
@@ -579,23 +627,19 @@ class Worksheet:
             if isinstance(at_col, int):
                 at_col_idx = at_col
             else:
-                at_col_idx = col_to_index(str(at_col))
+                at_col_idx = column_number(str(at_col)) - 1
 
         col_list = list(cols)
         if not col_list:
             return 0
 
         count = len(col_list)
-        sheet_data = self._sheet_data()
-        shift_sheet_data_cols(sheet_data, at_col_idx, count)
-        shift_sheet_col_references(self._part.element, at_col_idx, count)
-        shift_table_parts_cols(self, at_col_idx, count)
-        shift_col_dimensions(self._part.element, at_col_idx, count)
-        shift_defined_names_cols(self._workbook, self.name, at_col_idx, count)
-        self._invalidate_bulk_indexes()
+        validate_style_sources(template_rows=template_rows, row_styles=row_styles)
+        check_style_specs(row_styles, column_styles)
+        max_len = max((len(v) if isinstance(v, (list, tuple)) else 1) for v in col_list)
+        check_block_in_grid("insert_columns", start_row, at_col_idx, max_len, count)
 
         # Transpose column vectors → row tuples for _write_bulk_rows
-        max_len = max((len(v) if isinstance(v, (list, tuple)) else 1) for v in col_list)
         row_list: list[tuple] = []
         for row_offset in range(max_len):
             row_vals = []
@@ -605,17 +649,35 @@ class Worksheet:
                 row_vals.append(col_vec[row_offset] if row_offset < len(col_vec) else None)
             row_list.append(tuple(row_vals))
 
-        written = self._write_bulk_rows(
+        check_values_writable(
+            "insert_columns",
             row_list,
-            start_row=start_row,
             start_col_idx=at_col_idx,
-            template_rows=template_rows,
-            row_styles=row_styles,
-            column_styles=column_styles,
             string_columns=string_columns,
+            has_shared_strings=self.shared_strings is not None,
         )
+        plan = plan_insert_columns(self, at_col_idx, count)
+        template_maps = self._resolve_template_style_maps(template_rows=template_rows)
+        plan.apply()
+        self._invalidate_merge_map()
+        self._invalidate_bulk_indexes()
+
+        if row_list:
+            self._write_bulk_rows(
+                row_list,
+                start_row=start_row,
+                start_col_idx=at_col_idx,
+                template_rows=template_rows,
+                template_maps=template_maps,
+                row_styles=row_styles,
+                column_styles=column_styles,
+                string_columns=string_columns,
+            )
+            last_row = start_row + len(row_list) - 1
+            sort_row_cells(self._sheet_data(), start_row, last_row)
+            widen_row_spans(self._sheet_data(), start_row, last_row)
         self.update_dimension()
-        return count if written else 0
+        return count
 
     def _detach_shared_formula_followers(
         self, si: str, *, exclude: etree._Element | None = None
@@ -737,34 +799,6 @@ class Worksheet:
     @property
     def conditional_formatting(self) -> list[ConditionalFormatting]:
         return iter_conditional_formatting(self)
-
-    def _snapshot_template_row_merges(
-        self, template_rows: int | list[int] | None
-    ) -> list[list[tuple[str, str]]]:
-        """Horizontal merge (c1, c2) pairs per template row, before insert shift."""
-        row_nums = normalize_template_rows(template_rows)
-        if not row_nums:
-            return []
-        by_row: dict[int, list[tuple[str, str]]] = {n: [] for n in row_nums}
-        for ref in self.merged_ranges:
-            c1, r1, c2, r2 = parse_range(ref)
-            if r1 == r2 and r1 in by_row and c1 != c2:
-                by_row[r1].append((c1, c2))
-        return [by_row[n] for n in row_nums]
-
-    def _apply_template_row_merges(
-        self,
-        at_row: int,
-        written: int,
-        bands: list[list[tuple[str, str]]],
-    ) -> None:
-        if not bands or written <= 0:
-            return
-        n_templates = len(bands)
-        for offset in range(written):
-            dest = at_row + offset
-            for c1, c2 in bands[offset % n_templates]:
-                self.merge_cells(f"{join_address(c1, dest)}:{join_address(c2, dest)}")
 
     def merge_cells(self, cell_range: str) -> None:
         """Merge cells in ``cell_range`` (e.g. ``A1:C1``)."""

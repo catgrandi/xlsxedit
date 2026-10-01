@@ -6,6 +6,12 @@ import re
 
 from xlsxedit.exceptions import InvalidRangeError
 
+MAX_ROW = 1_048_576
+"""Last row of a worksheet (1-based)."""
+
+MAX_COL = 16_384
+"""Last column of a worksheet (1-based); column ``XFD``."""
+
 _ADDRESS_RE = re.compile(r"^([A-Za-z]+)(\d+)$")
 
 

@@ -17,6 +17,7 @@ import pytest
 from lxml import etree
 
 from xlsxedit import Workbook
+from xlsxedit.exceptions import GridOverflowError
 from xlsxedit.opc.constants import SML_NS
 from tests.conftest import BOOK1, INSPECT_FIXTURES
 from tests.preservation import (
@@ -383,35 +384,27 @@ def test_worksheet_members_follow_workbook_order():
     }
 
 
-@_known_bug(
-    "#5",
-    "shared-formula",
-    "calc-chain",
-    reason="insert_rows leaves shared refs and calcChain stale",
-)
 def test_insert_rows_keeps_formulas_and_calc_chain_consistent():
     wb = Workbook.open(INSPECT_FIXTURES["SimpleFormula"])
     wb["Sheet1"].insert_rows([[None]], at_row=5)
     check_consistency(wb)
 
 
-@_known_bug("#5", "x14-cf", reason="insert_rows never shifts x14 xm:sqref")
 def test_insert_rows_moves_x14_conditional_formatting():
     wb = Workbook.open(INSPECT_FIXTURES["ConditionalFormatting"])
     wb["Sheet1"].insert_rows([[None]], at_row=3)
     check_consistency(wb)
 
 
-@_known_bug("#5", "grid-bounds", reason="insert_rows pushes cells past row 1048576")
 def test_insert_rows_stays_inside_the_grid():
     wb = Workbook.create()
     ws = wb.worksheets[0]
     ws["A1048576"].value = 1
-    ws.insert_rows([[None]], at_row=1)
+    with pytest.raises(GridOverflowError, match="cell A1048576"):
+        ws.insert_rows([[None]], at_row=1)
     check_consistency(wb)
 
 
-@_known_bug("#5", "formula-ref", reason="insert_rows never shifts array <f ref>")
 def test_insert_rows_moves_array_formula_refs():
     wb = Workbook.create()
     ws = wb.worksheets[0]

@@ -62,8 +62,8 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | `ws.merged_ranges` | Merged ranges as `list[str]` | e.g. `["A1:C1"]` |
 | `ws.clear_range(cell_range)` | Clear values in range | Returns count cleared |
 | `ws.write_rows(rows, at_cell / at_row, …)` | Write rows at fixed positions | Bulk styling kwargs |
-| `ws.insert_rows(rows, at_cell, …)` | Insert rows, shift below down | Shifts merges/CF/tables; does **not** rewrite formulas or drawing/chart anchors |
-| `ws.insert_columns(cols, at_col / at_cell, …)` | Insert columns, shift right | ``cols`` = column vectors (top→bottom); same caveats as ``insert_rows`` |
+| `ws.insert_rows(rows, at_cell, …)` | Insert rows, shift below down | See [Inserting rows and columns](#inserting-rows-and-columns) |
+| `ws.insert_columns(cols, at_col / at_cell, …)` | Insert columns, shift right | ``cols`` = column vectors (top→bottom); see [Inserting rows and columns](#inserting-rows-and-columns) |
 | `ws.update_dimension()` | Refresh `<dimension>` | Usually automatic |
 | `ws.replace(old, new, *, value_type=None)` | SAR on this sheet only | Sets `fullCalcOnLoad` when any cell changes |
 | `ws.find(value)` | First cell with exact ``value`` | Skips formulas; ``None`` if missing |
@@ -78,6 +78,26 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | `ws.add_conditional_formatting(cell_range, *, operator, formula, …)` | Add `cellIs` rule | With optional dxf colors |
 | `ws.add_color_scale_formatting(cell_range)` | Add color-scale rule | |
 | `ws.expand_conditional_formatting(end_row)` | Extend CF ranges after bulk insert | Optional with `write_dataframe` |
+
+### Inserting rows and columns
+
+`insert_rows` and `insert_columns` move everything in the workbook that names the shifted cells:
+
+- on the sheet: cells, merges, conditional formats and data validations (with their x14 extensions and sparklines), hyperlinks, tables, the `autoFilter` and its sort state, page breaks, sheet views, protected ranges, ignored errors, cell watches, scenarios, shared, array and data-table formula ranges and, for columns, the `<cols>` widths and row `spans`;
+- elsewhere: defined names, reference by reference, and other sheets' x14 formulas, conditional-format values and internal hyperlink locations that point at the sheet.
+
+A range that straddles the insert point grows; one that spans every row (column) ignores a row (column) insert. They do **not** rewrite formulas in cells, conditional-format `<formula>` or validation `formula1`/`formula2` text (an x14 `xm:f` or a `cfvo` value that is one reference does move), charts, drawings, comments or pivot tables. Inserting columns strictly inside a table does not add table columns yet.
+
+Merges, formats, validations, hyperlinks and other ranges pushed past the last row or column are dropped; a single reference pushed off becomes `#REF!`. `template_rows` name rows as they are before the insert, and their one-row merges are copied onto the new rows. Both methods drop `calcChain.xml`, set `fullCalcOnLoad`, and return the number of rows (columns) inserted.
+
+They refuse an insert, changing nothing, by raising:
+
+- `GridOverflowError` when the new cells, cell content, a table, a scenario input cell or a data-table input cell would pass row 1,048,576 or column XFD;
+- `InvalidRangeError` for a reference in the sheet they cannot parse, or an insert point off the grid (`TypeError` if it is not an integer);
+- `ValueError` when a `template_rows` merge would overlap a merge, or when both `template_rows` and `row_styles` are given;
+- `TypeError` or `ValueError` for a value or inline style they cannot write.
+
+Values aimed at cells that a merge covers follow the rule in [large-data-export.md](large-data-export.md).
 
 ---
 
@@ -196,6 +216,7 @@ All library errors derive from `XlsxeditError`, so you can catch everything with
 | `WorksheetNotFoundError` | `KeyError` | A worksheet name is not present |
 | `DuplicateWorksheetError` | `ValueError` | Adding/renaming to an existing sheet name |
 | `InvalidRangeError` | `ValueError` | Malformed cell address or range (e.g. `"A1:C3"`) |
+| `GridOverflowError` | `InvalidRangeError` | An insert would put cells past row 1,048,576 or column XFD ([details](#inserting-rows-and-columns)) |
 | `InvalidColorError` | `ValueError` | Invalid color value |
 | `InvalidImageError` | `ValueError` | Unsupported or corrupt image data |
 | `MissingPartError` | `RuntimeError` | A required package part is absent |

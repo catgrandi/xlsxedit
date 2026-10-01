@@ -29,7 +29,7 @@ Rows 5-7   Data from DataFrame          ← written at at_cell="A5" in the tutor
 | **overwrite** (default) | `write_rows` / `write_dataframe(mode="overwrite")` | Writes at fixed rows; overwrites cells in that range |
 | **insert** | `insert_rows` / `write_dataframe(mode="insert")` | Inserts rows at `at_cell`; shifts footer and content below down |
 
-Insert is **not** faster than overwrite — choose insert when rows below `at_cell` must move down. Insert shifts merges, conditional-formatting ranges, and tables; it does **not** rewrite formula expressions (e.g. a formula that moves to `B6` may still say `=A5*2`) or move chart/drawing anchors.
+Insert is **not** faster than overwrite — choose insert when rows below `at_cell` must move down. What insert moves, what it leaves alone, and when it refuses are listed in [features.md](features.md#inserting-rows-and-columns).
 
 ```python
 # Overwrite — replaces cells at A5+ (including footer if it sits on A5)
@@ -45,6 +45,8 @@ wb.write_dataframe(df, at_cell="A5", header=False, mode="insert")
 ```
 
 `write_dataframe` only overwrites cells it writes. It does **not** clear extra cells outside the new data rectangle. Use `clear_range` when re-filling a slot with **fewer** rows than a previous export.
+
+A value aimed at a cell that a merged range covers is not written there. It goes to the merge's top-left cell, as `ws["B1"].value = ...` does, unless it is `None` or the same write also writes that top-left cell (even with `None`, which clears it). When several such values in one write go to the same top-left cell, the last one is kept. The covered cell still gets the row's style.
 
 Pandas is optional — only `lxml` is required. Use any object with `.columns` and `.itertuples()` / `.values`.
 
@@ -126,7 +128,7 @@ Rough expectations for numeric data (post bulk-row-append fix):
 |----------|-------------------|
 | 50k–200k rows, 4 cols, overwrite | ~20k rows/s write; scales roughly linearly |
 | Zebra + column formats | ~1.3× slower than plain numeric |
-| Insert mode | Similar write speed; shifts merges/CF/tables; does **not** rewrite formula text or chart/drawing anchors |
+| Insert mode | Similar write speed, plus moving the content below `at_cell` |
 
 Measure on your machine: `python tutorial/bench_large_export.py` (set `ROWS=200000` to stress-test).
 
