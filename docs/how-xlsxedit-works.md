@@ -85,7 +85,7 @@ flowchart LR
 ### Load path
 
 1. Open the ZIP (or an unpacked directory).
-2. Read `[Content_Types].xml` and `/_rels/.rels`.
+2. Read `[Content_Types].xml` and `/_rels/.rels`. A part neither lists falls back to `application/xml` (`.xml`) or `application/octet-stream`.
 3. **Walk the relationship graph** from the package root (same idea as Word’s OPC model): follow each internal relationship, load that part, then follow *its* relationships, and so on.
 4. For each part, `PartFactory` picks a class by content type:
    - workbook / worksheet / sharedStrings → `XmlPart` subclass (parsed to lxml)
