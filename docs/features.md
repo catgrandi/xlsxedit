@@ -73,7 +73,7 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | `ws.charts` | List of `Chart` | |
 | `ws.add_chart(type, *, anchor, data_range, title, name, to_anchor)` | Add bar chart | `chart_type="bar"` today; flush from template; ``to_anchor`` optional end cell |
 | `ws.tables` | List of `Table` | |
-| `ws.add_table(cell_range, columns, *, name)` | Add Excel table | |
+| `ws.add_table(cell_range, columns, *, name, display_name)` | Add Excel table | `name` defaults to `TableN`, N being the new table's id or the next free number |
 | `ws.conditional_formatting` | Read CF blocks | colorScale, dataBar, cellIs, … |
 | `ws.add_conditional_formatting(cell_range, *, operator, formula, …)` | Add `cellIs` rule | With optional dxf colors |
 | `ws.add_color_scale_formatting(cell_range)` | Add color-scale rule | |

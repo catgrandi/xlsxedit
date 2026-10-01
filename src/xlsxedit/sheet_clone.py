@@ -75,29 +75,17 @@ def _copy_relationships(source: Part, dest: Part, package, cloned: dict[int, Par
 
 
 def _uniquify_table(part: Part, workbook) -> None:
+    """Give a cloned table part an unused id and name, and fresh revision uids."""
+    from xlsxedit.workbook import _next_table_name, _refresh_revision_uids, _table_names_and_ids
+
     elm = parse_xml(part.blob)
-    used_ids: set[int] = set()
-    used_names: set[str] = set()
-    for ws in workbook.worksheets:
-        for tbl in ws.tables:
-            try:
-                used_ids.add(int(tbl._element.get("id", "0")))
-            except (TypeError, ValueError):
-                pass
-            if tbl.name:
-                used_names.add(tbl.name)
-            disp = tbl._element.get("displayName")
-            if disp:
-                used_names.add(disp)
+    used_names, used_ids = _table_names_and_ids(workbook, exclude=part)
     new_id = max(used_ids, default=0) + 1
+    name = _next_table_name(used_names, new_id)
     elm.set("id", str(new_id))
-    name = f"Table{new_id}"
-    n = new_id
-    while name in used_names:
-        n += 1
-        name = f"Table{n}"
     elm.set("name", name)
     elm.set("displayName", name)
+    _refresh_revision_uids(elm)
     part._blob = serialize_xml(elm)
 
 
