@@ -720,3 +720,239 @@ def test_large_workbooks_rewrite_deferred_sheets_that_refer_to_the_shifted_one()
     summary = wb["Summary"]
     assert _texts(summary, ".//x14:sparkline/xm:f") == ["Sheet1!A11:E11", "Sheet1!A3:E3"]
     assert summary["A1"].hyperlink.location == "Sheet1!A11"
+
+
+# -- filters, page breaks and views -------------------------------------------
+
+
+def _filtered_sheet() -> Workbook:
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    _add(
+        ws,
+        '<autoFilter ref="A1:D20"><filterColumn colId="2"><filters><filter val="x"/></filters>'
+        '</filterColumn><sortState ref="A2:D20"><sortCondition ref="C2:C20"/></sortState></autoFilter>',
+    )
+    return wb
+
+
+def test_sheet_auto_filter_and_its_sort_state_move_on_row_insert():
+    wb = _filtered_sheet()
+    ws = wb["Sheet1"]
+    ws.insert_rows([[1]], at_row=5)
+    assert _attr(ws, "m:autoFilter", "ref") == "A1:D21"
+    assert _attr(ws, "m:autoFilter/m:sortState", "ref") == "A2:D21"
+    assert _attr(ws, ".//m:sortCondition", "ref") == "C2:C21"
+    assert_valid_package(wb)
+
+
+@pytest.mark.parametrize(
+    ("at_col", "ref", "col_id", "condition"),
+    [("A", "B1:E20", "2", "D2:D20"), ("B", "A1:E20", "3", "D2:D20"), ("D", "A1:E20", "2", "C2:C20")],
+)
+def test_sheet_auto_filter_columns_keep_their_filters_on_column_insert(
+    at_col: str, ref: str, col_id: str, condition: str
+):
+    wb = _filtered_sheet()
+    ws = wb["Sheet1"]
+    ws.insert_columns([[1]], at_col=at_col)
+    assert _attr(ws, "m:autoFilter", "ref") == ref
+    assert _attr(ws, "m:autoFilter/m:filterColumn", "colId") == col_id
+    assert _attr(ws, ".//m:sortCondition", "ref") == condition
+
+
+def test_a_sort_state_keeps_its_filter_when_its_last_condition_is_pushed_off():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    _add(
+        ws,
+        '<autoFilter ref="A1:D1048576"><sortState ref="A2:D1048576">'
+        '<sortCondition ref="C1048576"/></sortState></autoFilter>',
+    )
+    ws.insert_rows([[1]], at_row=1)
+    assert _attr(ws, "m:autoFilter", "ref") == "A1:D1048576"
+    assert _attr(ws, "m:autoFilter/m:sortState", "ref") == "A3:D1048576"
+    assert ws._part.element.find(".//m:sortCondition", NS) is None
+
+
+@pytest.mark.parametrize(("at_row", "ids"), [(5, ["6", "22"]), (6, ["4", "22"]), (21, ["4", "22"]), (22, ["4", "20"])])
+def test_row_breaks_move_with_the_row_after_them(at_row: int, ids: list[str]):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    _add(
+        ws,
+        '<rowBreaks count="2" manualBreakCount="2"><brk id="4" max="16383" man="1"/>'
+        '<brk id="20" max="16383" man="1"/></rowBreaks>',
+    )
+    ws.insert_rows([[1], [2]], at_row=at_row)
+    assert [b.get("id") for b in ws._part.element.iterfind("m:rowBreaks/m:brk", NS)] == ids
+    assert_valid_package(wb)
+
+
+def test_column_breaks_move_and_breaks_pushed_off_are_dropped():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    _add(
+        ws,
+        '<colBreaks count="2" manualBreakCount="2"><brk id="3" max="1048575" man="1"/>'
+        '<brk id="16383" max="1048575" man="1"/></colBreaks>',
+    )
+    ws.insert_columns([[1]], at_col="B")
+    block = ws._part.element.find("m:colBreaks", NS)
+    assert [b.get("id") for b in block] == ["4"]
+    assert (block.get("count"), block.get("manualBreakCount")) == ("1", "1")
+    assert_valid_package(wb)
+
+
+def _frozen_view(ws, top: str | None) -> None:
+    """Rows top..top+2 frozen (top defaults to row 1); the bottom pane starts right below."""
+    views = ws._part.element.find("m:sheetViews", NS)
+    ws._part.element.remove(views)
+    first = 1 if top is None else int(top[1:])
+    top_attr = "" if top is None else f' topLeftCell="{top}"'
+    _add(
+        ws,
+        f'<sheetViews><sheetView workbookViewId="0"{top_attr}>'
+        f'<pane ySplit="3" topLeftCell="A{first + 3}" activePane="bottomLeft" state="frozen"/>'
+        '<selection pane="bottomLeft" activeCell="B10" sqref="B10:C12 A1"/>'
+        "</sheetView></sheetViews>",
+    )
+
+
+@pytest.mark.parametrize(
+    ("top", "at_row", "view_top", "split", "pane_top"),
+    [
+        (None, 1, None, "5", "A6"),  # inside the frozen rows: the split grows
+        (None, 2, None, "5", "A6"),
+        (None, 4, None, "3", "A4"),  # at the first unfrozen row: the new rows stay in sight
+        (None, 11, None, "3", "A4"),
+        ("A5", 1, "A7", "3", "A10"),  # above a view frozen while scrolled
+        ("A5", 5, "A5", "5", "A10"),
+        ("A5", 8, "A5", "3", "A8"),
+    ],
+)
+def test_frozen_panes_keep_the_same_rows_frozen(top, at_row, view_top, split, pane_top):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    _frozen_view(ws, top)
+    ws.insert_rows([[1], [2]], at_row=at_row)
+    assert _attr(ws, ".//m:sheetView", "topLeftCell") == view_top
+    assert _attr(ws, ".//m:pane", "ySplit") == split
+    assert _attr(ws, ".//m:pane", "topLeftCell") == pane_top
+    assert_valid_package(wb)
+
+
+@pytest.mark.parametrize(
+    ("at_row", "active", "sqref"),
+    [(1, "B12", "B12:C14 A3"), (4, "B12", "B12:C14 A1"), (11, "B10", "B10:C14 A1")],
+)
+def test_selections_follow_their_cells(at_row, active, sqref):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    _frozen_view(ws, None)
+    ws.insert_rows([[1], [2]], at_row=at_row)
+    assert _attr(ws, ".//m:selection", "activeCell") == active
+    assert _attr(ws, ".//m:selection", "sqref") == sqref
+
+
+def test_frozen_columns_grow_on_column_insert():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    views = ws._part.element.find("m:sheetViews", NS)
+    ws._part.element.remove(views)
+    _add(
+        ws,
+        '<sheetViews><sheetView workbookViewId="0">'
+        '<pane xSplit="2" topLeftCell="C1" activePane="topRight" state="frozen"/>'
+        "</sheetView></sheetViews>",
+    )
+    ws.insert_columns([[1]], at_col="B")
+    assert (_attr(ws, ".//m:pane", "xSplit"), _attr(ws, ".//m:pane", "topLeftCell")) == ("3", "D1")
+    ws.insert_columns([[1]], at_col="D")
+    assert (_attr(ws, ".//m:pane", "xSplit"), _attr(ws, ".//m:pane", "topLeftCell")) == ("3", "D1")
+
+
+def test_a_selection_at_the_last_row_stays_on_the_grid():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    view = ws._part.element.find("m:sheetViews/m:sheetView", NS)
+    view.append(_xml('<selection activeCell="C1048576" sqref="C1048575:C1048576 A1048576"/>'))
+    ws.insert_rows([[1]], at_row=1)
+    assert _attr(ws, ".//m:selection", "activeCell") == "C1048576"
+    assert _attr(ws, ".//m:selection", "sqref") == "C1048576:C1048576 A1048576"
+    assert_valid_package(wb)
+
+
+def test_protected_ranges_ignored_errors_and_cell_watches_move():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    _add(ws, '<protectedRanges><protectedRange name="p" sqref="B5:C9"/></protectedRanges>')
+    _add(ws, '<cellWatches><cellWatch r="D7"/></cellWatches>')
+    _add(ws, '<ignoredErrors><ignoredError sqref="E2:E9" numberStoredAsText="1"/></ignoredErrors>')
+    ws.insert_rows([[1]], at_row=6)
+    assert _attr(ws, ".//m:protectedRange", "sqref") == "B5:C10"
+    assert _attr(ws, ".//m:cellWatch", "r") == "D8"
+    assert _attr(ws, ".//m:ignoredError", "sqref") == "E2:E10"
+    assert_valid_package(wb)
+
+
+def test_custom_views_scenarios_and_smart_tags_move():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    _add(
+        ws,
+        '<customSheetViews><customSheetView guid="{11111111-1111-1111-1111-111111111111}"'
+        ' topLeftCell="A3"><selection activeCell="B9" sqref="B9"/>'
+        '<rowBreaks count="1" manualBreakCount="1"><brk id="1048575" max="16383" man="1"/></rowBreaks>'
+        '<autoFilter ref="A2:C9"/></customSheetView></customSheetViews>',
+    )
+    _add(ws, '<smartTags><cellSmartTags r="C7"><cellSmartTag type="0"/></cellSmartTags></smartTags>')
+    _add(
+        ws,
+        '<scenarios current="0" sqref="D5"><scenario name="s" count="1">'
+        '<inputCells r="D5" val="1"/></scenario></scenarios>',
+    )
+    ws.insert_rows([[1]], at_row=2)
+    view = ws._part.element.find(".//m:customSheetView", NS)
+    assert view is not None and view.get("topLeftCell") == "A4"
+    assert _attr(ws, ".//m:customSheetView/m:selection", "sqref") == "B10"
+    assert view.find("m:rowBreaks", NS) is None  # its only break moved off the grid
+    assert _attr(ws, ".//m:customSheetView/m:autoFilter", "ref") == "A3:C10"
+    assert _attr(ws, ".//m:cellSmartTags", "r") == "C8"
+    assert (_attr(ws, "m:scenarios", "sqref"), _attr(ws, ".//m:inputCells", "r")) == ("D6", "D6")
+    assert_valid_package(wb)
+
+
+def test_a_scenario_input_cell_pushed_off_refuses_the_insert():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    _add(
+        ws,
+        '<scenarios><scenario name="s" count="1"><inputCells r="D1048576" val="1"/>'
+        "</scenario></scenarios>",
+    )
+    before = _saved(wb)
+    with pytest.raises(GridOverflowError, match="inputCells"):
+        ws.insert_rows([[1]], at_row=1)
+    assert_preserved(before, _saved(wb))
+
+
+@pytest.mark.parametrize(
+    "fragment",
+    [
+        '<autoFilter ref="A1:Q"/>',
+        '<protectedRanges><protectedRange name="p" sqref="B5:"/></protectedRanges>',
+        '<rowBreaks count="1"><brk id="x" max="16383" man="1"/></rowBreaks>',
+    ],
+    ids=["autofilter", "protected-range", "row-break"],
+)
+def test_malformed_filter_break_and_protection_refs_refuse_the_insert(
+    fragment: str, unchecked_workbooks
+):
+    wb = Workbook.open(INSPECT_FIXTURES["SimpleFormula"])
+    ws = wb["Sheet1"]
+    _add(ws, fragment)
+    before = _saved(wb)
+    with pytest.raises(InvalidRangeError):
+        ws.insert_rows([[1]], at_row=3)
+    assert_preserved(before, _saved(wb))

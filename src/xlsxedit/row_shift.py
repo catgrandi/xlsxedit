@@ -18,7 +18,7 @@ import math
 import operator
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from functools import partial
 
@@ -51,8 +51,31 @@ _DEFINED_NAMES = f"{{{SML_NS}}}definedNames"
 _DEFINED_NAME = f"{{{SML_NS}}}definedName"
 _F = f"{{{SML_NS}}}f"
 _SHEET_DATA = f"{{{SML_NS}}}sheetData"
+_FILTER_COLUMN = f"{{{SML_NS}}}filterColumn"
+_SORT_STATE = f"{{{SML_NS}}}sortState"
+_SORT_CONDITION = f"{{{SML_NS}}}sortCondition"
 _SHEETS = f"{{{SML_NS}}}sheets"
 _SHEET = f"{{{SML_NS}}}sheet"
+_SHEET_VIEWS = f"{{{SML_NS}}}sheetViews"
+_SHEET_VIEW = f"{{{SML_NS}}}sheetView"
+_CUSTOM_SHEET_VIEWS = f"{{{SML_NS}}}customSheetViews"
+_CUSTOM_SHEET_VIEW = f"{{{SML_NS}}}customSheetView"
+_PANE = f"{{{SML_NS}}}pane"
+_SELECTION = f"{{{SML_NS}}}selection"
+_ROW_BREAKS = f"{{{SML_NS}}}rowBreaks"
+_COL_BREAKS = f"{{{SML_NS}}}colBreaks"
+_BRK = f"{{{SML_NS}}}brk"
+_PROTECTED_RANGES = f"{{{SML_NS}}}protectedRanges"
+_PROTECTED_RANGE = f"{{{SML_NS}}}protectedRange"
+_IGNORED_ERRORS = f"{{{SML_NS}}}ignoredErrors"
+_IGNORED_ERROR = f"{{{SML_NS}}}ignoredError"
+_CELL_WATCHES = f"{{{SML_NS}}}cellWatches"
+_CELL_WATCH = f"{{{SML_NS}}}cellWatch"
+_SCENARIOS = f"{{{SML_NS}}}scenarios"
+_SCENARIO = f"{{{SML_NS}}}scenario"
+_INPUT_CELLS = f"{{{SML_NS}}}inputCells"
+_SMART_TAGS = f"{{{SML_NS}}}smartTags"
+_CELL_SMART_TAGS = f"{{{SML_NS}}}cellSmartTags"
 _EXT_LST = f"{{{SML_NS}}}extLst"
 
 _X14_NS = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"
@@ -163,6 +186,15 @@ class _Insert:
             full, hi = area.spans_all_cols, area.max_col
         return not full and hi >= self.at and hi + self.count > self.limit
 
+    def pinned(self, area: CellRange) -> CellRange:
+        """``area`` moved, or pinned to the last row or column when pushed off (view state)."""
+        moved = self.area(area)
+        if moved is not None:
+            return moved
+        if self.rows:
+            return replace(area, min_row=MAX_ROW, max_row=MAX_ROW, text=None)
+        return replace(area, min_col=MAX_COL, max_col=MAX_COL, text=None)
+
     def overflow(self, what: str) -> GridOverflowError:
         if self.rows:
             where, end = f"row {self.at}", f"row {MAX_ROW}"
@@ -228,6 +260,12 @@ def _detach(elm: etree._Element) -> None:
         _detach(parent)
     elif parent.get("count") is not None:
         parent.set("count", str(sum(1 for c in parent if c.tag == elm.tag)))
+
+
+def _refresh_manual_break_count(block: etree._Element) -> None:
+    if block.get("manualBreakCount") is not None:
+        manual = sum(1 for b in block.iterchildren(_BRK) if b.get("man") in ("1", "true"))
+        block.set("manualBreakCount", str(manual))
 
 
 def _walk_sheet_data(sheet_data: etree._Element | None, ins: _Insert, *, apply: bool) -> None:
@@ -426,11 +464,22 @@ class _Planner:
 
     # -- generic reference carriers -------------------------------------
 
-    def area_attr(self, elm: etree._Element, attr: str, where: str, *, lost: str) -> None:
+    def area_attr(
+        self, elm: etree._Element, attr: str, where: str, *, lost: str, ins: _Insert | None = None
+    ) -> None:
         """Move an ``ST_Ref`` attribute. When it is pushed off the grid, ``lost`` says
-        what happens: ``"remove"`` the element or ``"raise"``."""
+        what happens: ``"remove"`` the element, ``"pin"`` it to the edge, or ``"raise"``."""
         text = elm.get(attr)
         if not text:
+            return
+        if lost == "pin":
+            try:
+                area = CellRange.parse(text)
+            except InvalidRangeError:
+                return  # view state only; never block an insertion over it
+            pinned = (ins or self.ins).pinned(area)
+            if pinned is not area:
+                self.set(elm, attr, str(pinned))
             return
         area = _area(text, where)
         moved = self.ins.area(area)
@@ -455,6 +504,18 @@ class _Planner:
         else:
             self.remove(elm)
 
+    def view_sqref_attr(self, elm: etree._Element, attr: str) -> None:
+        text = elm.get(attr)
+        if not text:
+            return
+        try:
+            ranges = SheetRangeSet.parse(text)
+        except InvalidRangeError:
+            return
+        moved = [self.ins.pinned(area) for area in ranges]
+        if any(new is not old for new, old in zip(moved, ranges)):
+            self.set(elm, attr, str(SheetRangeSet(dict.fromkeys(moved))))
+
     # -- worksheet structures -------------------------------------------
 
     def worksheet(self, root: etree._Element) -> None:
@@ -466,6 +527,23 @@ class _Planner:
         for dv in root.iterfind(f"{_DATA_VALIDATIONS}/{_DATA_VALIDATION}"):
             self.sqref_attr(dv, "sqref", "dataValidation/@sqref")
         self.hyperlinks(root)
+        self.auto_filter(root, "")
+        self.sort_state(root, "")
+        self.breaks(root)
+        self.views(root)
+        for elm in root.iterfind(f"{_PROTECTED_RANGES}/{_PROTECTED_RANGE}"):
+            self.sqref_attr(elm, "sqref", "protectedRange/@sqref")
+        for elm in root.iterfind(f"{_IGNORED_ERRORS}/{_IGNORED_ERROR}"):
+            self.sqref_attr(elm, "sqref", "ignoredError/@sqref")
+        for elm in root.iterfind(f"{_CELL_WATCHES}/{_CELL_WATCH}"):
+            self.area_attr(elm, "r", "cellWatch/@r", lost="remove")
+        for elm in root.iterfind(f"{_SMART_TAGS}/{_CELL_SMART_TAGS}"):
+            self.area_attr(elm, "r", "cellSmartTags/@r", lost="remove")
+        scenarios = root.find(_SCENARIOS)
+        if scenarios is not None:
+            self.view_sqref_attr(scenarios, "sqref")
+            for elm in scenarios.iterfind(f"{_SCENARIO}/{_INPUT_CELLS}"):
+                self.area_attr(elm, "r", "scenario inputCells/@r", lost="raise")
         if not self.ins.rows:
             self.columns(root)
         self.extensions(root)
@@ -501,6 +579,112 @@ class _Planner:
                 self.remove(link)
             elif moved is not area:
                 self.set(link, "ref", str(moved))
+
+    def auto_filter(self, container: etree._Element, where: str) -> None:
+        af = container.find(_AUTO_FILTER)
+        if af is None:
+            return
+        ref = af.get("ref")
+        if ref:
+            area = _area(ref, f"{where}autoFilter/@ref")
+            moved = self.ins.area(area)
+            if moved is None:
+                self.remove(af)
+                return
+            if moved is not area:
+                self.set(af, "ref", str(moved))
+            if not self.ins.rows and area.min_col < self.ins.at <= area.max_col:
+                # filterColumn/@colId counts from the range's first column
+                first_moved = self.ins.at - area.min_col
+                for column in af.iterchildren(_FILTER_COLUMN):
+                    col_id = column.get("colId")
+                    if col_id is not None and col_id.isdigit() and int(col_id) >= first_moved:
+                        self.set(column, "colId", str(int(col_id) + self.ins.count))
+        self.sort_state(af, f"{where}autoFilter/")
+
+    def sort_state(self, container: etree._Element, where: str) -> None:
+        state = container.find(_SORT_STATE)
+        if state is None:
+            return
+        ref = state.get("ref")
+        if ref:
+            area = _area(ref, f"{where}sortState/@ref")
+            moved = self.ins.area(area)
+            if moved is None:
+                self.remove(state)
+                return
+            if moved is not area:
+                self.set(state, "ref", str(moved))
+        for condition in state.iterchildren(_SORT_CONDITION):
+            self.area_attr(condition, "ref", f"{where}sortCondition/@ref", lost="remove")
+
+    def breaks(self, container: etree._Element) -> None:
+        """Move manual page breaks on the shifted axis.
+
+        ``brk/@id`` is the last row (column) before the break; a break belongs
+        to the row after it, so it moves when that row does.
+        """
+        block = container.find(_ROW_BREAKS if self.ins.rows else _COL_BREAKS)
+        if block is None:
+            return
+        removed = False
+        for brk in block.iterchildren(_BRK):
+            brk_id = _number(brk.get("id", "0"), "brk/@id")
+            if brk_id + 1 < self.ins.at:
+                continue
+            new_id = brk_id + self.ins.count
+            if new_id >= self.ins.limit:
+                self.remove(brk)
+                removed = True
+            else:
+                self.set(brk, "id", str(new_id))
+        if removed:
+            self.after(partial(_refresh_manual_break_count, block))
+
+    def views(self, root: etree._Element) -> None:
+        """Selections follow their cells. The scroll positions (``topLeftCell``)
+        are places on screen: they move only for an insertion strictly above
+        (left of) them, so new rows inserted at the top of a view stay in sight."""
+        custom = list(root.iterfind(f"{_CUSTOM_SHEET_VIEWS}/{_CUSTOM_SHEET_VIEW}"))
+        screen = _Insert(self.ins.rows, self.ins.at + 1, self.ins.count)
+        for view in [*root.iterfind(f"{_SHEET_VIEWS}/{_SHEET_VIEW}"), *custom]:
+            top = self._view_start(view.get("topLeftCell"))
+            self.area_attr(view, "topLeftCell", "topLeftCell", lost="pin", ins=screen)
+            pane = view.find(_PANE)
+            if pane is not None:
+                self.frozen_split(pane, top)
+                self.area_attr(pane, "topLeftCell", "pane/@topLeftCell", lost="pin", ins=screen)
+            for selection in view.iterchildren(_SELECTION):
+                self.area_attr(selection, "activeCell", "activeCell", lost="pin")
+                self.view_sqref_attr(selection, "sqref")
+        for view in custom:
+            self.breaks(view)
+            self.auto_filter(view, "customSheetView/")
+
+    def _view_start(self, top_left: str | None) -> int:
+        """Row (column) of a view's top-left cell on the shifted axis; 1 if unreadable."""
+        try:
+            area = CellRange.parse(top_left or "A1")
+        except InvalidRangeError:
+            return 1
+        return area.min_row if self.ins.rows else area.min_col
+
+    def frozen_split(self, pane: etree._Element, top: int) -> None:
+        """Grow a frozen split when rows (columns) are inserted inside the frozen band.
+
+        The split counts rows (columns) from the view's top-left cell, so the
+        band is ``top .. top + split - 1``.
+        """
+        if pane.get("state") not in ("frozen", "frozenSplit"):
+            return  # a plain split is measured in twips, not cells
+        attr = "ySplit" if self.ins.rows else "xSplit"
+        try:
+            split = float(pane.get(attr, "0"))
+        except ValueError:
+            return
+        if split > 0 and top <= self.ins.at < top + split:
+            new = split + self.ins.count
+            self.set(pane, attr, str(int(new)) if new.is_integer() else repr(new))
 
     def columns(self, root: etree._Element) -> None:
         """Move ``<col min max>`` spans, clamped to column XFD."""

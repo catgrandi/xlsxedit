@@ -83,7 +83,7 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 
 `insert_rows` and `insert_columns` move everything in the workbook that names the shifted cells:
 
-- on the sheet: cells, merges, conditional formats and data validations (with their x14 extensions and sparklines), hyperlinks, tables, shared, array and data-table formula ranges and, for columns, the `<cols>` widths;
+- on the sheet: cells, merges, conditional formats and data validations (with their x14 extensions and sparklines), hyperlinks, tables, the `autoFilter` and its sort state, page breaks, sheet views, protected ranges, ignored errors, cell watches, scenarios, shared, array and data-table formula ranges and, for columns, the `<cols>` widths;
 - elsewhere: defined names, reference by reference, and other sheets' x14 formulas, conditional-format values and internal hyperlink locations that point at the sheet.
 
 A range that straddles the insert point grows; one that spans every row (column) ignores a row (column) insert. They do **not** rewrite formulas in cells, conditional-format `<formula>` or validation `formula1`/`formula2` text (an x14 `xm:f` or a `cfvo` value that is one reference does move), charts, drawings, comments or pivot tables. Inserting columns strictly inside a table does not add table columns yet.
@@ -92,7 +92,7 @@ Merges, formats, validations, hyperlinks and other ranges pushed past the last r
 
 They refuse an insert, changing nothing, by raising:
 
-- `GridOverflowError` when the new cells, cell content, a table or a data-table input cell would pass row 1,048,576 or column XFD;
+- `GridOverflowError` when the new cells, cell content, a table, a scenario input cell or a data-table input cell would pass row 1,048,576 or column XFD;
 - `InvalidRangeError` for a reference in the sheet they cannot parse, or an insert point off the grid (`TypeError` if it is not an integer);
 - `ValueError` when both `template_rows` and `row_styles` are given;
 - `TypeError` or `ValueError` for a value or inline style they cannot write.
