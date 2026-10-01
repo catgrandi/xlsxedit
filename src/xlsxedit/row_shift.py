@@ -3,8 +3,9 @@
 ``plan_insert_rows`` and ``plan_insert_columns`` compute every change one
 insertion makes before applying any of it; ``docs/features.md`` ("Inserting
 rows and columns") lists what moves and when an insertion is refused. Ranges
-move by the rules of :class:`xlsxedit.range_set.CellRange`, and references
-in defined names by ``rewrite_formula_refs``. Planning raises for anything it cannot do, so a
+move by the rules of :class:`xlsxedit.range_set.CellRange`; references in
+text by ``rewrite_formula_refs`` (defined names) and ``rewrite_plain_ref``
+(text that is one reference). Planning raises for anything it cannot do, so a
 refused insertion changes nothing; ``apply`` only assigns computed values.
 
 The ``check_*`` functions validate the rest of an insert up front. The
@@ -55,6 +56,9 @@ _SHEET = f"{{{SML_NS}}}sheet"
 _EXT_LST = f"{{{SML_NS}}}extLst"
 
 _X14_NS = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"
+_XM_NS = "http://schemas.microsoft.com/office/excel/2006/main"
+_XM_SQREF = f"{{{_XM_NS}}}sqref"
+_XM_F = f"{{{_XM_NS}}}f"
 _X14_SPARKLINES = f"{{{_X14_NS}}}sparklines"
 _EXT = f"{{{SML_NS}}}ext"
 # containers whose schema needs at least one child
@@ -74,8 +78,13 @@ _LIST_CONTAINERS = frozenset(
         "colBreaks",
     )
 )
+# x14 elements whose xm:f children hold references to the sheet's cells
+_X14_FORMULA_OWNERS = frozenset(
+    f"{{{_X14_NS}}}{name}" for name in ("conditionalFormatting", "dataValidation", "sparklineGroup")
+)
 _CONTENT = frozenset({f"{{{SML_NS}}}v", _F, f"{{{SML_NS}}}is"})
 _RANGED_FORMULAS = frozenset({"shared", "array", "dataTable"})
+_CFVO = f"{{{SML_NS}}}cfvo"
 _WRITABLE = (str, int, float, date)  # bool is an int and datetime a date
 _XML_ILLEGAL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
 
@@ -104,6 +113,9 @@ _FORMULA_TOKEN_RE = re.compile(
     """,
     re.VERBOSE | re.DOTALL,
 )
+_PLAIN_REF_RE = re.compile(rf"\s*(?:(?P<sheet>{_SHEET_NAME})!)?(?P<ref>{_REF})\s*")
+
+
 def shift_row_number(row: int, at_row: int, delta: int) -> int:
     if row >= at_row:
         return row + delta
@@ -353,6 +365,23 @@ def rewrite_formula_refs(
     return "".join(out)
 
 
+def rewrite_plain_ref(
+    text: str,
+    sheet_name: str,
+    move: Callable[[CellRange], CellRange | None],
+    *,
+    unqualified: bool,
+) -> str:
+    """Move ``text`` when the whole of it is one reference to ``sheet_name``; else leave it."""
+    m = _PLAIN_REF_RE.fullmatch(text)
+    if m is None:
+        return text
+    sheet = m.group("sheet")
+    if (sheet is None and not unqualified) or (sheet is not None and not _same_sheet(sheet, sheet_name)):
+        return text
+    return text[: m.start("ref")] + _move_ref_text(m.group("ref"), move) + text[m.end("ref") :]
+
+
 def _local_sheet_index(wb_elm: etree._Element, sheet_name: str) -> int | None:
     """Position of ``sheet_name`` among ``<sheets>``, the index ``localSheetId`` uses."""
     for index, sheet in enumerate(wb_elm.iterfind(f"{_SHEETS}/{_SHEET}")):
@@ -433,11 +462,13 @@ class _Planner:
         self.merge_cells(root)
         for cf in root.iterchildren(_CF):
             self.sqref_attr(cf, "sqref", "conditionalFormatting/@sqref")
+        self.cfvo_values(root, own=True)
         for dv in root.iterfind(f"{_DATA_VALIDATIONS}/{_DATA_VALIDATION}"):
             self.sqref_attr(dv, "sqref", "dataValidation/@sqref")
         self.hyperlinks(root)
         if not self.ins.rows:
             self.columns(root)
+        self.extensions(root)
 
     def merge_cells(self, root: etree._Element) -> None:
         block = root.find(_MERGE_CELLS)
@@ -485,6 +516,53 @@ class _Planner:
             self.set(col, "min", str(new_lo))
             self.set(col, "max", str(min(hi + self.ins.count, MAX_COL)))
 
+    def extensions(self, root: etree._Element) -> None:
+        """``xm:sqref`` anywhere in the worksheet's extensions, and x14 ``xm:f`` references."""
+        ext_lst = root.find(_EXT_LST)
+        if ext_lst is None:
+            return
+        for sqref in ext_lst.iter(_XM_SQREF):
+            ranges = _range_set(sqref.text or "", "xm:sqref")
+            moved = self.ins.ranges(ranges)
+            if moved is ranges:
+                continue
+            if moved:
+                self.set_text(sqref, str(moved))
+            else:
+                self.remove(sqref.getparent())
+        self.extension_formulas(ext_lst, own=True)
+
+    def extension_formulas(self, ext_lst: etree._Element, *, own: bool) -> None:
+        """Plain-reference ``xm:f`` under x14 conditional formats, validations and sparklines.
+
+        ``own`` is whether the extensions belong to the shifted sheet, where an
+        unqualified reference points at it.
+        """
+        move = self.ins.area
+        for f in ext_lst.iter(_XM_F):
+            if not f.text or not any(a.tag in _X14_FORMULA_OWNERS for a in f.iterancestors()):
+                continue
+            new = rewrite_plain_ref(f.text, self.sheet_name, move, unqualified=own)
+            self.set_text(f, new)
+
+    def cfvo_values(self, root: etree._Element, *, own: bool) -> None:
+        """Plain-reference ``cfvo/@val`` of conditional formats, which an x14
+        ``xm:f`` twin repeats; the two must stay equal."""
+        for cf in root.iterchildren(_CF):
+            for cfvo in cf.iter(_CFVO):
+                val = cfvo.get("val")
+                if val:
+                    new = rewrite_plain_ref(val, self.sheet_name, self.ins.area, unqualified=own)
+                    self.set(cfvo, "val", new)
+
+    def hyperlink_locations(self, root: etree._Element, *, own: bool) -> None:
+        """Internal hyperlinks only: with ``r:id``, ``location`` is inside another document."""
+        for link in root.iterfind(f"{_HYPERLINKS}/{_HYPERLINK}"):
+            location = link.get("location")
+            if location and link.get(f"{{{OFFICE_REL_NS}}}id") is None:
+                new = rewrite_plain_ref(location, self.sheet_name, self.ins.area, unqualified=own)
+                self.set(link, "location", new)
+
     def defined_names(self, workbook) -> None:
         wb_elm = workbook._workbook_part.element
         block = wb_elm.find(_DEFINED_NAMES)
@@ -500,11 +578,23 @@ class _Planner:
             self.set_text(elm, new)
 
 
+_DEFERRED_MARKERS = (_XM_NS.encode(), b"location=")
+
+
+def _root_if_it_may_refer(worksheet) -> etree._Element | None:
+    """The worksheet's element, unless it is still unparsed and cannot hold a
+    reference this module rewrites (keeps ``Workbook.open(large=True)`` lazy)."""
+    blob = getattr(worksheet._part, "_defer_blob", None)
+    if blob is not None and not any(marker in blob for marker in _DEFERRED_MARKERS):
+        return None
+    return worksheet._part.element
+
+
 class InsertPlan:
     """Every change that inserting rows or columns into one worksheet makes.
 
-    Building the plan reads the worksheet, its table parts and the
-    workbook's defined names, and raises
+    Building the plan reads the worksheet, its table parts, the workbook's
+    defined names and the other sheets' references to it, and raises
     ``InvalidRangeError`` or ``GridOverflowError`` before anything changes.
     ``apply`` then only assigns precomputed values. ``merges`` lists the
     sheet's merge ranges as they will be after ``apply``.
@@ -517,7 +607,19 @@ class InsertPlan:
         _walk_sheet_data(root.find(_SHEET_DATA), ins, apply=False)
         planner = _Planner(ins, sheet_name=worksheet.name, part=worksheet._part)
         planner.worksheet(root)
+        planner.hyperlink_locations(root, own=True)
         workbook = worksheet._workbook
+        for other in workbook.worksheets:
+            if other is worksheet:
+                continue
+            other_root = _root_if_it_may_refer(other)
+            if other_root is None:
+                continue
+            ext_lst = other_root.find(_EXT_LST)
+            if ext_lst is not None:
+                planner.extension_formulas(ext_lst, own=False)
+                planner.cfvo_values(other_root, own=False)
+            planner.hyperlink_locations(other_root, own=False)
         self._check_tables()
         if ins.rows:
             planner.after(partial(shift_table_parts, worksheet, ins.at, ins.count))
