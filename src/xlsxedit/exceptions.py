@@ -48,3 +48,7 @@ class TableError(XlsxeditError, ValueError):
 
 class FormulaGroupError(XlsxeditError, ValueError):
     """Raised when an edit would split a shared, array, or data-table formula."""
+
+
+class DTDForbiddenError(XlsxeditError, ValueError):
+    """Raised when a package's XML declares a DTD (``<!DOCTYPE>``)."""
