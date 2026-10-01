@@ -8,8 +8,10 @@ from typing import TYPE_CHECKING, Any
 
 from lxml import etree
 
+from xlsxedit._ooxml_order import ORDER
 from xlsxedit.exceptions import InvalidColorError
 from xlsxedit.opc.constants import SML_NS
+from xlsxedit.worksheet_order import insert_ordered, reposition_ordered
 
 if TYPE_CHECKING:
     from lxml.etree import _Element
@@ -36,6 +38,9 @@ _SCHEME = f"{{{SML_NS}}}scheme"
 _PATTERN_FILL = f"{{{SML_NS}}}patternFill"
 _FG_COLOR = f"{{{SML_NS}}}fgColor"
 _BG_COLOR = f"{{{SML_NS}}}bgColor"
+
+_STYLESHEET_ORDER = ORDER["CT_Stylesheet"]
+_XF_ORDER = ORDER["CT_Xf"]
 
 _BUILTIN_DATE_IDS = frozenset({14, 15, 16, 17, 22, 27, 28, 29, 30, 31, 36, 50, 52, 57})
 _BUILTIN_PERCENT_IDS = frozenset({9, 10})
@@ -239,8 +244,9 @@ class Styles:
             raise ValueError("workbook has no styles part")
         cell_xfs = self._element.find(_CELL_XFS)
         if cell_xfs is None:
-            cell_xfs = etree.SubElement(self._element, _CELL_XFS)
+            cell_xfs = etree.Element(_CELL_XFS)
             cell_xfs.set("count", "0")
+            insert_ordered(self._element, cell_xfs, _STYLESHEET_ORDER)
         return cell_xfs
 
     def _fonts_element(self) -> _Element:
@@ -262,13 +268,9 @@ class Styles:
             raise ValueError("workbook has no styles part")
         fills = self._element.find(_FILLS)
         if fills is None:
-            fonts = self._element.find(_FONTS)
             fills = etree.Element(_FILLS)
-            if fonts is not None:
-                self._element.insert(list(self._element).index(fonts) + 1, fills)
-            else:
-                self._element.insert(0, fills)
             fills.set("count", "0")
+            insert_ordered(self._element, fills, _STYLESHEET_ORDER)
         return fills
 
     def _dxfs_element(self) -> _Element:
@@ -276,8 +278,9 @@ class Styles:
             raise ValueError("workbook has no styles part")
         dxfs = self._element.find(_DXFS)
         if dxfs is None:
-            dxfs = etree.SubElement(self._element, _DXFS)
+            dxfs = etree.Element(_DXFS)
             dxfs.set("count", "0")
+            insert_ordered(self._element, dxfs, _STYLESHEET_ORDER)
         return dxfs
 
     def _next_custom_num_fmt_id(self) -> int:
@@ -290,15 +293,8 @@ class Styles:
         return n
 
     def _fix_num_fmts_position(self, num_fmts: _Element) -> None:
-        """OOXML requires ``numFmts`` before ``fonts``; Excel rejects wrong order."""
-        fonts = self._element.find(_FONTS)
-        if fonts is None:
-            return
-        fonts_idx = list(self._element).index(fonts)
-        num_fmts_idx = list(self._element).index(num_fmts)
-        if num_fmts_idx > fonts_idx:
-            self._element.remove(num_fmts)
-            self._element.insert(fonts_idx, num_fmts)
+        """OOXML requires ``numFmts`` first in the stylesheet; Excel rejects wrong order."""
+        if reposition_ordered(self._element, num_fmts, _STYLESHEET_ORDER):
             self._mark_dirty()
 
     def _ensure_num_fmts_block(self) -> _Element:
@@ -307,10 +303,8 @@ class Styles:
         num_fmts = self._element.find(_NUM_FMTS)
         if num_fmts is None:
             num_fmts = etree.Element(_NUM_FMTS)
-            fonts = self._element.find(_FONTS)
-            idx = list(self._element).index(fonts) if fonts is not None else 0
-            self._element.insert(idx, num_fmts)
             num_fmts.set("count", "0")
+            insert_ordered(self._element, num_fmts, _STYLESHEET_ORDER)
         else:
             self._fix_num_fmts_position(num_fmts)
         return num_fmts
@@ -451,7 +445,8 @@ class Styles:
             al = overrides["alignment"]
             al_elm = new_xf.find(_ALIGNMENT)
             if al_elm is None:
-                al_elm = etree.SubElement(new_xf, _ALIGNMENT)
+                al_elm = etree.Element(_ALIGNMENT)
+                insert_ordered(new_xf, al_elm, _XF_ORDER)
             for key, val in al.items():
                 if val is not None:
                     al_elm.set(key, val)
