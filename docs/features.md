@@ -37,7 +37,7 @@ Docs: [xlsxedit.jonasruilong.com](https://xlsxedit.jonasruilong.com)
 | `wb.properties` | Core document metadata (`docProps/core.xml`) | `title`, `author`, `subject`, `keywords`, `comments`, `category`, `last_modified_by`, `created`, `modified` |
 | `wb.orphan_partnames` | ZIP members not on relationship graph | Advanced |
 | `wb.shared_strings` | Shared string table (advanced) | |
-| `wb.styles` | Styles part (advanced) | |
+| `wb.styles` | Styles part (advanced) | `effective_xf_index(ws, address)` returns the `cellXfs` index that formats a cell |
 
 `.xlsm` (macro-enabled) and `.xltx` / `.xltm` (template) workbooks open, edit, and save too — the workbook content type is preserved and VBA parts round-trip untouched (no macro inspection or signing).
 
@@ -112,10 +112,10 @@ Values aimed at cells that a merge covers follow the rule in [large-data-export.
 | `cell.address` | Cell address | |
 | `cell.worksheet` | Owning worksheet | |
 | `cell.offset(cols=0, rows=0)` | Neighbor cell | e.g. `offset(cols=1, rows=1)` is one right and one down |
-| `cell.style` | `CellStyle` read proxy | bold, colors, fonts, alignment, num format |
-| `cell.apply_style(**kwargs)` | Change only the passed style properties | `bold`, `font_color`, `bg_color`, `font_size`, …; keeps the current font's other properties; `False` turns bold/italic/underline off; reuses an identical existing format |
-| `cell.apply_date_format()` | Apply standard date format | |
-| `cell.apply_number_format(code)` | Apply custom number format | e.g. `"$#,##0.00"` |
+| `cell.style` | `CellStyle` read proxy | Effective style: the cell's own; an empty cell without one takes its row's (row formatted as a whole), else its column's; otherwise the default, as Excel shows it |
+| `cell.apply_style(**kwargs)` | Change only the passed style properties | `bold`, `font_color`, `bg_color`, `font_size`, …; builds on the effective style and keeps the current font's other properties; `False` turns bold/italic/underline off; reuses an identical existing format |
+| `cell.apply_date_format()` | Apply standard date format | Builds on the effective style |
+| `cell.apply_number_format(code)` | Apply custom number format | e.g. `"$#,##0.00"`; builds on the effective style |
 | `cell.hyperlink` | `Hyperlink` proxy | `.url`, `.location`, `.display` |
 | `cell.replace(old, new)` | Substring replace in cell text | |
 | `cell.has_formula` | Whether cell has formula | |
