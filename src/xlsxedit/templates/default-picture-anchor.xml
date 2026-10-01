@@ -12,7 +12,13 @@
     <xdr:ext cx="1905000" cy="1428750" />
     <xdr:pic>
       <xdr:nvPicPr>
-        <xdr:cNvPr id="2" name="Picture 1" />
+        <xdr:cNvPr id="2" name="Picture 1">
+          <a:extLst>
+            <a:ext uri="{FF2B5EF4-FFF2-40B4-BE49-F238E27FC236}">
+              <a16:creationId xmlns:a16="http://schemas.microsoft.com/office/drawing/2014/main" id="{00000000-0000-0000-0000-000000000000}" />
+            </a:ext>
+          </a:extLst>
+        </xdr:cNvPr>
         <xdr:cNvPicPr>
           <a:picLocks noChangeAspect="1" />
         </xdr:cNvPicPr>

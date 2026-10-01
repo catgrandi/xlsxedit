@@ -137,6 +137,49 @@ class StylesPart(XmlPart):
         return serialize_xml(self.element)
 
 
+class LazyXmlPart(XmlPart):
+    """XML part parsed on first ``.element`` access.
+
+    Keeps the original blob and serves it until :meth:`mark_dirty`, so a part
+    that is only read round-trips byte-identically. Every mutation of the
+    live element must call :meth:`mark_dirty`.
+    """
+
+    _orig_blob: bytes | None = None
+    _dirty: bool = False
+
+    @classmethod
+    def load(cls, partname, content_type, blob, package=None):
+        part = cls(partname, content_type, None, package)
+        part._orig_blob = blob
+        return part
+
+    @property
+    def element(self) -> etree._Element:
+        if self._element is None:
+            if self._orig_blob is None:
+                raise MissingPartError(f"{self.partname} has no XML content")
+            self._element = parse_xml(self._orig_blob)
+        return self._element
+
+    def mark_dirty(self) -> None:
+        self._dirty = True
+
+    @property
+    def blob(self) -> bytes:
+        if self._orig_blob is not None and not self._dirty:
+            return self._orig_blob
+        return serialize_xml(self.element)
+
+
+class DrawingPart(LazyXmlPart):
+    """``xl/drawings/drawingN.xml`` — the one live ``xdr:wsDr`` tree of the part."""
+
+
+class ChartPart(LazyXmlPart):
+    """``xl/charts/chartN.xml`` — the one live ``c:chartSpace`` tree of the part."""
+
+
 class CorePropertiesPart(XmlPart):
     """``/docProps/core.xml`` — Dublin Core document metadata."""
 
@@ -170,3 +213,5 @@ def register_part_types() -> None:
     PartFactory.part_type_for[CT.SHARED_STRINGS] = SharedStringsPart
     PartFactory.part_type_for[CT.STYLES] = StylesPart
     PartFactory.part_type_for[CT.OPC_CORE_PROPERTIES] = CorePropertiesPart
+    PartFactory.part_type_for[CT.DRAWING] = DrawingPart
+    PartFactory.part_type_for[CT.CHART] = ChartPart

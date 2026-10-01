@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import math
 import mimetypes
+import re
+import uuid
 from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterator
@@ -10,20 +13,27 @@ from typing import TYPE_CHECKING, Iterator
 from lxml import etree
 from lxml.etree import _Element
 
+from xlsxedit._ooxml_order import ORDER
 from xlsxedit.merge import parse_range
 
 from xlsxedit.opc.constants import CT, OFFICE_REL_NS, RT, SML_NS
 from xlsxedit.opc.packuri import PackURI
 from xlsxedit.opc.part import Part
-from xlsxedit.oxml.address import index_to_col, join_address
+from xlsxedit.oxml.address import col_to_index, index_to_col, join_address, split_address
 from xlsxedit.oxml.parser import parse_xml, serialize_xml
+from xlsxedit.parts import ChartPart, DrawingPart
+from xlsxedit.worksheet_order import insert_ordered, insert_worksheet_child
 
 if TYPE_CHECKING:
+    from xlsxedit.styles import Styles
     from xlsxedit.worksheet import Worksheet
 
 XDR_NS = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 CHART_NS = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+CHART_EX_NS = "http://schemas.microsoft.com/office/drawing/2014/chartex"
+A16_NS = "http://schemas.microsoft.com/office/drawing/2014/main"
+MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 
 _XDR_WSDR = f"{{{XDR_NS}}}wsDr"
 _XDR_TWO_CELL = f"{{{XDR_NS}}}twoCellAnchor"
@@ -35,7 +45,6 @@ _XDR_ROW = f"{{{XDR_NS}}}row"
 _XDR_COLOFF = f"{{{XDR_NS}}}colOff"
 _XDR_ROWOFF = f"{{{XDR_NS}}}rowOff"
 _XDR_PIC = f"{{{XDR_NS}}}pic"
-_XDR_NV_PIC = f"{{{XDR_NS}}}nvPicPr"
 _XDR_CNVPR = f"{{{XDR_NS}}}cNvPr"
 _XDR_BLIP_FILL = f"{{{XDR_NS}}}blipFill"
 _XDR_SPPR = f"{{{XDR_NS}}}spPr"
@@ -75,9 +84,76 @@ _TABLE_COLUMN = f"{{{SML_NS}}}tableColumn"
 _WS_DRAWING = f"{{{SML_NS}}}drawing"
 _TABLE_PARTS = f"{{{SML_NS}}}tableParts"
 _TABLE_PART = f"{{{SML_NS}}}tablePart"
+_XDR_ABSOLUTE = f"{{{XDR_NS}}}absoluteAnchor"
+_XDR_SP = f"{{{XDR_NS}}}sp"
+_XDR_CXN_SP = f"{{{XDR_NS}}}cxnSp"
+_XDR_GRP_SP = f"{{{XDR_NS}}}grpSp"
+_A_XFRM = f"{{{A_NS}}}xfrm"
+_A16_CREATION_ID = f"{{{A16_NS}}}creationId"
+_C_FORMAT_CODE = f"{{{CHART_NS}}}formatCode"
+_MC_ALTERNATE_CONTENT = f"{{{MC_NS}}}AlternateContent"
+_MC_CHOICE = f"{{{MC_NS}}}Choice"
+_MC_FALLBACK = f"{{{MC_NS}}}Fallback"
+_SHEET_DATA = f"{{{SML_NS}}}sheetData"
+_SHEET_FORMAT_PR = f"{{{SML_NS}}}sheetFormatPr"
+_COLS = f"{{{SML_NS}}}cols"
+_COL = f"{{{SML_NS}}}col"
+_ROW = f"{{{SML_NS}}}row"
+_C = f"{{{SML_NS}}}c"
+_V = f"{{{SML_NS}}}v"
+
+_ANCHOR_TYPES = {
+    _XDR_TWO_CELL: "twoCellAnchor",
+    _XDR_ONE_CELL: "oneCellAnchor",
+    _XDR_ABSOLUTE: "absoluteAnchor",
+}
+_OBJECT_KINDS = {
+    _XDR_PIC: "picture",
+    _XDR_SP: "shape",
+    _XDR_CXN_SP: "connector",
+    _XDR_GRP_SP: "group",
+}
 
 EMU_PER_INCH = 914400
 EMU_PER_PIXEL = 9525  # 96 dpi approximation
+_EMU_PER_POINT = 12700
+_MAX_COL = 16_384
+_MAX_ROW = 1_048_576
+# Maximum digit width, in pixels, of Excel's default 11-point body font (Calibri, Aptos).
+_MAX_DIGIT_WIDTH_PX = 7
+
+# Built-in number formats (ECMA-376 Part 1, 18.8.30), which styles.xml does not spell out.
+_BUILTIN_FORMAT_CODES = {
+    0: "General",
+    1: "0",
+    2: "0.00",
+    3: "#,##0",
+    4: "#,##0.00",
+    9: "0%",
+    10: "0.00%",
+    11: "0.00E+00",
+    12: "# ?/?",
+    13: "# ??/??",
+    14: "mm-dd-yy",
+    15: "d-mmm-yy",
+    16: "d-mmm",
+    17: "mmm-yy",
+    18: "h:mm AM/PM",
+    19: "h:mm:ss AM/PM",
+    20: "h:mm",
+    21: "h:mm:ss",
+    22: "m/d/yy h:mm",
+    37: "#,##0 ;(#,##0)",
+    38: "#,##0 ;[Red](#,##0)",
+    39: "#,##0.00;(#,##0.00)",
+    40: "#,##0.00;[Red](#,##0.00)",
+    45: "mm:ss",
+    46: "[h]:mm:ss",
+    47: "mmss.0",
+    48: "##0.0E+0",
+    49: "@",
+}
+_XSD_DOUBLE = re.compile(r"[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?")
 
 
 def _px_to_emu(pixels: int) -> int:
@@ -93,6 +169,14 @@ def _validate_offset_px(pixels: int) -> int:
         raise TypeError("offset must be an int")
     if pixels < 0:
         raise ValueError("offset must be non-negative")
+    return pixels
+
+
+def _validate_size_px(pixels: int | float) -> int | float:
+    if not isinstance(pixels, (int, float)) or isinstance(pixels, bool):
+        raise TypeError("size must be a number of pixels")
+    if pixels <= 0:
+        raise ValueError("size must be positive")
     return pixels
 
 
@@ -121,9 +205,138 @@ def _set_from_offset_emu(anchor: _Element, col_off: int, row_off: int) -> None:
         _set_corner_offset_emu(from_elm, col_off, row_off)
 
 
-def _sync_drawing_part(drawing_part: Part, anchor_elm: _Element) -> None:
-    root = anchor_elm.getroottree().getroot()
-    drawing_part._blob = serialize_xml(root)
+def _marker(marker: _Element) -> tuple[int, int, int, int]:
+    """``(col, colOff, row, rowOff)`` of an ``xdr:from`` or ``xdr:to`` marker."""
+    col, col_off, row, row_off = (
+        int(marker.findtext(tag) or "0") for tag in (_XDR_COL, _XDR_COLOFF, _XDR_ROW, _XDR_ROWOFF)
+    )
+    return col, col_off, row, row_off
+
+
+def _set_marker(marker: _Element, col: int, col_off: int, row: int, row_off: int) -> None:
+    for tag, value in ((_XDR_COL, col), (_XDR_COLOFF, col_off), (_XDR_ROW, row), (_XDR_ROWOFF, row_off)):
+        child = marker.find(tag)
+        if child is None:
+            raise ValueError(
+                f"malformed anchor: xdr:{etree.QName(marker).localname} has no xdr:{etree.QName(tag).localname}"
+            )
+        child.text = str(value)
+
+
+def _move_anchor(anchor: _Element, address: str) -> None:
+    """Move ``anchor``'s top-left cell to ``address`` and ``xdr:to`` by the same delta.
+
+    Offsets within the cells stay, so a two-cell anchor keeps its span of cells.
+    """
+    col, row = split_address(address)
+    new_col, new_row = col_to_index(col), row - 1
+    from_elm = anchor.find(_XDR_FROM)
+    old_col, col_off, old_row, row_off = _marker(from_elm)
+    moves = [(from_elm, new_col, col_off, new_row, row_off)]
+    to_elm = anchor.find(_XDR_TO)
+    if to_elm is not None:
+        to_col, to_col_off, to_row, to_row_off = _marker(to_elm)
+        moves.append(
+            (to_elm, to_col + new_col - old_col, to_col_off, to_row + new_row - old_row, to_row_off)
+        )
+    for _marker_elm, marker_col, _col_off, marker_row, _row_off in moves:
+        if not (0 <= marker_col < _MAX_COL and 0 <= marker_row < _MAX_ROW):
+            raise ValueError(f"anchoring at {address!r} puts a corner outside the sheet")
+    for marker_elm, *position in moves:
+        _set_marker(marker_elm, *position)
+
+
+def _col_width_emu(width: float) -> int:
+    """EMU of a column ``width`` (``col/@width``), per ECMA-376 Part 1, 18.3.1.13."""
+    mdw = _MAX_DIGIT_WIDTH_PX
+    return int(((256 * width + int(128 / mdw)) / 256) * mdw) * EMU_PER_PIXEL
+
+
+class _SheetGrid:
+    """Column widths and row heights of a worksheet, in EMU, for two-cell anchors.
+
+    Pixel widths assume Excel's default 11-point body font. Hidden columns and
+    rows are zero wide or high, as Excel draws them.
+    """
+
+    def __init__(self, worksheet: Worksheet):
+        root = worksheet._part.element
+        fmt = root.find(_SHEET_FORMAT_PR)
+        default_width = fmt.get("defaultColWidth") if fmt is not None else None
+        if default_width is not None:
+            self._default_col = _col_width_emu(float(default_width))
+        else:
+            base = float(fmt.get("baseColWidth", "8")) if fmt is not None else 8.0
+            # Excel rounds a default column up to a multiple of 8 pixels.
+            px = math.ceil((base * _MAX_DIGIT_WIDTH_PX + 5) / 8) * 8
+            self._default_col = px * EMU_PER_PIXEL
+        default_height = fmt.get("defaultRowHeight") if fmt is not None else None
+        self._default_row = round(float(default_height or 15) * _EMU_PER_POINT)
+
+        self._cols: list[tuple[int, int, int]] = []
+        cols = root.find(_COLS)
+        for col in cols.iterchildren(_COL) if cols is not None else ():
+            if col.get("hidden") in ("1", "true"):
+                emu = 0
+            elif col.get("width") is not None:
+                emu = _col_width_emu(float(col.get("width")))
+            else:
+                emu = self._default_col
+            self._cols.append((int(col.get("min", "1")) - 1, int(col.get("max", "1")) - 1, emu))
+
+        self._rows: dict[int, int] = {}
+        sheet_data = root.find(_SHEET_DATA)
+        number = 0
+        for row in sheet_data.iterchildren(_ROW) if sheet_data is not None else ():
+            number = int(row.get("r") or number + 1)
+            if row.get("hidden") in ("1", "true"):
+                self._rows[number - 1] = 0
+            elif row.get("ht") is not None:
+                self._rows[number - 1] = round(float(row.get("ht")) * _EMU_PER_POINT)
+
+    def col_emu(self, index: int) -> int:
+        for low, high, emu in self._cols:
+            if low <= index <= high:
+                return emu
+        return self._default_col
+
+    def row_emu(self, index: int) -> int:
+        return self._rows.get(index, self._default_row)
+
+    def _end(self, size_of, limit: int, index: int, offset: int, length: int) -> tuple[int, int]:
+        remaining = offset + length
+        while True:
+            size = size_of(index)
+            if remaining < size:
+                return index, remaining
+            if index == limit - 1:
+                raise ValueError("the resized object would extend beyond the sheet")
+            remaining -= size
+            index += 1
+
+    @staticmethod
+    def _corners(anchor: _Element) -> tuple[_Element, _Element]:
+        from_elm, to_elm = anchor.find(_XDR_FROM), anchor.find(_XDR_TO)
+        if from_elm is None or to_elm is None:
+            raise ValueError("malformed anchor: a two-cell anchor needs xdr:from and xdr:to")
+        return from_elm, to_elm
+
+    def place_to(self, anchor: _Element, cx: int, cy: int) -> None:
+        """Set ``xdr:to`` of a two-cell ``anchor`` to ``cx`` by ``cy`` EMU from ``xdr:from``."""
+        from_elm, to_elm = self._corners(anchor)
+        col, col_off, row, row_off = _marker(from_elm)
+        to_col, to_col_off = self._end(self.col_emu, _MAX_COL, col, col_off, cx)
+        to_row, to_row_off = self._end(self.row_emu, _MAX_ROW, row, row_off, cy)
+        _set_marker(to_elm, to_col, to_col_off, to_row, to_row_off)
+
+    def extent(self, anchor: _Element) -> tuple[int, int]:
+        """``(cx, cy)`` in EMU of the box between ``xdr:from`` and ``xdr:to``."""
+        from_elm, to_elm = self._corners(anchor)
+        col, col_off, row, row_off = _marker(from_elm)
+        to_col, to_col_off, to_row, to_row_off = _marker(to_elm)
+        cx = sum(self.col_emu(i) for i in range(col, to_col)) - col_off + to_col_off
+        cy = sum(self.row_emu(i) for i in range(row, to_row)) - row_off + to_row_off
+        return max(0, cx), max(0, cy)
 
 
 def _title_text_from_tx(tx: _Element) -> str | None:
@@ -197,45 +410,109 @@ def _parse_chart_formula(formula: str) -> tuple[str, str, int, str, int]:
     return sheet_name, c1, r1, c2, r2
 
 
-def _iter_range_cells(worksheet: Worksheet, c1: str, r1: int, c2: str, r2: int):
-    from xlsxedit.oxml.address import col_to_index, index_to_col, join_address
+def _range_cells(worksheet: Worksheet, c1: str, r1: int, c2: str, r2: int) -> list[_Element | None]:
+    """``<c>`` elements of a range in row-major order, ``None`` where a cell is absent.
 
-    col_start = col_to_index(c1)
-    col_end = col_to_index(c2)
-    row_start, row_end = min(r1, r2), max(r1, r2)
-    col_lo, col_hi = min(col_start, col_end), max(col_start, col_end)
-    for row in range(row_start, row_end + 1):
-        for col_idx in range(col_lo, col_hi + 1):
-            yield worksheet[join_address(index_to_col(col_idx), row)]
+    Reads the sheet without creating cells, which ``worksheet[address]`` would.
+    """
+    col_lo, col_hi = sorted((col_to_index(c1), col_to_index(c2)))
+    row_lo, row_hi = sorted((r1, r2))
+    found: dict[tuple[int, int], _Element] = {}
+    sheet_data = worksheet._part.element.find(_SHEET_DATA)
+    row_number = 0
+    for row in sheet_data.iterchildren(_ROW) if sheet_data is not None else ():
+        row_number = int(row.get("r") or row_number + 1)
+        if not row_lo <= row_number <= row_hi:
+            continue
+        col = -1
+        for c in row.iterchildren(_C):
+            ref = c.get("r")
+            col = col_to_index(split_address(ref)[0]) if ref else col + 1
+            if col_lo <= col <= col_hi:
+                found[(row_number, col)] = c
+    return [
+        found.get((row, col))
+        for row in range(row_lo, row_hi + 1)
+        for col in range(col_lo, col_hi + 1)
+    ]
+
+
+def _number_text(c: _Element | None) -> str | None:
+    """The ``xsd:double`` text of a numeric cell, ``None`` for blank and non-numeric cells."""
+    if c is None or c.get("t", "n") != "n":
+        return None
+    text = (c.findtext(_V) or "").strip()
+    return text if _XSD_DOUBLE.fullmatch(text) else None
+
+
+def _format_code(c: _Element, styles: Styles | None) -> str:
+    style_index = c.get("s", "0")
+    num_fmt_id = styles.num_format_id(style_index) if styles is not None else None
+    if num_fmt_id is None:
+        return "General"
+    return styles.format_code(style_index) or _BUILTIN_FORMAT_CODES.get(num_fmt_id, "General")
+
+
+def _string_text(c: _Element | None, worksheet: Worksheet) -> str | None:
+    """Display text of a cell for a string cache, ``None`` for a blank cell."""
+    from xlsxedit.cell import Cell
+
+    if c is None:
+        return None
+    value = Cell(c, worksheet).value
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    return str(value)
 
 
 def _rebuild_series_cache(parent: _Element, formula: str, worksheet: Worksheet) -> None:
+    """Rebuild the cache of a ``c:strRef`` or ``c:numRef`` from the cells ``formula`` names.
+
+    ``c:ptCount`` is the size of the range. A numeric cache holds only numbers,
+    so blank and non-numeric cells get no ``c:pt`` and ``c:pt/@idx`` is sparse;
+    a string cache leaves out blank cells. ``c:formatCode`` is the number format
+    of the first numeric cell, and a point whose cell has another format
+    carries it in ``c:pt/@formatCode``.
+    """
     _, c1, r1, c2, r2 = _parse_chart_formula(formula)
-    cells = list(_iter_range_cells(worksheet, c1, r1, c2, r2))
+    cells = _range_cells(worksheet, c1, r1, c2, r2)
 
     if parent.tag == _C_STR_REF:
-        cache = parent.find(_C_STR_CACHE)
-        if cache is not None:
-            parent.remove(cache)
-        cache = etree.SubElement(parent, _C_STR_CACHE)
+        old = parent.find(_C_STR_CACHE)
+        cache = etree.Element(_C_STR_CACHE)
         etree.SubElement(cache, _C_PT_COUNT, val=str(len(cells)))
-        for idx, cell in enumerate(cells):
-            pt = etree.SubElement(cache, _C_PT, idx=str(idx))
-            v = etree.SubElement(pt, _C_V)
-            value = cell.value
-            v.text = "" if value is None else str(value)
+        for idx, c in enumerate(cells):
+            text = _string_text(c, worksheet)
+            if text is not None:
+                pt = etree.SubElement(cache, _C_PT, idx=str(idx))
+                etree.SubElement(pt, _C_V).text = text
     elif parent.tag == _C_NUM_REF:
-        cache = parent.find(_C_NUM_CACHE)
-        if cache is not None:
-            parent.remove(cache)
-        cache = etree.SubElement(parent, _C_NUM_CACHE)
-        etree.SubElement(cache, f"{{{CHART_NS}}}formatCode").text = "General"
+        old = parent.find(_C_NUM_CACHE)
+        styles = getattr(worksheet._workbook, "styles", None)
+        points = [
+            (idx, text, _format_code(c, styles))
+            for idx, c in enumerate(cells)
+            if (text := _number_text(c)) is not None
+        ]
+        format_code = points[0][2] if points else "General"
+        cache = etree.Element(_C_NUM_CACHE)
+        etree.SubElement(cache, _C_FORMAT_CODE).text = format_code
         etree.SubElement(cache, _C_PT_COUNT, val=str(len(cells)))
-        for idx, cell in enumerate(cells):
+        for idx, text, code in points:
             pt = etree.SubElement(cache, _C_PT, idx=str(idx))
-            v = etree.SubElement(pt, _C_V)
-            value = cell.value
-            v.text = "0" if value is None else str(value)
+            if code != format_code:
+                pt.set("formatCode", code)
+            etree.SubElement(pt, _C_V).text = text
+    else:
+        return
+
+    # The cache directly follows the required c:f in CT_StrRef and CT_NumRef.
+    if old is not None:
+        parent.replace(old, cache)
+    else:
+        parent.find(_C_F).addnext(cache)
 
 
 def _anchor_address(from_elm: _Element) -> str:
@@ -244,59 +521,230 @@ def _anchor_address(from_elm: _Element) -> str:
     return join_address(index_to_col(col), row)
 
 
-def _ext_size(anchor: _Element) -> tuple[int, int] | None:
-    pic = anchor.find(_XDR_PIC)
-    if pic is not None:
-        sp_pr = pic.find(_XDR_SPPR)
-        if sp_pr is not None:
-            ext = sp_pr.find(f".//{{{A_NS}}}ext")
-            if ext is not None:
-                return int(ext.get("cx", "0")), int(ext.get("cy", "0"))
-    ext_elm = anchor.find(_XDR_EXT)
-    if ext_elm is not None:
-        return int(ext_elm.get("cx", "0")), int(ext_elm.get("cy", "0"))
-    to_elm = anchor.find(_XDR_TO)
-    from_elm = anchor.find(_XDR_FROM)
-    if to_elm is not None and from_elm is not None:
-        # rough fallback
-        return 0, 0
+def _cnvpr(obj_elm: _Element) -> _Element | None:
+    """``cNvPr`` of a drawing object (``xdr:nvPicPr/xdr:cNvPr``, ``xdr:nvSpPr/xdr:cNvPr``, …)."""
+    for nv_props in obj_elm:
+        if isinstance(nv_props.tag, str) and etree.QName(nv_props).localname.startswith("nv"):
+            for child in nv_props:
+                if isinstance(child.tag, str) and etree.QName(child).localname == "cNvPr":
+                    return child
+            return None
     return None
 
 
-class Picture:
-    """Proxy for an ``xdr:pic`` anchored on a worksheet drawing."""
+def _iter_cnvpr(root: _Element) -> Iterator[_Element]:
+    for elm in root.iter():
+        if isinstance(elm.tag, str) and elm.tag.endswith("}cNvPr"):
+            yield elm
 
-    def __init__(self, anchor_elm: _Element, drawing_part: Part, worksheet: Worksheet):
+
+def _in_group(elm: _Element, anchor: _Element) -> bool:
+    parent = elm.getparent()
+    while parent is not None and parent is not anchor:
+        if parent.tag == _XDR_GRP_SP:
+            return True
+        parent = parent.getparent()
+    return False
+
+
+def _graphic_frame_kind(frame: _Element) -> str:
+    data = frame.find(f"{_A_GRAPHIC}/{_A_GRAPHIC_DATA}")
+    for child in data if data is not None else ():
+        if not isinstance(child.tag, str):
+            continue
+        qname = etree.QName(child)
+        if child.tag == _C_CHART:
+            return "chart"
+        if qname.namespace == CHART_EX_NS and qname.localname == "chart":
+            return "chartEx"
+        if qname.localname == "slicer":
+            return "slicer"
+        if qname.localname == "timeslicer":
+            return "timeline"
+    return "graphicFrame"
+
+
+def _object_kind(elm: _Element) -> str | None:
+    """Kind of an anchor or group child that is a drawing object, else ``None``."""
+    if not isinstance(elm.tag, str):
+        return None
+    kind = _OBJECT_KINDS.get(elm.tag)
+    if kind is not None:
+        return kind
+    if elm.tag == _XDR_GRAPHIC_FRAME:
+        return _graphic_frame_kind(elm)
+    if etree.QName(elm).localname == "contentPart":  # xdr:contentPart or xdr14:contentPart
+        return "contentPart"
+    return None
+
+
+class DrawingObject:
+    """One object of a worksheet drawing, from ``ws.drawing_objects``.
+
+    ``kind`` is ``"picture"``, ``"chart"``, ``"chartEx"``, ``"slicer"``,
+    ``"timeline"``, ``"shape"``, ``"connector"``, ``"group"``,
+    ``"contentPart"``, or ``"graphicFrame"`` for any other graphic frame.
+    """
+
+    def __init__(
+        self,
+        element: _Element,
+        kind: str,
+        anchor_elm: _Element,
+        *,
+        alternate: str | None = None,
+        group: DrawingObject | None = None,
+    ):
+        self._element = element
+        self._kind = kind
         self._anchor = anchor_elm
-        self._drawing_part = drawing_part
-        self._worksheet = worksheet
-        pic = anchor_elm.find(_XDR_PIC)
-        if pic is None:
-            raise ValueError("anchor has no picture")
-        self._pic = pic
+        self._alternate = alternate
+        self._group = group
 
     def __repr__(self) -> str:
-        return f"<Picture name={self.name!r} anchor={self.anchor!r}>"
+        return f"<DrawingObject kind={self.kind!r} name={self.name!r} anchor={self.anchor!r}>"
+
+    @property
+    def kind(self) -> str:
+        return self._kind
+
+    @property
+    def element(self) -> _Element:
+        """The object's XML element, such as ``xdr:pic`` or ``xdr:graphicFrame``."""
+        return self._element
 
     @property
     def name(self) -> str | None:
-        nv = self._pic.find(_XDR_NV_PIC)
-        if nv is None:
-            return None
-        cnv = nv.find(_XDR_CNVPR)
+        cnv = _cnvpr(self._element)
+        return cnv.get("name") if cnv is not None else None
+
+    @property
+    def id(self) -> int | None:
+        """``cNvPr/@id``, unique within the drawing part."""
+        cnv = _cnvpr(self._element)
+        value = cnv.get("id") if cnv is not None else None
+        return int(value) if value is not None and value.isdigit() else None
+
+    @property
+    def anchor(self) -> str:
+        """Top-left cell of the enclosing anchor; ``""`` for an absolute anchor."""
+        from_elm = self._anchor.find(_XDR_FROM)
+        return _anchor_address(from_elm) if from_elm is not None else ""
+
+    @property
+    def anchor_type(self) -> str:
+        """``"twoCellAnchor"``, ``"oneCellAnchor"``, or ``"absoluteAnchor"``."""
+        return _ANCHOR_TYPES[self._anchor.tag]
+
+    @property
+    def alternate(self) -> str | None:
+        """``"choice"`` or ``"fallback"`` inside ``mc:AlternateContent``, else ``None``."""
+        return self._alternate
+
+    @property
+    def group(self) -> DrawingObject | None:
+        """The ``xdr:grpSp`` object this object belongs to, else ``None``."""
+        return self._group
+
+
+def _alternate_branches(
+    alternate_content: _Element, alternate: str | None
+) -> Iterator[tuple[_Element, str]]:
+    for branch in alternate_content:
+        if branch.tag == _MC_CHOICE:
+            yield branch, "fallback" if alternate == "fallback" else "choice"
+        elif branch.tag == _MC_FALLBACK:
+            yield branch, "fallback"
+
+
+def _iter_anchors(parent: _Element, alternate: str | None) -> Iterator[tuple[_Element, str | None]]:
+    for elm in parent:
+        if elm.tag == _MC_ALTERNATE_CONTENT:
+            for branch, label in _alternate_branches(elm, alternate):
+                yield from _iter_anchors(branch, label)
+        elif elm.tag in _ANCHOR_TYPES:
+            yield elm, alternate
+
+
+def _iter_objects(
+    parent: _Element,
+    anchor: _Element,
+    alternate: str | None,
+    group: DrawingObject | None,
+) -> Iterator[DrawingObject]:
+    for elm in parent:
+        if elm.tag == _MC_ALTERNATE_CONTENT:
+            for branch, label in _alternate_branches(elm, alternate):
+                yield from _iter_objects(branch, anchor, label, group)
+            continue
+        kind = _object_kind(elm)
+        if kind is None:
+            continue
+        obj = DrawingObject(elm, kind, anchor, alternate=alternate, group=group)
+        yield obj
+        if kind == "group":
+            yield from _iter_objects(elm, anchor, alternate, obj)
+
+
+def iter_drawing_objects(drawing_part: DrawingPart) -> Iterator[DrawingObject]:
+    """Every object of a drawing part, in document order.
+
+    Walks two-cell, one-cell and absolute anchors, the members of
+    ``xdr:grpSp`` groups, and both branches of ``mc:AlternateContent``, around
+    an anchor or inside it.
+    """
+    for anchor, alternate in _iter_anchors(drawing_part.element, None):
+        yield from _iter_objects(anchor, anchor, alternate, None)
+
+
+class _AnchoredObject:
+    """Cell-anchor geometry shared by :class:`Picture` and :class:`Chart`."""
+
+    _kind = "object"
+
+    def __init__(self, anchor_elm: _Element, element: _Element, drawing_part: DrawingPart):
+        self._anchor = anchor_elm
+        self._element = element
+        self._drawing_part = drawing_part
+        self._grouped = _in_group(element, anchor_elm)
+
+    def _changed(self) -> None:
+        self._drawing_part.mark_dirty()
+
+    def _own_anchor(self, action: str) -> _Element:
+        """The anchor this object can be moved or resized through."""
+        if self._grouped:
+            raise ValueError(
+                f"cannot {action} {self._kind} {self.name!r}: it is part of a group, "
+                "whose anchor places it"
+            )
+        return self._anchor
+
+    def _cell_anchor(self, action: str) -> _Element:
+        anchor = self._own_anchor(action)
+        if anchor.find(_XDR_FROM) is None:
+            raise ValueError(
+                f"cannot {action} {self._kind} {self.name!r}: it has an absolute anchor, "
+                "not a cell anchor"
+            )
+        return anchor
+
+    @property
+    def name(self) -> str | None:
+        cnv = _cnvpr(self._element)
         return cnv.get("name") if cnv is not None else None
 
     @name.setter
     def name(self, value: str) -> None:
-        nv = self._pic.find(_XDR_NV_PIC)
-        if nv is None:
-            return
-        cnv = nv.find(_XDR_CNVPR)
-        if cnv is not None:
-            cnv.set("name", value)
+        cnv = _cnvpr(self._element)
+        if cnv is None:
+            raise ValueError(f"{self._kind} has no cNvPr to name")
+        cnv.set("name", value)
+        self._changed()
 
     @property
     def anchor(self) -> str:
+        """Top-left cell; ``""`` for an absolute anchor."""
         from_elm = self._anchor.find(_XDR_FROM)
         if from_elm is None:
             return ""
@@ -304,19 +752,9 @@ class Picture:
 
     @anchor.setter
     def anchor(self, address: str) -> None:
-        from xlsxedit.oxml.address import split_address, col_to_index
-
-        col, row = split_address(address)
-        from_elm = self._anchor.find(_XDR_FROM)
-        if from_elm is None:
-            return
-        col_elm = from_elm.find(_XDR_COL)
-        row_elm = from_elm.find(_XDR_ROW)
-        if col_elm is not None:
-            col_elm.text = str(col_to_index(col))
-        if row_elm is not None:
-            row_elm.text = str(row - 1)
-        _sync_drawing_part(self._drawing_part, self._anchor)
+        """Move the top-left cell; keep the offsets and the span of cells to ``xdr:to``."""
+        _move_anchor(self._cell_anchor("move"), address)
+        self._changed()
 
     @property
     def offset_x(self) -> int:
@@ -326,9 +764,10 @@ class Picture:
     @offset_x.setter
     def offset_x(self, pixels: int) -> None:
         pixels = _validate_offset_px(pixels)
-        _, row_off = _get_from_offset_emu(self._anchor)
-        _set_from_offset_emu(self._anchor, _px_to_emu(pixels), row_off)
-        _sync_drawing_part(self._drawing_part, self._anchor)
+        anchor = self._cell_anchor("offset")
+        _, row_off = _get_from_offset_emu(anchor)
+        _set_from_offset_emu(anchor, _px_to_emu(pixels), row_off)
+        self._changed()
 
     @property
     def offset_y(self) -> int:
@@ -338,19 +777,54 @@ class Picture:
     @offset_y.setter
     def offset_y(self, pixels: int) -> None:
         pixels = _validate_offset_px(pixels)
-        col_off, _ = _get_from_offset_emu(self._anchor)
-        _set_from_offset_emu(self._anchor, col_off, _px_to_emu(pixels))
-        _sync_drawing_part(self._drawing_part, self._anchor)
+        anchor = self._cell_anchor("offset")
+        col_off, _ = _get_from_offset_emu(anchor)
+        _set_from_offset_emu(anchor, col_off, _px_to_emu(pixels))
+        self._changed()
+
+
+class Picture(_AnchoredObject):
+    """Proxy for an ``xdr:pic`` in a worksheet drawing."""
+
+    _kind = "picture"
+
+    def __init__(
+        self,
+        anchor_elm: _Element,
+        drawing_part: DrawingPart,
+        worksheet: Worksheet,
+        pic_elm: _Element | None = None,
+    ):
+        pic = pic_elm if pic_elm is not None else anchor_elm.find(_XDR_PIC)
+        if pic is None:
+            raise ValueError("anchor has no picture")
+        super().__init__(anchor_elm, pic, drawing_part)
+        self._worksheet = worksheet
+        self._pic = pic
+
+    def __repr__(self) -> str:
+        return f"<Picture name={self.name!r} anchor={self.anchor!r}>"
+
+    def _xfrm_ext(self) -> _Element | None:
+        return self._pic.find(f"{_XDR_SPPR}/{_A_XFRM}/{_A_EXT}")
+
+    def _extent_emu(self) -> tuple[int, int]:
+        ext = self._xfrm_ext()
+        if ext is None and not self._grouped:
+            ext = self._anchor.find(_XDR_EXT)
+        if ext is not None:
+            return int(ext.get("cx", "0")), int(ext.get("cy", "0"))
+        if not self._grouped and self._anchor.tag == _XDR_TWO_CELL:
+            return _SheetGrid(self._worksheet).extent(self._anchor)
+        return 0, 0
 
     @property
     def width_emu(self) -> int:
-        size = _ext_size(self._anchor)
-        return size[0] if size else 0
+        return self._extent_emu()[0]
 
     @property
     def height_emu(self) -> int:
-        size = _ext_size(self._anchor)
-        return size[1] if size else 0
+        return self._extent_emu()[1]
 
     @property
     def width(self) -> int:
@@ -358,6 +832,7 @@ class Picture:
 
     @width.setter
     def width(self, pixels: int) -> None:
+        pixels = _validate_size_px(pixels)
         self._set_ext(cx=int(pixels * EMU_PER_PIXEL), cy=self.height_emu or int(150 * EMU_PER_PIXEL))
 
     @property
@@ -366,21 +841,36 @@ class Picture:
 
     @height.setter
     def height(self, pixels: int) -> None:
+        pixels = _validate_size_px(pixels)
         self._set_ext(cx=self.width_emu or int(200 * EMU_PER_PIXEL), cy=int(pixels * EMU_PER_PIXEL))
 
     def _set_ext(self, *, cx: int, cy: int) -> None:
+        """Resize to ``cx`` by ``cy`` EMU: ``spPr/a:xfrm/a:ext`` and the anchor's extent."""
+        anchor = self._own_anchor("resize")
         sp_pr = self._pic.find(_XDR_SPPR)
-        if sp_pr is not None:
-            ext = sp_pr.find(_A_EXT)
-            if ext is None:
-                ext = etree.SubElement(sp_pr, _A_EXT)
-            ext.set("cx", str(cx))
-            ext.set("cy", str(cy))
-        ext_elm = self._anchor.find(_XDR_EXT)
-        if ext_elm is not None:
-            ext_elm.set("cx", str(cx))
-            ext_elm.set("cy", str(cy))
-        _sync_drawing_part(self._drawing_part, self._anchor)
+        if sp_pr is None:
+            raise ValueError(f"picture {self.name!r} has no xdr:spPr")
+        if anchor.tag == _XDR_TWO_CELL:
+            _SheetGrid(self._worksheet).place_to(anchor, cx, cy)
+        else:
+            anchor_ext = anchor.find(_XDR_EXT)
+            if anchor_ext is None:
+                raise ValueError(f"malformed anchor: picture {self.name!r} has no xdr:ext")
+            anchor_ext.set("cx", str(cx))
+            anchor_ext.set("cy", str(cy))
+        # Earlier releases appended a bare a:ext here, which CT_ShapeProperties does not allow.
+        for stray in sp_pr.findall(_A_EXT):
+            sp_pr.remove(stray)
+        xfrm = sp_pr.find(_A_XFRM)
+        if xfrm is None:
+            xfrm = etree.Element(_A_XFRM)
+            sp_pr.insert(0, xfrm)  # a:xfrm comes first in CT_ShapeProperties
+        ext = xfrm.find(_A_EXT)
+        if ext is None:
+            ext = etree.SubElement(xfrm, _A_EXT)  # after a:off, the only other child
+        ext.set("cx", str(cx))
+        ext.set("cy", str(cy))
+        self._changed()
 
     @property
     def media_path(self) -> str | None:
@@ -414,107 +904,43 @@ class Picture:
         part._content_type = ct
 
 
-class Chart:
+class Chart(_AnchoredObject):
     """Chart reference from a drawing graphicFrame."""
 
-    def __init__(self, anchor_elm: _Element, drawing_part: Part, chart_part: Part | None = None):
-        self._anchor = anchor_elm
-        self._drawing_part = drawing_part
-        self._chart_part = chart_part
-        frame = anchor_elm.find(_XDR_GRAPHIC_FRAME)
+    _kind = "chart"
+
+    def __init__(
+        self,
+        anchor_elm: _Element,
+        drawing_part: DrawingPart,
+        chart_part: Part | None = None,
+        frame_elm: _Element | None = None,
+    ):
+        frame = frame_elm if frame_elm is not None else anchor_elm.find(_XDR_GRAPHIC_FRAME)
         if frame is None:
             raise ValueError("not a chart frame")
+        super().__init__(anchor_elm, frame, drawing_part)
+        self._chart_part = chart_part
         self._frame = frame
 
     def __repr__(self) -> str:
         return f"<Chart name={self.name!r}>"
 
     def _resolve_chart_part(self) -> Part | None:
-        if self._chart_part is not None:
-            return self._chart_part
-        graphic = self._frame.find(_A_GRAPHIC)
-        if graphic is None:
-            return None
-        data = graphic.find(_A_GRAPHIC_DATA)
-        if data is None:
-            return None
-        chart = data.find(_C_CHART)
-        if chart is None:
-            return None
-        r_id = chart.get(f"{{{OFFICE_REL_NS}}}id")
-        if r_id is None:
-            return None
-        try:
-            self._chart_part = self._drawing_part.rels[r_id].target_part
-        except KeyError:
-            return None
+        if self._chart_part is None:
+            self._chart_part = _chart_part_for(self._frame, self._drawing_part)
         return self._chart_part
 
     def _chart_root(self) -> _Element | None:
         part = self._resolve_chart_part()
-        if part is None:
-            return None
-        return parse_xml(part.blob)
+        return part.element if isinstance(part, ChartPart) else None
 
     def _save_chart_root(self, root: _Element) -> None:
         part = self._resolve_chart_part()
-        if part is not None:
-            part._blob = serialize_xml(root)
-
-    @property
-    def name(self) -> str | None:
-        cnv = self._frame.find(f"{{{XDR_NS}}}nvGraphicFramePr")
-        if cnv is None:
-            return None
-        pr = cnv.find(_XDR_CNVPR)
-        return pr.get("name") if pr is not None else None
-
-    @name.setter
-    def name(self, value: str) -> None:
-        cnv = self._frame.find(f"{{{XDR_NS}}}nvGraphicFramePr")
-        if cnv is None:
-            return
-        pr = cnv.find(_XDR_CNVPR)
-        if pr is not None:
-            pr.set("name", value)
-
-    @property
-    def anchor(self) -> str:
-        from_elm = self._anchor.find(_XDR_FROM)
-        if from_elm is None:
-            return ""
-        return _anchor_address(from_elm)
-
-    @anchor.setter
-    def anchor(self, address: str) -> None:
-        """Move the chart's top-left cell; preserve offsets and to-span."""
-        from xlsxedit.oxml.address import split_address, col_to_index
-
-        col, row = split_address(address)
-        from_elm = self._anchor.find(_XDR_FROM)
-        to_elm = self._anchor.find(_XDR_TO)
-        if from_elm is None:
-            return
-        from_col_elm = from_elm.find(_XDR_COL)
-        from_row_elm = from_elm.find(_XDR_ROW)
-        if from_col_elm is None or from_row_elm is None:
-            return
-        old_col = int(from_col_elm.text or "0")
-        old_row = int(from_row_elm.text or "0")
-        new_col = col_to_index(col)
-        new_row = row - 1
-        d_col = new_col - old_col
-        d_row = new_row - old_row
-        from_col_elm.text = str(new_col)
-        from_row_elm.text = str(new_row)
-        if to_elm is not None and (d_col or d_row):
-            to_col_elm = to_elm.find(_XDR_COL)
-            to_row_elm = to_elm.find(_XDR_ROW)
-            if to_col_elm is not None:
-                to_col_elm.text = str(int(to_col_elm.text or "0") + d_col)
-            if to_row_elm is not None:
-                to_row_elm.text = str(int(to_row_elm.text or "0") + d_row)
-        _sync_drawing_part(self._drawing_part, self._anchor)
+        if isinstance(part, ChartPart):
+            if root is not part.element:
+                part._element = root
+            part.mark_dirty()
 
     @property
     def to_anchor(self) -> str:
@@ -527,43 +953,13 @@ class Chart:
     @to_anchor.setter
     def to_anchor(self, address: str) -> None:
         """Set the bottom-right corner cell (does not move ``anchor``)."""
-        from xlsxedit.oxml.address import split_address, col_to_index
-
         col, row = split_address(address)
-        to_elm = self._anchor.find(_XDR_TO)
+        to_elm = self._own_anchor("resize").find(_XDR_TO)
         if to_elm is None:
-            return
-        to_col_elm = to_elm.find(_XDR_COL)
-        to_row_elm = to_elm.find(_XDR_ROW)
-        if to_col_elm is not None:
-            to_col_elm.text = str(col_to_index(col))
-        if to_row_elm is not None:
-            to_row_elm.text = str(row - 1)
-        _sync_drawing_part(self._drawing_part, self._anchor)
-
-    @property
-    def offset_x(self) -> int:
-        """Horizontal inset from the anchor cell, in pixels."""
-        return _emu_to_px(_get_from_offset_emu(self._anchor)[0])
-
-    @offset_x.setter
-    def offset_x(self, pixels: int) -> None:
-        pixels = _validate_offset_px(pixels)
-        _, row_off = _get_from_offset_emu(self._anchor)
-        _set_from_offset_emu(self._anchor, _px_to_emu(pixels), row_off)
-        _sync_drawing_part(self._drawing_part, self._anchor)
-
-    @property
-    def offset_y(self) -> int:
-        """Vertical inset from the anchor cell, in pixels."""
-        return _emu_to_px(_get_from_offset_emu(self._anchor)[1])
-
-    @offset_y.setter
-    def offset_y(self, pixels: int) -> None:
-        pixels = _validate_offset_px(pixels)
-        col_off, _ = _get_from_offset_emu(self._anchor)
-        _set_from_offset_emu(self._anchor, col_off, _px_to_emu(pixels))
-        _sync_drawing_part(self._drawing_part, self._anchor)
+            raise ValueError(f"cannot resize chart {self.name!r}: its anchor has no xdr:to corner")
+        _, col_off, _, row_off = _marker(to_elm)
+        _set_marker(to_elm, col_to_index(col), col_off, row - 1, row_off)
+        self._changed()
 
     @property
     def partname(self) -> str | None:
@@ -594,7 +990,7 @@ class Chart:
         title_elm = chart_elm.find(_C_TITLE)
         if title_elm is None:
             title_elm = etree.Element(_C_TITLE)
-            chart_elm.insert(0, title_elm)
+            insert_ordered(chart_elm, title_elm, ORDER["CT_Chart"])
 
         old_tx = title_elm.find(_C_TX)
         if old_tx is not None:
@@ -620,10 +1016,12 @@ class Chart:
         formulas = [f for f in root.iter(_C_F) if f.text and "$" in (f.text or "")]
         if index < 0 or index >= len(formulas):
             raise IndexError(f"series formula index out of range: {index}")
-        formulas[index].text = formula
-        parent = formulas[index].getparent()
+        target = formulas[index]
+        parent = target.getparent()
         if parent is not None and worksheet is not None:
+            # Parses the formula first, so a bad one raises before the tree changes.
             _rebuild_series_cache(parent, formula, worksheet)
+        target.text = formula
         self._save_chart_root(root)
 
 
@@ -666,34 +1064,60 @@ class Table:
             self._part._blob = serialize_xml(self._element)
 
 
-def iter_pictures(drawing_part: Part, worksheet: Worksheet) -> Iterator[Picture]:
-    root = parse_xml(drawing_part.blob)
-    for tag in (_XDR_TWO_CELL, _XDR_ONE_CELL):
-        for anchor in root.findall(tag):
-            if anchor.find(_XDR_PIC) is not None:
-                yield Picture(anchor, drawing_part, worksheet)
+def _chart_part_for(frame: _Element, drawing_part: DrawingPart) -> Part | None:
+    chart = frame.find(f"{_A_GRAPHIC}/{_A_GRAPHIC_DATA}/{_C_CHART}")
+    r_id = chart.get(f"{{{OFFICE_REL_NS}}}id") if chart is not None else None
+    if r_id is None:
+        return None
+    try:
+        return drawing_part.rels[r_id].target_part
+    except KeyError:
+        return None
 
 
-def iter_charts(drawing_part: Part) -> Iterator[Chart]:
-    root = parse_xml(drawing_part.blob)
-    for anchor in root.findall(_XDR_TWO_CELL):
-        if anchor.find(_XDR_GRAPHIC_FRAME) is not None:
-            chart_part = None
-            frame = anchor.find(_XDR_GRAPHIC_FRAME)
-            graphic = frame.find(_A_GRAPHIC) if frame is not None else None
-            data = graphic.find(_A_GRAPHIC_DATA) if graphic is not None else None
-            chart_elm = data.find(_C_CHART) if data is not None else None
-            if chart_elm is not None:
-                r_id = chart_elm.get(f"{{{OFFICE_REL_NS}}}id")
-                if r_id is not None:
-                    try:
-                        chart_part = drawing_part.rels[r_id].target_part
-                    except KeyError:
-                        chart_part = None
-            yield Chart(anchor, drawing_part, chart_part)
+def _legacy_rank(obj: DrawingObject, anchor_tags: tuple[str, ...]) -> int:
+    """Sort key that lists what the pre-walker readers found first, in their order."""
+    if obj.alternate is None and obj.group is None and obj._anchor.tag in anchor_tags:
+        return anchor_tags.index(obj._anchor.tag)
+    return len(anchor_tags)
 
 
-def drawing_parts_for_worksheet(worksheet: Worksheet) -> list[Part]:
+def iter_pictures(drawing_part: DrawingPart, worksheet: Worksheet) -> Iterator[Picture]:
+    """Pictures of a drawing part, except ``mc:Fallback`` content.
+
+    Pictures that sit directly in a top-level two-cell anchor come first, then
+    those in a one-cell anchor, then the rest in document order, so the indices
+    of ``ws.images`` are those of earlier releases, which found only the first
+    two.
+    """
+    objects = [
+        obj
+        for obj in iter_drawing_objects(drawing_part)
+        if obj.kind == "picture" and obj.alternate != "fallback"
+    ]
+    objects.sort(key=lambda obj: _legacy_rank(obj, (_XDR_TWO_CELL, _XDR_ONE_CELL)))
+    for obj in objects:
+        yield Picture(obj._anchor, drawing_part, worksheet, obj.element)
+
+
+def iter_charts(drawing_part: DrawingPart) -> Iterator[Chart]:
+    """Charts of a drawing part, except ``mc:Fallback`` content.
+
+    Charts that sit directly in a top-level two-cell anchor come first, then the
+    rest in document order, so the indices of ``ws.charts`` are those of earlier
+    releases, which found only the first.
+    """
+    objects = [
+        obj
+        for obj in iter_drawing_objects(drawing_part)
+        if obj.kind == "chart" and obj.alternate != "fallback"
+    ]
+    objects.sort(key=lambda obj: _legacy_rank(obj, (_XDR_TWO_CELL,)))
+    for obj in objects:
+        yield Chart(obj._anchor, drawing_part, _chart_part_for(obj.element, drawing_part), obj.element)
+
+
+def drawing_parts_for_worksheet(worksheet: Worksheet) -> list[DrawingPart]:
     parts = []
     ws_elm = worksheet._part.element
     for drawing_elm in ws_elm.findall(_WS_DRAWING):
@@ -701,10 +1125,44 @@ def drawing_parts_for_worksheet(worksheet: Worksheet) -> list[Part]:
         if r_id is None:
             continue
         try:
-            parts.append(worksheet._part.rels[r_id].target_part)
+            part = worksheet._part.rels[r_id].target_part
         except KeyError:
             continue
+        if isinstance(part, DrawingPart):
+            parts.append(part)
     return parts
+
+
+def ensure_drawing_part(worksheet: Worksheet) -> DrawingPart:
+    """The worksheet's drawing part, created and related on first use."""
+    parts = drawing_parts_for_worksheet(worksheet)
+    if parts:
+        return parts[0]
+    if worksheet._part.element.find(_WS_DRAWING) is not None:
+        raise ValueError(f"worksheet {worksheet.name!r} links a drawing that is not a drawing part")
+    package = worksheet._workbook._package
+    root = etree.Element(_XDR_WSDR, nsmap={"xdr": XDR_NS, "a": A_NS, "r": OFFICE_REL_NS})
+    part = DrawingPart(package.next_partname("/xl/drawings/drawing%d.xml"), CT.DRAWING, root, package)
+    package._add_part(part)
+    drawing_elm = etree.Element(_WS_DRAWING)
+    drawing_elm.set(f"{{{OFFICE_REL_NS}}}id", worksheet._part.relate_to(part, RT.DRAWING))
+    insert_worksheet_child(worksheet._part.element, drawing_elm)
+    return part
+
+
+def assign_new_object_ids(element: _Element, drawing_root: _Element) -> None:
+    """Give each ``cNvPr`` in ``element`` a fresh id and ``a16:creationId``.
+
+    Ids continue after the largest ``cNvPr/@id`` in ``drawing_root``, which
+    ``element`` is about to join.
+    """
+    ids = [int(cnv.get("id", "")) for cnv in _iter_cnvpr(drawing_root) if cnv.get("id", "").isdigit()]
+    next_id = max(ids, default=1) + 1
+    for cnv in _iter_cnvpr(element):
+        cnv.set("id", str(next_id))
+        next_id += 1
+        for creation_id in cnv.iter(_A16_CREATION_ID):
+            creation_id.set("id", f"{{{str(uuid.uuid4()).upper()}}}")
 
 
 def table_parts_for_worksheet(worksheet: Worksheet) -> list[Table]:
