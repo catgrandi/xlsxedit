@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Iterator
 from lxml import etree
 from lxml.etree import _Element
 
+from xlsxedit._ooxml_order import ORDER
 from xlsxedit.merge import parse_range
 
 from xlsxedit.opc.constants import CT, OFFICE_REL_NS, RT, SML_NS
@@ -17,6 +18,8 @@ from xlsxedit.opc.packuri import PackURI
 from xlsxedit.opc.part import Part
 from xlsxedit.oxml.address import index_to_col, join_address
 from xlsxedit.oxml.parser import parse_xml, serialize_xml
+from xlsxedit.parts import ChartPart, DrawingPart
+from xlsxedit.worksheet_order import insert_ordered, insert_worksheet_child
 
 if TYPE_CHECKING:
     from xlsxedit.worksheet import Worksheet
@@ -119,11 +122,6 @@ def _set_from_offset_emu(anchor: _Element, col_off: int, row_off: int) -> None:
     from_elm = anchor.find(_XDR_FROM)
     if from_elm is not None:
         _set_corner_offset_emu(from_elm, col_off, row_off)
-
-
-def _sync_drawing_part(drawing_part: Part, anchor_elm: _Element) -> None:
-    root = anchor_elm.getroottree().getroot()
-    drawing_part._blob = serialize_xml(root)
 
 
 def _title_text_from_tx(tx: _Element) -> str | None:
@@ -266,7 +264,7 @@ def _ext_size(anchor: _Element) -> tuple[int, int] | None:
 class Picture:
     """Proxy for an ``xdr:pic`` anchored on a worksheet drawing."""
 
-    def __init__(self, anchor_elm: _Element, drawing_part: Part, worksheet: Worksheet):
+    def __init__(self, anchor_elm: _Element, drawing_part: DrawingPart, worksheet: Worksheet):
         self._anchor = anchor_elm
         self._drawing_part = drawing_part
         self._worksheet = worksheet
@@ -294,6 +292,7 @@ class Picture:
         cnv = nv.find(_XDR_CNVPR)
         if cnv is not None:
             cnv.set("name", value)
+            self._drawing_part.mark_dirty()
 
     @property
     def anchor(self) -> str:
@@ -316,7 +315,7 @@ class Picture:
             col_elm.text = str(col_to_index(col))
         if row_elm is not None:
             row_elm.text = str(row - 1)
-        _sync_drawing_part(self._drawing_part, self._anchor)
+        self._drawing_part.mark_dirty()
 
     @property
     def offset_x(self) -> int:
@@ -328,7 +327,7 @@ class Picture:
         pixels = _validate_offset_px(pixels)
         _, row_off = _get_from_offset_emu(self._anchor)
         _set_from_offset_emu(self._anchor, _px_to_emu(pixels), row_off)
-        _sync_drawing_part(self._drawing_part, self._anchor)
+        self._drawing_part.mark_dirty()
 
     @property
     def offset_y(self) -> int:
@@ -340,7 +339,7 @@ class Picture:
         pixels = _validate_offset_px(pixels)
         col_off, _ = _get_from_offset_emu(self._anchor)
         _set_from_offset_emu(self._anchor, col_off, _px_to_emu(pixels))
-        _sync_drawing_part(self._drawing_part, self._anchor)
+        self._drawing_part.mark_dirty()
 
     @property
     def width_emu(self) -> int:
@@ -380,7 +379,7 @@ class Picture:
         if ext_elm is not None:
             ext_elm.set("cx", str(cx))
             ext_elm.set("cy", str(cy))
-        _sync_drawing_part(self._drawing_part, self._anchor)
+        self._drawing_part.mark_dirty()
 
     @property
     def media_path(self) -> str | None:
@@ -417,7 +416,7 @@ class Picture:
 class Chart:
     """Chart reference from a drawing graphicFrame."""
 
-    def __init__(self, anchor_elm: _Element, drawing_part: Part, chart_part: Part | None = None):
+    def __init__(self, anchor_elm: _Element, drawing_part: DrawingPart, chart_part: Part | None = None):
         self._anchor = anchor_elm
         self._drawing_part = drawing_part
         self._chart_part = chart_part
@@ -430,36 +429,20 @@ class Chart:
         return f"<Chart name={self.name!r}>"
 
     def _resolve_chart_part(self) -> Part | None:
-        if self._chart_part is not None:
-            return self._chart_part
-        graphic = self._frame.find(_A_GRAPHIC)
-        if graphic is None:
-            return None
-        data = graphic.find(_A_GRAPHIC_DATA)
-        if data is None:
-            return None
-        chart = data.find(_C_CHART)
-        if chart is None:
-            return None
-        r_id = chart.get(f"{{{OFFICE_REL_NS}}}id")
-        if r_id is None:
-            return None
-        try:
-            self._chart_part = self._drawing_part.rels[r_id].target_part
-        except KeyError:
-            return None
+        if self._chart_part is None:
+            self._chart_part = _chart_part_for(self._frame, self._drawing_part)
         return self._chart_part
 
     def _chart_root(self) -> _Element | None:
         part = self._resolve_chart_part()
-        if part is None:
-            return None
-        return parse_xml(part.blob)
+        return part.element if isinstance(part, ChartPart) else None
 
     def _save_chart_root(self, root: _Element) -> None:
         part = self._resolve_chart_part()
-        if part is not None:
-            part._blob = serialize_xml(root)
+        if isinstance(part, ChartPart):
+            if root is not part.element:
+                part._element = root
+            part.mark_dirty()
 
     @property
     def name(self) -> str | None:
@@ -477,6 +460,7 @@ class Chart:
         pr = cnv.find(_XDR_CNVPR)
         if pr is not None:
             pr.set("name", value)
+            self._drawing_part.mark_dirty()
 
     @property
     def anchor(self) -> str:
@@ -514,7 +498,7 @@ class Chart:
                 to_col_elm.text = str(int(to_col_elm.text or "0") + d_col)
             if to_row_elm is not None:
                 to_row_elm.text = str(int(to_row_elm.text or "0") + d_row)
-        _sync_drawing_part(self._drawing_part, self._anchor)
+        self._drawing_part.mark_dirty()
 
     @property
     def to_anchor(self) -> str:
@@ -539,7 +523,7 @@ class Chart:
             to_col_elm.text = str(col_to_index(col))
         if to_row_elm is not None:
             to_row_elm.text = str(row - 1)
-        _sync_drawing_part(self._drawing_part, self._anchor)
+        self._drawing_part.mark_dirty()
 
     @property
     def offset_x(self) -> int:
@@ -551,7 +535,7 @@ class Chart:
         pixels = _validate_offset_px(pixels)
         _, row_off = _get_from_offset_emu(self._anchor)
         _set_from_offset_emu(self._anchor, _px_to_emu(pixels), row_off)
-        _sync_drawing_part(self._drawing_part, self._anchor)
+        self._drawing_part.mark_dirty()
 
     @property
     def offset_y(self) -> int:
@@ -563,7 +547,7 @@ class Chart:
         pixels = _validate_offset_px(pixels)
         col_off, _ = _get_from_offset_emu(self._anchor)
         _set_from_offset_emu(self._anchor, col_off, _px_to_emu(pixels))
-        _sync_drawing_part(self._drawing_part, self._anchor)
+        self._drawing_part.mark_dirty()
 
     @property
     def partname(self) -> str | None:
@@ -594,7 +578,7 @@ class Chart:
         title_elm = chart_elm.find(_C_TITLE)
         if title_elm is None:
             title_elm = etree.Element(_C_TITLE)
-            chart_elm.insert(0, title_elm)
+            insert_ordered(chart_elm, title_elm, ORDER["CT_Chart"])
 
         old_tx = title_elm.find(_C_TX)
         if old_tx is not None:
@@ -620,10 +604,12 @@ class Chart:
         formulas = [f for f in root.iter(_C_F) if f.text and "$" in (f.text or "")]
         if index < 0 or index >= len(formulas):
             raise IndexError(f"series formula index out of range: {index}")
-        formulas[index].text = formula
-        parent = formulas[index].getparent()
+        target = formulas[index]
+        parent = target.getparent()
         if parent is not None and worksheet is not None:
+            # Parses the formula first, so a bad one raises before the tree changes.
             _rebuild_series_cache(parent, formula, worksheet)
+        target.text = formula
         self._save_chart_root(root)
 
 
@@ -666,34 +652,34 @@ class Table:
             self._part._blob = serialize_xml(self._element)
 
 
-def iter_pictures(drawing_part: Part, worksheet: Worksheet) -> Iterator[Picture]:
-    root = parse_xml(drawing_part.blob)
+def _chart_part_for(frame: _Element, drawing_part: DrawingPart) -> Part | None:
+    chart = frame.find(f"{_A_GRAPHIC}/{_A_GRAPHIC_DATA}/{_C_CHART}")
+    r_id = chart.get(f"{{{OFFICE_REL_NS}}}id") if chart is not None else None
+    if r_id is None:
+        return None
+    try:
+        return drawing_part.rels[r_id].target_part
+    except KeyError:
+        return None
+
+
+def iter_pictures(drawing_part: DrawingPart, worksheet: Worksheet) -> Iterator[Picture]:
+    root = drawing_part.element
     for tag in (_XDR_TWO_CELL, _XDR_ONE_CELL):
         for anchor in root.findall(tag):
             if anchor.find(_XDR_PIC) is not None:
                 yield Picture(anchor, drawing_part, worksheet)
 
 
-def iter_charts(drawing_part: Part) -> Iterator[Chart]:
-    root = parse_xml(drawing_part.blob)
+def iter_charts(drawing_part: DrawingPart) -> Iterator[Chart]:
+    root = drawing_part.element
     for anchor in root.findall(_XDR_TWO_CELL):
-        if anchor.find(_XDR_GRAPHIC_FRAME) is not None:
-            chart_part = None
-            frame = anchor.find(_XDR_GRAPHIC_FRAME)
-            graphic = frame.find(_A_GRAPHIC) if frame is not None else None
-            data = graphic.find(_A_GRAPHIC_DATA) if graphic is not None else None
-            chart_elm = data.find(_C_CHART) if data is not None else None
-            if chart_elm is not None:
-                r_id = chart_elm.get(f"{{{OFFICE_REL_NS}}}id")
-                if r_id is not None:
-                    try:
-                        chart_part = drawing_part.rels[r_id].target_part
-                    except KeyError:
-                        chart_part = None
-            yield Chart(anchor, drawing_part, chart_part)
+        frame = anchor.find(_XDR_GRAPHIC_FRAME)
+        if frame is not None:
+            yield Chart(anchor, drawing_part, _chart_part_for(frame, drawing_part))
 
 
-def drawing_parts_for_worksheet(worksheet: Worksheet) -> list[Part]:
+def drawing_parts_for_worksheet(worksheet: Worksheet) -> list[DrawingPart]:
     parts = []
     ws_elm = worksheet._part.element
     for drawing_elm in ws_elm.findall(_WS_DRAWING):
@@ -701,10 +687,29 @@ def drawing_parts_for_worksheet(worksheet: Worksheet) -> list[Part]:
         if r_id is None:
             continue
         try:
-            parts.append(worksheet._part.rels[r_id].target_part)
+            part = worksheet._part.rels[r_id].target_part
         except KeyError:
             continue
+        if isinstance(part, DrawingPart):
+            parts.append(part)
     return parts
+
+
+def ensure_drawing_part(worksheet: Worksheet) -> DrawingPart:
+    """The worksheet's drawing part, created and related on first use."""
+    parts = drawing_parts_for_worksheet(worksheet)
+    if parts:
+        return parts[0]
+    if worksheet._part.element.find(_WS_DRAWING) is not None:
+        raise ValueError(f"worksheet {worksheet.name!r} links a drawing that is not a drawing part")
+    package = worksheet._workbook._package
+    root = etree.Element(_XDR_WSDR, nsmap={"xdr": XDR_NS, "a": A_NS, "r": OFFICE_REL_NS})
+    part = DrawingPart(package.next_partname("/xl/drawings/drawing%d.xml"), CT.DRAWING, root, package)
+    package._add_part(part)
+    drawing_elm = etree.Element(_WS_DRAWING)
+    drawing_elm.set(f"{{{OFFICE_REL_NS}}}id", worksheet._part.relate_to(part, RT.DRAWING))
+    insert_worksheet_child(worksheet._part.element, drawing_elm)
+    return part
 
 
 def table_parts_for_worksheet(worksheet: Worksheet) -> list[Table]:

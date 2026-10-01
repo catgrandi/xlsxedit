@@ -24,9 +24,7 @@ from xlsxedit.drawing import (
     Picture,
     Chart,
     Table,
-    drawing_parts_for_worksheet,
-    iter_charts,
-    iter_pictures,
+    ensure_drawing_part,
     _px_to_emu,
     _set_from_offset_emu,
     _validate_offset_px,
@@ -39,7 +37,7 @@ from xlsxedit.opc.part import Part
 from xlsxedit.opc.packuri import PackURI
 from xlsxedit.oxml.address import col_to_index, index_to_col, join_address, split_address
 from xlsxedit.oxml.parser import parse_template_xml, parse_xml, serialize_xml
-from xlsxedit.parts import WorkbookPart, WorksheetPart, register_part_types
+from xlsxedit.parts import ChartPart, WorkbookPart, WorksheetPart, register_part_types
 from xlsxedit.shared_strings import SharedStringTable
 from xlsxedit.styles import Styles, datetime_to_serial
 from xlsxedit.cell import Cell
@@ -62,7 +60,6 @@ _XDR_ROW = f"{{{_XDR_NS}}}row"
 _XDR_EXT = f"{{{_XDR_NS}}}ext"
 _XDR_CNVPR = f"{{{_XDR_NS}}}cNvPr"
 _A_EXT = f"{{{_A_NS}}}ext"
-_WS_DRAWING = f"{{{SML_NS}}}drawing"
 
 
 def _coerce_date(value) -> datetime | date:
@@ -681,33 +678,10 @@ class Workbook:
         self._package._add_part(media_part)
 
         template_path = _default_xlsx_path().parent / "default-picture-anchor.xml"
-        anchor_template = parse_template_xml(template_path.read_bytes()).find(_XDR_ONE_CELL)
-
-        drawing_parts = drawing_parts_for_worksheet(ws)
-        if drawing_parts:
-            drawing_part = drawing_parts[0]
-            root = parse_xml(drawing_part.blob)
-            anchor_elm = deepcopy(anchor_template)
-        else:
-            root = parse_xml(
-                b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-                b'<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"'
-                b' xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
-                b' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>'
-            )
-            anchor_elm = deepcopy(anchor_template)
-            drawing_partname = self._package.next_partname("/xl/drawings/drawing%d.xml")
-            drawing_part = Part(drawing_partname, CT.DRAWING, b"", self._package)
-            self._package._add_part(drawing_part)
-            r_id = ws._part.relate_to(drawing_part, RT.DRAWING)
-            from xlsxedit.worksheet_order import insert_worksheet_child
-
-            drawing_elm = etree.Element(_WS_DRAWING)
-            drawing_elm.set(f"{{{OFFICE_REL_NS}}}id", r_id)
-            insert_worksheet_child(ws._part.element, drawing_elm)
-
+        anchor_elm = parse_template_xml(template_path.read_bytes()).find(_XDR_ONE_CELL)
         if anchor_elm is None:
             raise ValueError("picture anchor template missing")
+        drawing_part = ensure_drawing_part(ws)
 
         col, row = split_address(anchor)
         from_elm = anchor_elm.find(_XDR_FROM)
@@ -738,11 +712,10 @@ class Workbook:
         if blip is not None:
             blip.set(f"{{{OFFICE_REL_NS}}}embed", media_r_id)
 
+        root = drawing_part.element
         root.append(anchor_elm)
-        drawing_part._blob = serialize_xml(root)
-
-        pics = list(iter_pictures(drawing_part, ws))
-        return pics[-1]
+        drawing_part.mark_dirty()
+        return Picture(anchor_elm, drawing_part, ws)
 
     def _add_chart_to_sheet(
         self,
@@ -758,6 +731,10 @@ class Workbook:
         if chart_type != "bar":
             raise ValueError(f"unsupported chart_type: {chart_type!r}")
 
+        c1, r1, c2, r2 = parse_range(data_range)
+        if col_to_index(c2) - col_to_index(c1) < 1:
+            raise ValueError("data_range must span at least two columns")
+
         templates = _default_xlsx_path().parent
         drawing_template = parse_template_xml(
             (templates / "default-chart-anchor.xml").read_bytes()
@@ -765,38 +742,14 @@ class Workbook:
         chart_template = parse_template_xml(
             (templates / "default-bar-chart.xml").read_bytes()
         )
-
-        chart_partname = self._package.next_partname("/xl/charts/chart%d.xml")
-        chart_part = Part(chart_partname, CT.CHART, serialize_xml(chart_template), self._package)
-        self._package._add_part(chart_part)
-
-        drawing_parts = drawing_parts_for_worksheet(ws)
-        anchor_template = deepcopy(drawing_template.find(_XDR_TWO_CELL))
-        if anchor_template is None:
+        anchor_elm = drawing_template.find(_XDR_TWO_CELL)
+        if anchor_elm is None:
             raise ValueError("chart anchor template missing")
 
-        if drawing_parts:
-            drawing_part = drawing_parts[0]
-            root = parse_xml(drawing_part.blob)
-            anchor_elm = deepcopy(anchor_template)
-        else:
-            root = parse_xml(
-                b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-                b'<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"'
-                b' xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
-                b' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
-                b' xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"/>'
-            )
-            anchor_elm = deepcopy(anchor_template)
-            drawing_partname = self._package.next_partname("/xl/drawings/drawing%d.xml")
-            drawing_part = Part(drawing_partname, CT.DRAWING, b"", self._package)
-            self._package._add_part(drawing_part)
-            r_id = ws._part.relate_to(drawing_part, RT.DRAWING)
-            from xlsxedit.worksheet_order import insert_worksheet_child
-
-            drawing_elm = etree.Element(_WS_DRAWING)
-            drawing_elm.set(f"{{{OFFICE_REL_NS}}}id", r_id)
-            insert_worksheet_child(ws._part.element, drawing_elm)
+        chart_partname = self._package.next_partname("/xl/charts/chart%d.xml")
+        chart_part = ChartPart(chart_partname, CT.CHART, chart_template, self._package)
+        self._package._add_part(chart_part)
+        drawing_part = ensure_drawing_part(ws)
 
         col, row = split_address(anchor)
         from_elm = anchor_elm.find(_XDR_FROM)
@@ -843,12 +796,10 @@ class Workbook:
         if chart_ref is not None:
             chart_ref.set(f"{{{OFFICE_REL_NS}}}id", chart_r_id)
 
+        root = drawing_part.element
         root.append(anchor_elm)
-        drawing_part._blob = serialize_xml(root)
+        drawing_part.mark_dirty()
 
-        c1, r1, c2, r2 = parse_range(data_range)
-        if col_to_index(c2) - col_to_index(c1) < 1:
-            raise ValueError("data_range must span at least two columns")
         name_ref = _sheet_abs_ref(ws.name, c2, r1)
         cat_ref = _sheet_abs_range(
             ws.name,
@@ -859,8 +810,7 @@ class Workbook:
             f"{c2}{r1 + 1}:{c2}{r2}",
         )
 
-        charts = list(iter_charts(drawing_part))
-        chart = charts[-1]
+        chart = Chart(anchor_elm, drawing_part, chart_part)
         chart.set_series_formula(0, name_ref, ws)
         chart.set_series_formula(1, cat_ref, ws)
         chart.set_series_formula(2, val_ref, ws)
