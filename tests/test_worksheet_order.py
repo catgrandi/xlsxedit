@@ -8,12 +8,17 @@ import pytest
 from lxml import etree
 
 from xlsxedit import Workbook
+from xlsxedit._ooxml_order import ORDER
 from xlsxedit.opc.constants import OFFICE_REL_NS, SML_NS
 from xlsxedit.worksheet_order import (
     _WS_CHILD_RANK,
+    insert_ordered,
     insert_worksheet_child,
+    reposition_ordered,
     reposition_worksheet_child,
 )
+from tests.conftest import FIXTURES
+from tests.schema_validate import assert_valid_package
 
 ASSETS = Path(__file__).resolve().parents[1] / "assets"
 
@@ -123,3 +128,44 @@ def test_reposition_moves_only_an_out_of_order_child():
     root.insert(0, table_parts)
     reposition_worksheet_child(root, table_parts)
     assert list(root) == before + [table_parts]
+
+
+def _names(parent) -> list[str]:
+    return [etree.QName(c).localname for c in parent]
+
+
+def test_insert_ordered_follows_the_given_sequence():
+    styles = etree.fromstring(
+        f'<styleSheet xmlns="{SML_NS}"><fonts/><cellXfs/><dxfs/><extLst/></styleSheet>'
+    )
+    for name in ("tableStyles", "fills", "numFmts", "dxfs"):
+        insert_ordered(styles, etree.Element(f"{{{SML_NS}}}{name}"), ORDER["CT_Stylesheet"])
+    assert _names(styles) == [
+        "numFmts",
+        "fonts",
+        "fills",
+        "cellXfs",
+        "dxfs",
+        "dxfs",
+        "tableStyles",
+        "extLst",
+    ]
+
+
+def test_reposition_ordered_reports_whether_it_moved():
+    styles = etree.fromstring(f'<styleSheet xmlns="{SML_NS}"><fonts/><numFmts/></styleSheet>')
+    num_fmts = styles[1]
+    assert reposition_ordered(styles, num_fmts, ORDER["CT_Stylesheet"]) is True
+    assert _names(styles) == ["numFmts", "fonts"]
+    assert reposition_ordered(styles, num_fmts, ORDER["CT_Stylesheet"]) is False
+
+
+def test_calc_pr_is_inserted_in_workbook_order():
+    """Excel workbooks carry ``mc:AlternateContent`` and ``xr:revisionPtr`` children."""
+    wb = Workbook.open(FIXTURES / "ChartsAndTables.xlsx")
+    root = wb._workbook_part.element
+    root.remove(root.find(f"{{{SML_NS}}}calcPr"))
+    wb.set_full_calc_on_load()
+    names = _names(root)
+    assert names.index("sheets") < names.index("calcPr") < names.index("extLst")
+    assert_valid_package(wb)
