@@ -1,4 +1,4 @@
-"""Drawing and chart parts: live trees, anchors, sizes, series caches, ids."""
+"""Drawing and chart parts: live trees, anchors, sizes, series caches, ids, the object walker."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from tests.preservation import assert_preserved, read_pkg, worksheet_members
 from tests.schema_validate import SchemaWarning, assert_valid_package
 from xlsxedit import Workbook
 from xlsxedit.drawing import A_NS, CHART_NS, EMU_PER_PIXEL, XDR_NS, drawing_parts_for_worksheet
+from xlsxedit.opc.constants import RT
 from xlsxedit.parts import ChartPart, DrawingPart
 
 PNG = (
@@ -113,6 +114,7 @@ def test_reading_does_not_reserialise_drawing_or_chart_parts():
     path = INSPECT_FIXTURES["ChartsAndTables"]
     wb = Workbook.open(path)
     for ws in wb.worksheets:
+        ws.drawing_objects
         for chart in ws.charts:
             assert chart.anchor and chart.name
             chart.title
@@ -127,7 +129,7 @@ def test_unrelated_cell_edit_keeps_drawing_and_chart_parts_byte_identical(fixtur
     before = read_pkg(path)
     wb = Workbook.open(path)
     ws = wb.worksheets[0]
-    ws.images, ws.charts  # parse the drawing part
+    ws.images, ws.charts, ws.drawing_objects  # parse the drawing part
     ws["Z99"].value = 5
 
     report = assert_preserved(before, wb, expected_changed={worksheet_members(before)[ws.name]})
@@ -392,9 +394,220 @@ def test_added_objects_get_unique_ids_and_fresh_creation_ids(png: Path):
     assert len(creation_ids) == 5
     assert len(set(creation_ids)) == 5
     assert all(_GUID.fullmatch(value) for value in creation_ids)
+    assert [obj.id for obj in _reopen(wb)["Sheet1"].drawing_objects] == [3, 4, 5, 6, 7]
 
 
 def test_first_object_on_a_new_drawing_gets_id_2(png: Path):
     wb = Workbook.create()
     wb["Sheet1"].add_image(png, anchor="B2")
     assert _cnvpr_ids(_drawing_xml(wb)) == [2]
+
+
+# --- anchor walker ----------------------------------------------------------
+
+_NS = (
+    f'xmlns:xdr="{XDR_NS}" xmlns:a="{A_NS}" xmlns:c="{CHART_NS}"'
+    ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+    ' xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
+)
+
+
+def _from(col: int, row: int, tag: str = "from") -> str:
+    return (
+        f"<xdr:{tag}><xdr:col>{col}</xdr:col><xdr:colOff>0</xdr:colOff>"
+        f"<xdr:row>{row}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:{tag}>"
+    )
+
+
+def _two(obj: str, col: int = 1, row: int = 1) -> str:
+    return (
+        f"<xdr:twoCellAnchor>{_from(col, row)}{_from(col + 2, row + 4, 'to')}{obj}"
+        "<xdr:clientData/></xdr:twoCellAnchor>"
+    )
+
+
+def _pic(id_: int, name: str, rid: str) -> str:
+    return (
+        f'<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="{id_}" name="{name}"/><xdr:cNvPicPr/></xdr:nvPicPr>'
+        f'<xdr:blipFill><a:blip r:embed="{rid}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>'
+        '<xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="952500" cy="952500"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic>'
+    )
+
+
+def _sp(id_: int, name: str, tag: str = "sp") -> str:
+    nv = {"sp": "nvSpPr", "cxnSp": "nvCxnSpPr"}[tag]
+    c_nv = {"sp": "cNvSpPr", "cxnSp": "cNvCxnSpPr"}[tag]
+    return (
+        f'<xdr:{tag} macro=""><xdr:{nv}><xdr:cNvPr id="{id_}" name="{name}"/><xdr:{c_nv}/></xdr:{nv}>'
+        f"<xdr:spPr/></xdr:{tag}>"
+    )
+
+
+def _frame(id_: int, name: str, uri: str, data: str) -> str:
+    return (
+        f'<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="{id_}" name="{name}"/>'
+        "<xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>"
+        '<xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm>'
+        f'<a:graphic><a:graphicData uri="{uri}">{data}</a:graphicData></a:graphic></xdr:graphicFrame>'
+    )
+
+
+def _alternate(requires: str, ns: str, choice: str, fallback: str) -> str:
+    return (
+        f'<mc:AlternateContent><mc:Choice xmlns:{requires}="{ns}" Requires="{requires}">{choice}</mc:Choice>'
+        f"<mc:Fallback>{fallback}</mc:Fallback></mc:AlternateContent>"
+    )
+
+
+def _walker_workbook(png: Path) -> Workbook:
+    """Sheet1's drawing holds one of every anchor and object kind the walker classifies."""
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A1"].value = "k"
+    ws["B1"].value = "v"
+    ws["A2"].value = "x"
+    ws["B2"].value = 1
+    ws.add_image(png, anchor="A1")
+    ws.add_chart("bar", anchor="D2", data_range="A1:B2")
+    part = drawing_parts_for_worksheet(ws)[0]
+    image_rid = next(rel.rId for rel in part.rels if rel.reltype == RT.IMAGE)
+    chart_rid = next(rel.rId for rel in part.rels if rel.reltype == RT.CHART)
+
+    chart_uri = CHART_NS
+    chart = f'<c:chart r:id="{chart_rid}"/>'
+    slicer_ns = "http://schemas.microsoft.com/office/drawing/2010/slicer"
+    timeline_ns = "http://schemas.microsoft.com/office/drawing/2012/timeslicer"
+    chart_ex_ns = "http://schemas.microsoft.com/office/drawing/2014/chartex"
+    children = "".join(
+        [
+            '<xdr:oneCellAnchor>' + _from(0, 0) + '<xdr:ext cx="952500" cy="952500"/>'
+            + _pic(2, "one", image_rid) + "<xdr:clientData/></xdr:oneCellAnchor>",
+            _two(_pic(3, "two", image_rid)),
+            '<xdr:absoluteAnchor><xdr:pos x="0" y="0"/><xdr:ext cx="952500" cy="952500"/>'
+            + _frame(4, "abs chart", chart_uri, chart) + "<xdr:clientData/></xdr:absoluteAnchor>",
+            _alternate(
+                "a14",
+                "http://schemas.microsoft.com/office/drawing/2010/main",
+                _two(_frame(5, "Region", slicer_ns, f'<sle:slicer xmlns:sle="{slicer_ns}" name="Region"/>')),
+                _two(_sp(6, "Region fallback")),
+            ),
+            _two(
+                _alternate(
+                    "cx1",
+                    "http://schemas.microsoft.com/office/drawing/2015/9/8/chartex",
+                    _frame(7, "Waterfall", chart_ex_ns, f'<cx:chart xmlns:cx="{chart_ex_ns}" r:id="{chart_rid}"/>'),
+                    _sp(8, "Waterfall fallback"),
+                )
+            ),
+            _alternate(
+                "tsle",
+                timeline_ns,
+                _two(_frame(9, "Date", timeline_ns, f'<tsle:timeslicer xmlns:tsle="{timeline_ns}" name="Date"/>')),
+                _two(_sp(10, "Date fallback")),
+            ),
+            _two(
+                '<xdr:grpSp><xdr:nvGrpSpPr><xdr:cNvPr id="11" name="Group"/><xdr:cNvGrpSpPr/></xdr:nvGrpSpPr>'
+                "<xdr:grpSpPr/>"
+                + _pic(12, "grouped", image_rid)
+                + _sp(13, "box")
+                + _sp(14, "line", "cxnSp")
+                + "</xdr:grpSp>",
+                col=5,
+                row=20,
+            ),
+            _two(_frame(15, "top chart", chart_uri, chart), col=10),
+            _two(f'<xdr:contentPart r:id="{image_rid}"/>'),
+        ]
+    )
+    root = part.element
+    for child in list(root):
+        root.remove(child)
+    for child in list(etree.fromstring(f"<xdr:wsDr {_NS}>{children}</xdr:wsDr>")):
+        root.append(child)
+    part.mark_dirty()
+    return _reopen(wb)
+
+
+def test_drawing_objects_walk_every_anchor_group_and_alternate(png: Path):
+    ws = _walker_workbook(png)["Sheet1"]
+    found = [
+        (obj.kind, obj.name, obj.anchor_type, obj.alternate, obj.group.name if obj.group else None)
+        for obj in ws.drawing_objects
+    ]
+    assert found == [
+        ("picture", "one", "oneCellAnchor", None, None),
+        ("picture", "two", "twoCellAnchor", None, None),
+        ("chart", "abs chart", "absoluteAnchor", None, None),
+        ("slicer", "Region", "twoCellAnchor", "choice", None),
+        ("shape", "Region fallback", "twoCellAnchor", "fallback", None),
+        ("chartEx", "Waterfall", "twoCellAnchor", "choice", None),
+        ("shape", "Waterfall fallback", "twoCellAnchor", "fallback", None),
+        ("timeline", "Date", "twoCellAnchor", "choice", None),
+        ("shape", "Date fallback", "twoCellAnchor", "fallback", None),
+        ("group", "Group", "twoCellAnchor", None, None),
+        ("picture", "grouped", "twoCellAnchor", None, "Group"),
+        ("shape", "box", "twoCellAnchor", None, "Group"),
+        ("connector", "line", "twoCellAnchor", None, "Group"),
+        ("chart", "top chart", "twoCellAnchor", None, None),
+        ("contentPart", None, "twoCellAnchor", None, None),
+    ]
+    assert [obj.id for obj in ws.drawing_objects][:3] == [2, 3, 4]
+    assert ws.drawing_objects[2].anchor == ""
+    assert ws.drawing_objects[10].anchor == "F21"
+
+
+def test_images_and_charts_keep_their_order_and_add_what_was_hidden(png: Path):
+    ws = _walker_workbook(png)["Sheet1"]
+    # Direct two-cell pictures, then one-cell ones, as before; then the rest.
+    assert [pic.name for pic in ws.images] == ["two", "one", "grouped"]
+    assert [chart.name for chart in ws.charts] == ["top chart", "abs chart"]
+    assert ws.charts[1].partname == ws.charts[0].partname
+
+
+def test_replace_image_reaches_a_grouped_picture(png: Path, tmp_path: Path):
+    wb = _walker_workbook(png)
+    replacement = tmp_path / "other.png"
+    replacement.write_bytes(PNG)
+    assert wb.replace_image("grouped", replacement) == 1
+
+
+def test_grouped_picture_geometry_raises(png: Path):
+    pic = _walker_workbook(png)["Sheet1"].images[2]
+    assert pic.name == "grouped"
+    assert pic.anchor == "F21"  # the group's anchor
+    for action in (
+        lambda: setattr(pic, "anchor", "A1"),
+        lambda: setattr(pic, "offset_x", 3),
+        lambda: setattr(pic, "width", 30),
+    ):
+        with pytest.raises(ValueError, match="part of a group"):
+            action()
+
+
+def test_absolute_anchor_chart_cannot_take_a_cell(png: Path):
+    chart = _walker_workbook(png)["Sheet1"].charts[1]
+    assert chart.name == "abs chart"
+    assert chart.anchor == "" and chart.to_anchor == ""
+    with pytest.raises(ValueError, match="absolute anchor"):
+        chart.anchor = "B2"
+    with pytest.raises(ValueError, match="no xdr:to"):
+        chart.to_anchor = "B2"
+
+
+def test_absolute_anchor_picture_resizes_through_its_ext(png: Path):
+    wb = _walker_workbook(png)
+    ws = wb["Sheet1"]
+    part = drawing_parts_for_worksheet(ws)[0]
+    anchor = part.element.find(f"{_XDR}absoluteAnchor")
+    frame = anchor.find(f"{_XDR}graphicFrame")
+    anchor.replace(frame, etree.fromstring(f"<root {_NS}>{_pic(16, 'abs pic', 'rId1')}</root>")[0])
+    part.mark_dirty()
+    pic = next(p for p in ws.images if p.name == "abs pic")
+
+    pic.width = 30
+
+    assert anchor.find(f"{_XDR}ext").get("cx") == str(30 * EMU_PER_PIXEL)
+    assert pic.width == 30
+    with pytest.raises(ValueError, match="absolute anchor"):
+        pic.anchor = "C3"
