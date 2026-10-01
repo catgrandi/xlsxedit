@@ -36,3 +36,7 @@ class InvalidImageError(XlsxeditError, ValueError):
 
 class MissingPartError(XlsxeditError, RuntimeError):
     """Raised when a required package part is absent."""
+
+
+class TableError(XlsxeditError, ValueError):
+    """Raised when a table edit would leave an invalid or inconsistent table part."""
