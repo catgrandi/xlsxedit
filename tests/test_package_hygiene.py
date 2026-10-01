@@ -175,6 +175,20 @@ def test_remove_worksheet_keeps_parts_another_sheet_shares():
     assert not report.reserialised
 
 
+def test_copy_worksheet_drops_the_calc_chain():
+    src = INSPECT_FIXTURES["SimpleFormula"]
+    before = read_pkg(src)
+    wb = Workbook.open(src)
+    wb.copy_worksheet("Sheet1", "Copy")
+    assert_preserved(
+        before,
+        _saved(wb),
+        expected_changed={WORKBOOK, WORKBOOK_RELS},
+        expected_added={"xl/worksheets/sheet2.xml"},
+        expected_removed={"xl/calcChain.xml"},
+    )
+
+
 def test_prune_unreachable_returns_the_dropped_parts_and_keeps_orphans():
     pkg = read_pkg(CHARTS)
     pkg["custom/cargo.bin"] = b"cargo"
