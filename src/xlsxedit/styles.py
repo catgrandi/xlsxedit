@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -93,6 +94,48 @@ def _format_code_indicates_date(code: str) -> bool:
     if "yy" in c or "dd" in c or "mm" in c or "h" in c:
         return True
     return "[$-f800]" in c.lower() or "dddd" in c
+
+
+@dataclass(frozen=True, eq=False)
+class Color:
+    """A colour reference from ``styles.xml`` (``CT_Color``).
+
+    One of ``rgb`` (``AARRGGBB``), ``theme`` (index into the theme palette) or
+    ``indexed`` (legacy palette index) is set, or ``auto`` is true. ``tint``
+    lightens (positive) or darkens (negative) that base colour. A colour equals
+    a string that is its ``rgb`` value, so ``font_color == "FFFF0000"`` works.
+    """
+
+    rgb: str | None = None
+    theme: int | None = None
+    tint: float = 0.0
+    indexed: int | None = None
+    auto: bool = False
+
+    def _fields(self) -> tuple[Any, ...]:
+        return (self.rgb, self.theme, self.tint, self.indexed, self.auto)
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, str):
+            return self.rgb == other
+        if isinstance(other, Color):
+            return self._fields() == other._fields()
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash(self.rgb) if self.rgb is not None else hash(self._fields())
+
+    @classmethod
+    def from_element(cls, elm: _Element) -> Color:
+        theme = elm.get("theme")
+        indexed = elm.get("indexed")
+        return cls(
+            rgb=elm.get("rgb"),
+            theme=int(theme) if theme is not None else None,
+            tint=float(elm.get("tint", "0")),
+            indexed=int(indexed) if indexed is not None else None,
+            auto=elm.get("auto") in _TRUE,
+        )
 
 
 def _canonical(elm: _Element) -> tuple:
@@ -397,14 +440,16 @@ class Styles:
         name = font.find(_NAME)
         return name.get("val") if name is not None else None
 
-    def font_color_rgb(self, style_index: int | str | None) -> str | None:
+    def font_color(self, style_index: int | str | None) -> Color | None:
         font = self._xf_font(style_index)
         if font is None:
             return None
         color = font.find(_COLOR)
-        if color is None:
-            return None
-        return color.get("rgb") or color.get("theme")
+        return Color.from_element(color) if color is not None else None
+
+    def font_color_rgb(self, style_index: int | str | None) -> str | None:
+        color = self.font_color(style_index)
+        return color.rgb if color is not None else None
 
     def fill_color_rgb(self, style_index: int | str | None) -> str | None:
         xf = self._xf(style_index)
@@ -761,8 +806,8 @@ class CellStyle:
         return self._styles.font_name(self._index) if self._styles else None
 
     @property
-    def font_color(self) -> str | None:
-        return self._styles.font_color_rgb(self._index) if self._styles else None
+    def font_color(self) -> Color | None:
+        return self._styles.font_color(self._index) if self._styles else None
 
     @property
     def bg_color(self) -> str | None:
