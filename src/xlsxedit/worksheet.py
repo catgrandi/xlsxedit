@@ -902,10 +902,28 @@ class Worksheet:
         *,
         name: str | None = None,
         display_name: str | None = None,
+        write_header: bool = False,
     ) -> Table:
-        """Add an Excel table over ``cell_range``."""
+        """Add an Excel table over ``cell_range``: a header row, then data rows.
+
+        ``columns`` names the table's columns left to right, one per column of
+        ``cell_range``. The header row must already hold exactly those names as
+        text; ``write_header=True`` writes them there instead. ``name`` defaults
+        to ``TableN``, where N is the new table's workbook-wide id or, when that
+        name is taken, the next free number; ``display_name`` defaults to ``name``.
+
+        Raises :class:`~xlsxedit.exceptions.TableError` when a name is invalid
+        or already used in the workbook, the column names are empty, repeated
+        or do not fit the range, the range overlaps another table on this
+        sheet, or the header cells do not match the column names.
+        """
         return self._workbook._add_table_to_sheet(
-            self, cell_range, columns, name=name, display_name=display_name
+            self,
+            cell_range,
+            columns,
+            name=name,
+            display_name=display_name,
+            write_header=write_header,
         )
 
     def replace(self, old: str, new, *, value_type: str | None = None) -> int:
