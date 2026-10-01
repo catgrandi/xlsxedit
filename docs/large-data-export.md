@@ -119,7 +119,11 @@ wb.write_dataframe(
 
 Keys match `apply_style` (`bold`, `bg_color`, `font_color`, …) plus `num_format` for number formats.
 
-Do not mix `template_rows` with `row_styles` (raises `ValueError`). `column_styles` may combine with either.
+Do not mix `template_rows` with `row_styles` (raises `ValueError`). `column_styles` may combine with either; with `template_rows`, each column's dict is applied on top of the template cell's style.
+
+### Style allocation
+
+Bulk writes do not create a cell format per cell. Each distinct pair of base style and style dict allocates one `cellXfs` entry, and an identical existing entry, font, fill, or number format is reused instead of duplicated. With `template_rows` + `column_styles`, an export adds at most one entry per template row and styled column, however many rows it writes, and repeating an export with the same styles adds none. This keeps large exports far below Excel's limit of 65,490 cell formats per workbook.
 
 ## Parameters
 
@@ -129,7 +133,7 @@ Do not mix `template_rows` with `row_styles` (raises `ValueError`). `column_styl
 | `header=False` | Skip writing DataFrame column names (use template row 4) |
 | `clear_range="A5:D100"` | Overwrite mode only — clear old values before write |
 | `template_rows=[7, 8]` | Zebra from template rows (`int` or `list[int]`) |
-| `row_styles` / `column_styles` | Inline styles (lists of dicts; allocated once, cached) |
+| `row_styles` / `column_styles` | Inline styles (lists of dicts; see [style allocation](#style-allocation)) |
 | `mode="overwrite"` \| `"insert"` | Overwrite slot vs push rows down |
 | `resize_table=False` | Overwrite mode only — leave Excel tables as they are (see [Tables in the slot](#tables-in-the-slot)) |
 | `table="Sales"` | Resize this table (name or `Table`) instead of the one the rows overlap |

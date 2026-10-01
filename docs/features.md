@@ -113,7 +113,7 @@ Values aimed at cells that a merge covers follow the rule in [large-data-export.
 | `cell.worksheet` | Owning worksheet | |
 | `cell.offset(cols=0, rows=0)` | Neighbor cell | e.g. `offset(cols=1, rows=1)` is one right and one down |
 | `cell.style` | `CellStyle` read proxy | bold, colors, fonts, alignment, num format |
-| `cell.apply_style(**kwargs)` | Write style | `bold`, `font_color`, `bg_color`, `font_size`, … |
+| `cell.apply_style(**kwargs)` | Write style | `bold`, `font_color`, `bg_color`, `font_size`, …; reuses an identical existing format |
 | `cell.apply_date_format()` | Apply standard date format | |
 | `cell.apply_number_format(code)` | Apply custom number format | e.g. `"$#,##0.00"` |
 | `cell.hyperlink` | `Hyperlink` proxy | `.url`, `.location`, `.display` |

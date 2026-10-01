@@ -11,7 +11,6 @@ from xlsxedit.bulk import write_cell_value
 from xlsxedit.bulk_styles import (
     BulkStyleCache,
     merge_style_specs,
-    normalize_style_spec,
     normalize_template_rows,
     validate_style_sources,
 )
@@ -212,8 +211,8 @@ class Worksheet:
         self._cell_index[address] = c_elm
         return c_elm
 
-    def _style_map_for_row(self, row: int) -> dict[int, str]:
-        styles: dict[int, str] = {}
+    def _style_map_for_row(self, row: int) -> dict[int, int]:
+        styles: dict[int, int] = {}
         row_elm = self._find_row_element(row)
         if row_elm is None:
             return styles
@@ -223,7 +222,7 @@ class Worksheet:
             if addr is None or s is None:
                 continue
             col, _ = split_address(addr)
-            styles[col_to_index(col)] = s
+            styles[col_to_index(col)] = int(s)
         return styles
 
     def _resolve_write_address(self, address: str) -> str:
@@ -408,7 +407,7 @@ class Worksheet:
         self,
         *,
         template_rows: int | list[int] | None,
-    ) -> list[dict[int, str]]:
+    ) -> list[dict[int, int]]:
         row_nums = normalize_template_rows(template_rows)
         return [self._style_map_for_row(n) for n in row_nums]
 
@@ -419,7 +418,7 @@ class Worksheet:
         start_row: int,
         start_col_idx: int,
         template_rows: int | list[int] | None = None,
-        template_maps: list[dict[int, str]] | None = None,
+        template_maps: list[dict[int, int]] | None = None,
         row_styles: list[dict[str, Any]] | None = None,
         column_styles: list[dict[str, Any]] | None = None,
         string_columns: set[int] | None = None,
@@ -433,10 +432,7 @@ class Worksheet:
             template_maps = self._resolve_template_style_maps(
                 template_rows=template_rows,
             )
-        styles = self._workbook.styles
-        inline_cache: BulkStyleCache | None = None
-        if row_styles is not None:
-            inline_cache = BulkStyleCache(styles)
+        style_cache = BulkStyleCache(self._workbook.styles)
 
         sst = self.shared_strings
         sst_cache: dict[str, int] = {}
@@ -476,27 +472,17 @@ class Worksheet:
                     else {}
                 )
 
-                style_index: str | None = None
+                idx: int | None = None
                 if row_styles is not None:
-                    merged = merge_style_specs(col_spec, row_spec)
-                    idx = inline_cache.index_for(merged) if inline_cache else None
-                    if idx is not None:
-                        style_index = str(idx)
+                    idx = style_cache.index_for(merge_style_specs(col_spec, row_spec))
                 elif template_maps:
-                    template_s = template_maps[offset % len(template_maps)].get(col_idx)
-                    col_only = normalize_style_spec(col_spec)
-                    if col_only:
-                        base = int(template_s) if template_s is not None else 0
-                        idx = styles.allocate_cell_style(base_xf=base, **col_only)
-                        style_index = str(idx)
-                    elif template_s is not None:
-                        style_index = template_s
+                    template_xf = template_maps[offset % len(template_maps)].get(col_idx)
+                    idx = style_cache.index_for(col_spec, base_xf=template_xf or 0)
+                    if idx is None:
+                        idx = template_xf
                 elif col_spec:
-                    if inline_cache is None:
-                        inline_cache = BulkStyleCache(styles)
-                    idx = inline_cache.index_for(col_spec)
-                    if idx is not None:
-                        style_index = str(idx)
+                    idx = style_cache.index_for(col_spec)
+                style_index = None if idx is None else str(idx)
 
                 if style_index is not None:
                     c_elm.set("s", style_index)
