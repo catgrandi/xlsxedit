@@ -215,6 +215,15 @@ def test_empty_formula_is_rejected(expr: str):
     assert not cell.has_formula
 
 
+@pytest.mark.parametrize("address", ["A3", "C3", "C5"])
+def test_formula_text_xml_cannot_hold_leaves_the_cell_unchanged(address: str):
+    before = read_pkg(SIMPLE)
+    wb = Workbook.open(SIMPLE)
+    with pytest.raises(ValueError, match="XML compatible"):
+        wb.worksheets[0][address].formula = "A5\x00"
+    assert_preserved(before, read_pkg(wb))
+
+
 def test_non_string_formula_is_rejected():
     with pytest.raises(TypeError, match="str or None"):
         Workbook.create()["Sheet1"]["A1"].formula = 5

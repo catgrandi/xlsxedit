@@ -196,14 +196,13 @@ class Cell:
         f = self._element.find(_F)
         self._refuse_formula_group_edit(f)
         keep = f is not None and f.get("t", "normal") in ("normal", "array")
+        new_f = etree.Element(_F, dict(f.attrib) if keep else {})
+        new_f.text = text
         for child in list(self._element):
-            if child.tag in (_V, _IS) or (child.tag == _F and not keep):
+            if child.tag in (_V, _IS, _F):
                 self._element.remove(child)
         self._element.attrib.pop("t", None)
-        if not keep:
-            f = etree.SubElement(self._element, _F)
-            self._element.insert(0, f)
-        f.text = text
+        self._element.insert(0, new_f)
         self._worksheet._workbook.set_full_calc_on_load()
 
     @property
