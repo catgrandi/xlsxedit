@@ -113,7 +113,7 @@ class PackageReader:
     def _load_parts(cls, phys, pkg_rels, content_types):
         sparts = []
         for partname, blob, reltype, srels in cls._walk(phys, pkg_rels):
-            content_type = content_types[partname]
+            content_type = content_types.content_type_for(partname)
             sparts.append((partname, content_type, reltype, blob, srels))
         return sparts
 
