@@ -75,6 +75,7 @@ _LIST_CONTAINERS = frozenset(
     )
 )
 _CONTENT = frozenset({f"{{{SML_NS}}}v", _F, f"{{{SML_NS}}}is"})
+_RANGED_FORMULAS = frozenset({"shared", "array", "dataTable"})
 _WRITABLE = (str, int, float, date)  # bool is an int and datetime a date
 _XML_ILLEGAL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
 
@@ -226,6 +227,9 @@ def _walk_sheet_data(sheet_data: etree._Element | None, ins: _Insert, *, apply: 
     """
     if sheet_data is None:
         return
+    for f in sheet_data.iter(_F):
+        if f.get("t") in _RANGED_FORMULAS:
+            _move_formula_ranges(f, ins, apply=apply, cell=f.getparent().get("r") or "")
     number = 0
     for row in list(sheet_data.iterchildren(_ROW)):
         r = row.get("r")
@@ -278,6 +282,20 @@ def _move_cells_right(row: etree._Element, number: int, ins: _Insert, *, apply: 
             continue
         if apply and (address is None or new_col != col):
             c.set("r", f"{index_to_col(new_col - 1)}{number}")
+
+
+def _move_formula_ranges(f: etree._Element, ins: _Insert, *, apply: bool, cell: str) -> None:
+    kind = f.get("t")
+    for attr in ("ref", "r1", "r2") if kind == "dataTable" else ("ref",):
+        value = f.get(attr)
+        if not value:
+            continue
+        area = _area(value, f"{cell} <f t={kind!r}> @{attr}")
+        moved = ins.area(area)
+        if moved is None:
+            raise ins.overflow(f"the {kind} formula range {attr}={value!r} of {cell}")
+        if apply and moved is not area:
+            f.set(attr, str(moved))
 
 
 def _same_sheet(prefix: str, sheet_name: str | None) -> bool:
@@ -506,6 +524,8 @@ class InsertPlan:
         else:
             planner.after(partial(shift_table_parts_cols, worksheet, ins.at - 1, ins.count))
         planner.defined_names(workbook)
+        planner.after(workbook._invalidate_calc_chain)
+        planner.after(workbook.set_full_calc_on_load)
         self._planner = planner
         self.merges = planner.merges
 

@@ -384,12 +384,6 @@ def test_worksheet_members_follow_workbook_order():
     }
 
 
-@_known_bug(
-    "#5",
-    "shared-formula",
-    "calc-chain",
-    reason="insert_rows leaves shared refs and calcChain stale",
-)
 def test_insert_rows_keeps_formulas_and_calc_chain_consistent():
     wb = Workbook.open(INSPECT_FIXTURES["SimpleFormula"])
     wb["Sheet1"].insert_rows([[None]], at_row=5)
@@ -412,7 +406,6 @@ def test_insert_rows_stays_inside_the_grid():
     check_consistency(wb)
 
 
-@_known_bug("#5", "formula-ref", reason="insert_rows never shifts array <f ref>")
 def test_insert_rows_moves_array_formula_refs():
     wb = Workbook.create()
     ws = wb.worksheets[0]
