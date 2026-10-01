@@ -24,6 +24,7 @@ from xlsxedit.drawing import (
     Picture,
     Chart,
     Table,
+    assign_new_object_ids,
     ensure_drawing_part,
     _px_to_emu,
     _set_from_offset_emu,
@@ -713,6 +714,7 @@ class Workbook:
             blip.set(f"{{{OFFICE_REL_NS}}}embed", media_r_id)
 
         root = drawing_part.element
+        assign_new_object_ids(anchor_elm, root)
         root.append(anchor_elm)
         drawing_part.mark_dirty()
         return Picture(anchor_elm, drawing_part, ws)
@@ -797,6 +799,7 @@ class Workbook:
             chart_ref.set(f"{{{OFFICE_REL_NS}}}id", chart_r_id)
 
         root = drawing_part.element
+        assign_new_object_ids(anchor_elm, root)
         root.append(anchor_elm)
         drawing_part.mark_dirty()
 
