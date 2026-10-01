@@ -1,0 +1,17 @@
+# Normalise line endings: committed blobs are always LF; checkouts are LF on every OS.
+* text=auto eol=lf
+
+# Binary content is never normalised.
+*.xlsx binary
+*.xlsm binary
+*.xltx binary
+*.xltm binary
+*.xls  binary
+*.jpg  binary
+*.jpeg binary
+*.png  binary
+*.gif  binary
+*.bin  binary
+*.emf  binary
+*.wmf  binary
+*.ico  binary
