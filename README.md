@@ -83,7 +83,7 @@ pip install xlsxedit[pandas]   # optional: ExcelWriter / read_excel engine
 npx skills add jonas-kupferschmid/xlsxedit --skill xlsxedit
 ```
 
-Source: [`skills/xlsxedit/SKILL.md`](skills/xlsxedit/SKILL.md)
+Source: [`.agents/skills/xlsxedit/SKILL.md`](.agents/skills/xlsxedit/SKILL.md)
 
 Development:
 
