@@ -6,9 +6,10 @@ Excel repairs a part whose children are out of schema sequence, for example
 sequences in ``xlsxedit._ooxml_order.ORDER``; the ``*_worksheet_child``
 functions apply them to ``CT_Worksheet``.
 
-Children match the sequence by local name. A child the sequence does not name,
-such as a comment or a foreign element, never moves and does not affect where
-a new child goes.
+Children match the sequence by local name; an ``mc:AlternateContent`` child
+takes the position of the element it wraps. A child the sequence does not
+name, such as a comment or a foreign element, never moves and does not affect
+where a new child goes.
 """
 
 from __future__ import annotations
@@ -18,6 +19,10 @@ from functools import lru_cache
 from lxml import etree
 
 from xlsxedit._ooxml_order import ORDER
+
+_MC_ALTERNATE_CONTENT = (
+    "{http://schemas.openxmlformats.org/markup-compatibility/2006}AlternateContent"
+)
 
 _WS_CHILD_ORDER: tuple[str, ...] = ORDER["CT_Worksheet"]
 _WS_CHILD_RANK: dict[str, int] = {name: i for i, name in enumerate(_WS_CHILD_ORDER)}
@@ -31,7 +36,26 @@ def _ranks(order: tuple[str, ...]) -> dict[str, int]:
 def _child_rank(child: etree._Element, ranks: dict[str, int]) -> int | None:
     if not isinstance(child.tag, str):  # comment or processing instruction
         return None
+    if child.tag == _MC_ALTERNATE_CONTENT:
+        # mc:Choice and mc:Fallback hold variants of the same element.
+        for wrapped in child.iterfind("*/*"):
+            rank = ranks.get(etree.QName(wrapped).localname)
+            if rank is not None:
+                return rank
+        return None
     return ranks.get(etree.QName(child).localname)
+
+
+def _insert_index(parent: etree._Element, rank: int, ranks: dict[str, int]) -> int:
+    for i, child in enumerate(parent):
+        child_rank = _child_rank(child, ranks)
+        if child_rank is not None and child_rank > rank:
+            return i
+    return len(parent)
+
+
+def _unknown(localname: str) -> ValueError:
+    return ValueError(f"<{localname}> is not a child element in this schema sequence")
 
 
 def ordered_insert_index(
@@ -48,19 +72,22 @@ def ordered_insert_index(
     ranks = _ranks(order)
     rank = ranks.get(localname)
     if rank is None:
-        raise ValueError(f"<{localname}> is not a child element in this schema sequence")
-    for i, child in enumerate(parent):
-        child_rank = _child_rank(child, ranks)
-        if child_rank is not None and child_rank > rank:
-            return i
-    return len(parent)
+        raise _unknown(localname)
+    return _insert_index(parent, rank, ranks)
 
 
 def insert_ordered(
     parent: etree._Element, elm: etree._Element, order: tuple[str, ...]
 ) -> None:
-    """Insert ``elm`` into ``parent`` at its position in ``order``."""
-    parent.insert(ordered_insert_index(parent, etree.QName(elm).localname, order), elm)
+    """Insert ``elm`` into ``parent`` at its position in ``order``.
+
+    Raises ``ValueError`` when ``order`` does not name ``elm``.
+    """
+    ranks = _ranks(order)
+    rank = _child_rank(elm, ranks)
+    if rank is None:
+        raise _unknown(etree.QName(elm).localname)
+    parent.insert(_insert_index(parent, rank, ranks), elm)
 
 
 def reposition_ordered(
@@ -75,8 +102,7 @@ def reposition_ordered(
     if elm.getparent() is not parent:
         return False
     ranks = _ranks(order)
-    localname = etree.QName(elm).localname
-    rank = ranks.get(localname)
+    rank = _child_rank(elm, ranks)
     if rank is None:
         return False
     preceding = (_child_rank(c, ranks) for c in elm.itersiblings(preceding=True))
@@ -86,7 +112,7 @@ def reposition_ordered(
     ):
         return False
     parent.remove(elm)
-    parent.insert(ordered_insert_index(parent, localname, order), elm)
+    parent.insert(_insert_index(parent, rank, ranks), elm)
     return True
 
 

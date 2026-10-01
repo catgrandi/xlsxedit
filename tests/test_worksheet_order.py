@@ -10,6 +10,7 @@ from lxml import etree
 from xlsxedit import Workbook
 from xlsxedit._ooxml_order import ORDER
 from xlsxedit.opc.constants import OFFICE_REL_NS, SML_NS
+from xlsxedit.oxml.parser import parse_template_xml
 from xlsxedit.worksheet_order import (
     _WS_CHILD_RANK,
     insert_ordered,
@@ -18,9 +19,12 @@ from xlsxedit.worksheet_order import (
     reposition_worksheet_child,
 )
 from tests.conftest import FIXTURES
-from tests.schema_validate import assert_valid_package
+from tests.schema_validate import assert_valid_package, schema_errors
 
 ASSETS = Path(__file__).resolve().parents[1] / "assets"
+TEMPLATES = Path(__file__).resolve().parents[1] / "src" / "xlsxedit" / "templates"
+_MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+_C = "http://schemas.openxmlformats.org/drawingml/2006/chart"
 
 
 def _child_names(ws) -> list[str]:
@@ -169,3 +173,51 @@ def test_calc_pr_is_inserted_in_workbook_order():
     names = _names(root)
     assert names.index("sheets") < names.index("calcPr") < names.index("extLst")
     assert_valid_package(wb)
+
+
+def test_alternate_content_ranks_as_the_element_it_wraps():
+    """Excel wraps form ``<controls>`` in ``mc:AlternateContent``."""
+    wb = Workbook.create()
+    root = wb["Sheet1"]._part.element
+    alternate = etree.SubElement(root, f"{{{_MC}}}AlternateContent")
+    choice = etree.SubElement(alternate, f"{{{_MC}}}Choice", Requires="x14")
+    etree.SubElement(choice, f"{{{SML_NS}}}controls")
+
+    insert_worksheet_child(root, etree.Element(f"{{{SML_NS}}}drawing"))
+    insert_worksheet_child(root, etree.Element(f"{{{SML_NS}}}tableParts"))
+
+    assert _names(root)[-3:] == ["drawing", "AlternateContent", "tableParts"]
+
+
+def test_chart_space_child_goes_before_the_wrapped_style():
+    """Excel wraps ``c:style`` in ``mc:AlternateContent`` in every chart."""
+    chart_space = parse_template_xml((TEMPLATES / "default-bar-chart.xml").read_bytes())
+    rounded_corners = chart_space.find(f"{{{_C}}}roundedCorners")
+    chart_space.remove(rounded_corners)
+
+    insert_ordered(chart_space, rounded_corners, ORDER["CT_ChartSpace"])
+
+    assert _names(chart_space)[:5] == [
+        "date1904",
+        "lang",
+        "roundedCorners",
+        "AlternateContent",
+        "chart",
+    ]
+    assert not [e for e in schema_errors(chart_space) if "roundedCorners" in e]
+
+
+def test_alternate_content_is_inserted_where_its_content_goes():
+    chart_space = parse_template_xml((TEMPLATES / "default-bar-chart.xml").read_bytes())
+    alternate = chart_space.find(f"{{{_MC}}}AlternateContent")
+    chart_space.remove(alternate)
+
+    insert_ordered(chart_space, alternate, ORDER["CT_ChartSpace"])
+
+    assert _names(chart_space)[:5] == [
+        "date1904",
+        "lang",
+        "roundedCorners",
+        "AlternateContent",
+        "chart",
+    ]
