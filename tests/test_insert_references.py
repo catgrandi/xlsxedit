@@ -956,3 +956,81 @@ def test_malformed_filter_break_and_protection_refs_refuse_the_insert(
     with pytest.raises(InvalidRangeError):
         ws.insert_rows([[1]], at_row=3)
     assert_preserved(before, _saved(wb))
+
+
+# -- rows after insert_columns ------------------------------------------------
+
+
+def test_row_spans_cover_the_cells_after_insert_columns():
+    wb = Workbook.open(INSPECT_FIXTURES["SimpleFormula"])
+    ws = wb["Sheet1"]
+    ws.insert_columns([[None, 1, 2, 3]], at_col="B")
+    assert {r.get("r"): r.get("spans") for r in ws._part.element.iterfind(".//m:row", NS)} == {
+        "1": None,
+        "2": "1:4",
+        "3": "1:4",
+        "4": "1:4",
+        "5": "1:4",
+        "6": "1:4",
+        "7": "1:4",
+        "8": "1:4",
+    }
+    ws.insert_columns([[None, 1]], at_col="F")
+    spans = {r.get("r"): r.get("spans") for r in ws._part.element.iterfind(".//m:row", NS)}
+    assert (spans["2"], spans["3"]) == ("1:6", "1:4")
+
+
+def _cell_order(ws) -> list[list[str]]:
+    return [
+        [c.get("r") for c in row.iterfind("m:c", NS)]
+        for row in ws._part.element.iterfind("m:sheetData/m:row", NS)
+    ]
+
+
+def test_insert_columns_keeps_cells_in_column_order():
+    wb = Workbook.open(INSPECT_FIXTURES["SimpleFormula"])
+    ws = wb["Sheet1"]
+    ws.insert_columns([["new", 1, 2]], at_col="B")
+    for cells in _cell_order(ws):
+        letters = [c.rstrip("0123456789") for c in cells]
+        assert letters == sorted(letters, key=lambda s: (len(s), s)), cells
+    assert ws["B1"].value == "new" and ws["C2"].value == "Quantity"
+
+
+def test_insert_columns_keeps_cells_before_a_row_extension():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws.write_rows([[1, None, 3], [4, None, 6]], at_row=1)
+    for row in ws._part.element.iterfind("m:sheetData/m:row", NS):
+        row.append(_xml('<extLst><ext uri="{X}"><xm:f>A1</xm:f></ext></extLst>'))
+    ws.insert_columns([["b1", "b2"]], at_col="B")
+    for row in ws._part.element.iterfind("m:sheetData/m:row", NS):
+        assert [etree.QName(child).localname for child in row] == ["c", "c", "c", "c", "extLst"]
+    assert_valid_package(wb)
+
+
+def _rowless(ws) -> None:
+    sheet_data = ws._part.element.find("m:sheetData", NS)
+    for value in (1, 2):
+        row = etree.SubElement(sheet_data, f"{{{SML_NS}}}row")
+        cell = etree.SubElement(row, f"{{{SML_NS}}}c")
+        etree.SubElement(cell, f"{{{SML_NS}}}v").text = str(value)
+
+
+@pytest.mark.parametrize(
+    ("method", "kwargs", "rows"),
+    [
+        ("insert_columns", {"cols": [[10, 20]], "at_col": "A"}, [("1", ["A1", "B1"]), ("2", ["A2", "B2"])]),
+        ("insert_rows", {"rows": [[10]], "at_row": 1}, [("1", ["A1"]), ("2", ["A2"]), ("3", ["A3"])]),
+    ],
+)
+def test_rows_and_cells_without_r_are_numbered(method, kwargs, rows):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    _rowless(ws)
+    getattr(ws, method)(**kwargs)
+    found = [
+        (row.get("r"), [c.get("r") for c in row.iterfind("m:c", NS)])
+        for row in ws._part.element.iterfind("m:sheetData/m:row", NS)
+    ]
+    assert found == rows
