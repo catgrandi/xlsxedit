@@ -13,8 +13,14 @@ from xlsxedit.opc.package import OpcPackage
 from xlsxedit.opc.packuri import PackURI, encode_partname, is_partname
 from xlsxedit.opc.part import Part
 from xlsxedit.opc.pkgwriter import PackageWriter
-from tests.conftest import BOOK1
-from tests.preservation import content_types, read_pkg
+from tests.conftest import BOOK1, INSPECT_FIXTURES
+from tests.preservation import CONTENT_TYPES, content_types, read_pkg
+
+
+def _edit(pkg: dict[str, bytes], member: str, old: bytes, new: bytes) -> dict[str, bytes]:
+    assert pkg[member].count(old) == 1, f"{old!r} not found once in {member}"
+    pkg[member] = pkg[member].replace(old, new)
+    return pkg
 
 
 def _zip(pkg: dict[str, bytes]) -> io.BytesIO:
@@ -55,6 +61,19 @@ def test_package_writer_refuses_duplicate_part_names(tmp_path):
     with pytest.raises(ValueError, match="duplicate part names: /xl/media/image1.png"):
         PackageWriter.write(out, OpcPackage().rels, parts)
     assert not out.exists()
+
+
+def test_part_without_a_declared_content_type_loads_and_saves():
+    pkg = _edit(
+        read_pkg(INSPECT_FIXTURES["images"]),
+        CONTENT_TYPES,
+        b'<Default Extension="jpeg" ContentType="image/jpeg"/>',
+        b"",
+    )
+    wb = Workbook.open(_zip(pkg))
+    after = _saved(wb)
+    assert content_types(after)["xl/media/image1.jpeg"] == "application/octet-stream"
+    assert after["xl/media/image1.jpeg"] == pkg["xl/media/image1.jpeg"]
 
 
 @pytest.mark.parametrize(
