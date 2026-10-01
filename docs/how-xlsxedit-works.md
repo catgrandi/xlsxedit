@@ -96,7 +96,7 @@ flowchart LR
 ### Save path
 
 1. Collect all loaded parts. Two parts under one name (part names compare case-insensitively) raise `ValueError` before anything is written.
-2. Regenerate `[Content_Types].xml` and each part’s `.rels` from the in-memory graph.
+2. Write `[Content_Types].xml`: its source bytes while they still describe the in-memory parts exactly, otherwise regenerated from them. A regenerated `[Content_Types].xml` keeps the source `Default` entries and adds an `Override` only for a part whose content type differs from its extension’s `Default`. Regenerate each part’s `.rels` from the in-memory graph.
 3. Write every part’s `blob`:
    - opaque `Part` → original bytes unchanged
    - `XmlPart` → re-serialize the live lxml tree
@@ -183,7 +183,7 @@ wb.save("out.xlsx", include_orphans=True)  # keep that cargo
    Workbook, worksheets, and sharedStrings may change whitespace, attribute order, or namespace prefixes even when you only change one string. Semantic content for unedited nodes should remain; byte-identity is **not** promised for those parts.
 
 3. **Package bookkeeping is regenerated.**  
-   `[Content_Types].xml` and `.rels` items are rebuilt from the loaded graph. Targets and types are preserved; exact original XML formatting of those bookkeeping files is not. Orphans included via `include_orphans=True` get content-type entries when written.
+   `.rels` items are rebuilt from the loaded graph. `[Content_Types].xml` keeps its source bytes while it still describes the package and is rebuilt once a part is added or removed. Targets and types are preserved; exact original XML formatting is not. A rebuilt `[Content_Types].xml` keeps the source `Default` entries, adds an `Override` only for a part whose type differs from its extension’s `Default`, and drops entries for parts no longer in the package. Orphans included via `include_orphans=True` get content-type entries when written.
 
 4. **We do not implement every Excel behavior.**  
    Unknown features are preserved as cargo, not edited. `replace` will not search text inside charts, text boxes, headers as drawing text, or pivot caches — only worksheet string cells / SST / inlineStr as documented.
