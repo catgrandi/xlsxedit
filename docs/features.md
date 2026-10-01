@@ -201,6 +201,7 @@ All library errors derive from `XlsxeditError`, so you can catch everything with
 | `InvalidImageError` | `ValueError` | Unsupported or corrupt image data |
 | `MissingPartError` | `RuntimeError` | A required package part is absent |
 | `FormulaGroupError` | `ValueError` | An edit would split a formula group: setting `cell.formula` on a shared-formula master that other cells still derive from, or on any cell of a multi-cell array or data-table formula; or overwriting, clearing, or removing the formula of such a multi-cell formula's anchor (`cell.value`, `cell.clear()`, `cell.formula = None`, `clear_range`, bulk writes). The cell is left unchanged; `clear_range` and bulk writes keep the cells they wrote before it |
+| `DTDForbiddenError` | `ValueError` | An XML part xlsxedit reads declares a DTD (`<!DOCTYPE>`), which Excel never writes; raised on open, or when a worksheet is first read. Parsing never expands entities or fetches external resources |
 
 ---
 
