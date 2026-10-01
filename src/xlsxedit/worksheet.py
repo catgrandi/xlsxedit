@@ -25,11 +25,13 @@ from xlsxedit.conditional_formatting import (
 )
 from xlsxedit.dimensions import ColumnDimensions, RowDimensions
 from xlsxedit.drawing import (
+    DrawingObject,
     Picture,
     Table,
     Chart,
     drawing_parts_for_worksheet,
     iter_charts,
+    iter_drawing_objects,
     iter_pictures,
     table_parts_for_worksheet,
 )
@@ -715,6 +717,12 @@ class Worksheet:
     @property
     def cells(self) -> list[Cell]:
         return list(self.iter_cells())
+
+    @property
+    def drawing_objects(self) -> list[DrawingObject]:
+        """Every object of the sheet's drawing in document order, including group
+        members and both branches of ``mc:AlternateContent``."""
+        return [obj for dp in drawing_parts_for_worksheet(self) for obj in iter_drawing_objects(dp)]
 
     @property
     def images(self) -> list[Picture]:

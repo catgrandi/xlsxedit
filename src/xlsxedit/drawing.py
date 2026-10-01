@@ -31,7 +31,9 @@ if TYPE_CHECKING:
 XDR_NS = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 CHART_NS = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+CHART_EX_NS = "http://schemas.microsoft.com/office/drawing/2014/chartex"
 A16_NS = "http://schemas.microsoft.com/office/drawing/2014/main"
+MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 
 _XDR_WSDR = f"{{{XDR_NS}}}wsDr"
 _XDR_TWO_CELL = f"{{{XDR_NS}}}twoCellAnchor"
@@ -82,9 +84,16 @@ _TABLE_COLUMN = f"{{{SML_NS}}}tableColumn"
 _WS_DRAWING = f"{{{SML_NS}}}drawing"
 _TABLE_PARTS = f"{{{SML_NS}}}tableParts"
 _TABLE_PART = f"{{{SML_NS}}}tablePart"
+_XDR_ABSOLUTE = f"{{{XDR_NS}}}absoluteAnchor"
+_XDR_SP = f"{{{XDR_NS}}}sp"
+_XDR_CXN_SP = f"{{{XDR_NS}}}cxnSp"
+_XDR_GRP_SP = f"{{{XDR_NS}}}grpSp"
 _A_XFRM = f"{{{A_NS}}}xfrm"
 _A16_CREATION_ID = f"{{{A16_NS}}}creationId"
 _C_FORMAT_CODE = f"{{{CHART_NS}}}formatCode"
+_MC_ALTERNATE_CONTENT = f"{{{MC_NS}}}AlternateContent"
+_MC_CHOICE = f"{{{MC_NS}}}Choice"
+_MC_FALLBACK = f"{{{MC_NS}}}Fallback"
 _SHEET_DATA = f"{{{SML_NS}}}sheetData"
 _SHEET_FORMAT_PR = f"{{{SML_NS}}}sheetFormatPr"
 _COLS = f"{{{SML_NS}}}cols"
@@ -92,6 +101,18 @@ _COL = f"{{{SML_NS}}}col"
 _ROW = f"{{{SML_NS}}}row"
 _C = f"{{{SML_NS}}}c"
 _V = f"{{{SML_NS}}}v"
+
+_ANCHOR_TYPES = {
+    _XDR_TWO_CELL: "twoCellAnchor",
+    _XDR_ONE_CELL: "oneCellAnchor",
+    _XDR_ABSOLUTE: "absoluteAnchor",
+}
+_OBJECT_KINDS = {
+    _XDR_PIC: "picture",
+    _XDR_SP: "shape",
+    _XDR_CXN_SP: "connector",
+    _XDR_GRP_SP: "group",
+}
 
 EMU_PER_INCH = 914400
 EMU_PER_PIXEL = 9525  # 96 dpi approximation
@@ -517,6 +538,165 @@ def _iter_cnvpr(root: _Element) -> Iterator[_Element]:
             yield elm
 
 
+def _in_group(elm: _Element, anchor: _Element) -> bool:
+    parent = elm.getparent()
+    while parent is not None and parent is not anchor:
+        if parent.tag == _XDR_GRP_SP:
+            return True
+        parent = parent.getparent()
+    return False
+
+
+def _graphic_frame_kind(frame: _Element) -> str:
+    data = frame.find(f"{_A_GRAPHIC}/{_A_GRAPHIC_DATA}")
+    for child in data if data is not None else ():
+        if not isinstance(child.tag, str):
+            continue
+        qname = etree.QName(child)
+        if child.tag == _C_CHART:
+            return "chart"
+        if qname.namespace == CHART_EX_NS and qname.localname == "chart":
+            return "chartEx"
+        if qname.localname == "slicer":
+            return "slicer"
+        if qname.localname == "timeslicer":
+            return "timeline"
+    return "graphicFrame"
+
+
+def _object_kind(elm: _Element) -> str | None:
+    """Kind of an anchor or group child that is a drawing object, else ``None``."""
+    if not isinstance(elm.tag, str):
+        return None
+    kind = _OBJECT_KINDS.get(elm.tag)
+    if kind is not None:
+        return kind
+    if elm.tag == _XDR_GRAPHIC_FRAME:
+        return _graphic_frame_kind(elm)
+    if etree.QName(elm).localname == "contentPart":  # xdr:contentPart or xdr14:contentPart
+        return "contentPart"
+    return None
+
+
+class DrawingObject:
+    """One object of a worksheet drawing, from ``ws.drawing_objects``.
+
+    ``kind`` is ``"picture"``, ``"chart"``, ``"chartEx"``, ``"slicer"``,
+    ``"timeline"``, ``"shape"``, ``"connector"``, ``"group"``,
+    ``"contentPart"``, or ``"graphicFrame"`` for any other graphic frame.
+    """
+
+    def __init__(
+        self,
+        element: _Element,
+        kind: str,
+        anchor_elm: _Element,
+        *,
+        alternate: str | None = None,
+        group: DrawingObject | None = None,
+    ):
+        self._element = element
+        self._kind = kind
+        self._anchor = anchor_elm
+        self._alternate = alternate
+        self._group = group
+
+    def __repr__(self) -> str:
+        return f"<DrawingObject kind={self.kind!r} name={self.name!r} anchor={self.anchor!r}>"
+
+    @property
+    def kind(self) -> str:
+        return self._kind
+
+    @property
+    def element(self) -> _Element:
+        """The object's XML element, such as ``xdr:pic`` or ``xdr:graphicFrame``."""
+        return self._element
+
+    @property
+    def name(self) -> str | None:
+        cnv = _cnvpr(self._element)
+        return cnv.get("name") if cnv is not None else None
+
+    @property
+    def id(self) -> int | None:
+        """``cNvPr/@id``, unique within the drawing part."""
+        cnv = _cnvpr(self._element)
+        value = cnv.get("id") if cnv is not None else None
+        return int(value) if value is not None and value.isdigit() else None
+
+    @property
+    def anchor(self) -> str:
+        """Top-left cell of the enclosing anchor; ``""`` for an absolute anchor."""
+        from_elm = self._anchor.find(_XDR_FROM)
+        return _anchor_address(from_elm) if from_elm is not None else ""
+
+    @property
+    def anchor_type(self) -> str:
+        """``"twoCellAnchor"``, ``"oneCellAnchor"``, or ``"absoluteAnchor"``."""
+        return _ANCHOR_TYPES[self._anchor.tag]
+
+    @property
+    def alternate(self) -> str | None:
+        """``"choice"`` or ``"fallback"`` inside ``mc:AlternateContent``, else ``None``."""
+        return self._alternate
+
+    @property
+    def group(self) -> DrawingObject | None:
+        """The ``xdr:grpSp`` object this object belongs to, else ``None``."""
+        return self._group
+
+
+def _alternate_branches(
+    alternate_content: _Element, alternate: str | None
+) -> Iterator[tuple[_Element, str]]:
+    for branch in alternate_content:
+        if branch.tag == _MC_CHOICE:
+            yield branch, "fallback" if alternate == "fallback" else "choice"
+        elif branch.tag == _MC_FALLBACK:
+            yield branch, "fallback"
+
+
+def _iter_anchors(parent: _Element, alternate: str | None) -> Iterator[tuple[_Element, str | None]]:
+    for elm in parent:
+        if elm.tag == _MC_ALTERNATE_CONTENT:
+            for branch, label in _alternate_branches(elm, alternate):
+                yield from _iter_anchors(branch, label)
+        elif elm.tag in _ANCHOR_TYPES:
+            yield elm, alternate
+
+
+def _iter_objects(
+    parent: _Element,
+    anchor: _Element,
+    alternate: str | None,
+    group: DrawingObject | None,
+) -> Iterator[DrawingObject]:
+    for elm in parent:
+        if elm.tag == _MC_ALTERNATE_CONTENT:
+            for branch, label in _alternate_branches(elm, alternate):
+                yield from _iter_objects(branch, anchor, label, group)
+            continue
+        kind = _object_kind(elm)
+        if kind is None:
+            continue
+        obj = DrawingObject(elm, kind, anchor, alternate=alternate, group=group)
+        yield obj
+        if kind == "group":
+            yield from _iter_objects(elm, anchor, alternate, obj)
+
+
+def iter_drawing_objects(drawing_part: DrawingPart) -> Iterator[DrawingObject]:
+    """Every object of a drawing part, in document order.
+
+    Walks two-cell, one-cell and absolute anchors, the members of
+    ``xdr:grpSp`` groups, and both branches of ``mc:AlternateContent``, around
+    an anchor or inside it.
+    """
+    for anchor, alternate in _iter_anchors(drawing_part.element, None):
+        yield from _iter_objects(anchor, anchor, alternate, None)
+
+
 class _AnchoredObject:
     """Cell-anchor geometry shared by :class:`Picture` and :class:`Chart`."""
 
@@ -526,12 +706,22 @@ class _AnchoredObject:
         self._anchor = anchor_elm
         self._element = element
         self._drawing_part = drawing_part
+        self._grouped = _in_group(element, anchor_elm)
 
     def _changed(self) -> None:
         self._drawing_part.mark_dirty()
 
+    def _own_anchor(self, action: str) -> _Element:
+        """The anchor this object can be moved or resized through."""
+        if self._grouped:
+            raise ValueError(
+                f"cannot {action} {self._kind} {self.name!r}: it is part of a group, "
+                "whose anchor places it"
+            )
+        return self._anchor
+
     def _cell_anchor(self, action: str) -> _Element:
-        anchor = self._anchor
+        anchor = self._own_anchor(action)
         if anchor.find(_XDR_FROM) is None:
             raise ValueError(
                 f"cannot {action} {self._kind} {self.name!r}: it has an absolute anchor, "
@@ -598,8 +788,14 @@ class Picture(_AnchoredObject):
 
     _kind = "picture"
 
-    def __init__(self, anchor_elm: _Element, drawing_part: DrawingPart, worksheet: Worksheet):
-        pic = anchor_elm.find(_XDR_PIC)
+    def __init__(
+        self,
+        anchor_elm: _Element,
+        drawing_part: DrawingPart,
+        worksheet: Worksheet,
+        pic_elm: _Element | None = None,
+    ):
+        pic = pic_elm if pic_elm is not None else anchor_elm.find(_XDR_PIC)
         if pic is None:
             raise ValueError("anchor has no picture")
         super().__init__(anchor_elm, pic, drawing_part)
@@ -614,11 +810,11 @@ class Picture(_AnchoredObject):
 
     def _extent_emu(self) -> tuple[int, int]:
         ext = self._xfrm_ext()
-        if ext is None:
+        if ext is None and not self._grouped:
             ext = self._anchor.find(_XDR_EXT)
         if ext is not None:
             return int(ext.get("cx", "0")), int(ext.get("cy", "0"))
-        if self._anchor.tag == _XDR_TWO_CELL:
+        if not self._grouped and self._anchor.tag == _XDR_TWO_CELL:
             return _SheetGrid(self._worksheet).extent(self._anchor)
         return 0, 0
 
@@ -650,7 +846,7 @@ class Picture(_AnchoredObject):
 
     def _set_ext(self, *, cx: int, cy: int) -> None:
         """Resize to ``cx`` by ``cy`` EMU: ``spPr/a:xfrm/a:ext`` and the anchor's extent."""
-        anchor = self._anchor
+        anchor = self._own_anchor("resize")
         sp_pr = self._pic.find(_XDR_SPPR)
         if sp_pr is None:
             raise ValueError(f"picture {self.name!r} has no xdr:spPr")
@@ -713,8 +909,14 @@ class Chart(_AnchoredObject):
 
     _kind = "chart"
 
-    def __init__(self, anchor_elm: _Element, drawing_part: DrawingPart, chart_part: Part | None = None):
-        frame = anchor_elm.find(_XDR_GRAPHIC_FRAME)
+    def __init__(
+        self,
+        anchor_elm: _Element,
+        drawing_part: DrawingPart,
+        chart_part: Part | None = None,
+        frame_elm: _Element | None = None,
+    ):
+        frame = frame_elm if frame_elm is not None else anchor_elm.find(_XDR_GRAPHIC_FRAME)
         if frame is None:
             raise ValueError("not a chart frame")
         super().__init__(anchor_elm, frame, drawing_part)
@@ -752,7 +954,7 @@ class Chart(_AnchoredObject):
     def to_anchor(self, address: str) -> None:
         """Set the bottom-right corner cell (does not move ``anchor``)."""
         col, row = split_address(address)
-        to_elm = self._anchor.find(_XDR_TO)
+        to_elm = self._own_anchor("resize").find(_XDR_TO)
         if to_elm is None:
             raise ValueError(f"cannot resize chart {self.name!r}: its anchor has no xdr:to corner")
         _, col_off, _, row_off = _marker(to_elm)
@@ -873,20 +1075,46 @@ def _chart_part_for(frame: _Element, drawing_part: DrawingPart) -> Part | None:
         return None
 
 
+def _legacy_rank(obj: DrawingObject, anchor_tags: tuple[str, ...]) -> int:
+    """Sort key that lists what the pre-walker readers found first, in their order."""
+    if obj.alternate is None and obj.group is None and obj._anchor.tag in anchor_tags:
+        return anchor_tags.index(obj._anchor.tag)
+    return len(anchor_tags)
+
+
 def iter_pictures(drawing_part: DrawingPart, worksheet: Worksheet) -> Iterator[Picture]:
-    root = drawing_part.element
-    for tag in (_XDR_TWO_CELL, _XDR_ONE_CELL):
-        for anchor in root.findall(tag):
-            if anchor.find(_XDR_PIC) is not None:
-                yield Picture(anchor, drawing_part, worksheet)
+    """Pictures of a drawing part, except ``mc:Fallback`` content.
+
+    Pictures that sit directly in a top-level two-cell anchor come first, then
+    those in a one-cell anchor, then the rest in document order, so the indices
+    of ``ws.images`` are those of earlier releases, which found only the first
+    two.
+    """
+    objects = [
+        obj
+        for obj in iter_drawing_objects(drawing_part)
+        if obj.kind == "picture" and obj.alternate != "fallback"
+    ]
+    objects.sort(key=lambda obj: _legacy_rank(obj, (_XDR_TWO_CELL, _XDR_ONE_CELL)))
+    for obj in objects:
+        yield Picture(obj._anchor, drawing_part, worksheet, obj.element)
 
 
 def iter_charts(drawing_part: DrawingPart) -> Iterator[Chart]:
-    root = drawing_part.element
-    for anchor in root.findall(_XDR_TWO_CELL):
-        frame = anchor.find(_XDR_GRAPHIC_FRAME)
-        if frame is not None:
-            yield Chart(anchor, drawing_part, _chart_part_for(frame, drawing_part))
+    """Charts of a drawing part, except ``mc:Fallback`` content.
+
+    Charts that sit directly in a top-level two-cell anchor come first, then the
+    rest in document order, so the indices of ``ws.charts`` are those of earlier
+    releases, which found only the first.
+    """
+    objects = [
+        obj
+        for obj in iter_drawing_objects(drawing_part)
+        if obj.kind == "chart" and obj.alternate != "fallback"
+    ]
+    objects.sort(key=lambda obj: _legacy_rank(obj, (_XDR_TWO_CELL,)))
+    for obj in objects:
+        yield Chart(obj._anchor, drawing_part, _chart_part_for(obj.element, drawing_part), obj.element)
 
 
 def drawing_parts_for_worksheet(worksheet: Worksheet) -> list[DrawingPart]:
