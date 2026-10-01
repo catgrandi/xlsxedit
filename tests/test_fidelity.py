@@ -1,16 +1,48 @@
-"""Fidelity round-trip tests for inspect fixture workbooks."""
+"""Fidelity of every registered fixture: consistency, a no-edit save, a single-cell edit.
+
+Built on ``tests/preservation.py``; a fixture registered in ``INSPECT_FIXTURES`` is
+covered automatically.
+"""
 
 from __future__ import annotations
 
-import zipfile
-from pathlib import Path
+import io
 
 import pytest
 
 from xlsxedit import Workbook
+from xlsxedit.opc.constants import CT, SML_NS
 from xlsxedit.oxml.parser import parse_xml
-from xlsxedit.opc.constants import SML_NS
-from tests.conftest import INSPECT_FIXTURES
+from tests.conftest import BOOK1, INSPECT_FIXTURES
+from tests.preservation import (
+    CONTENT_TYPES,
+    CellState,
+    PreservationReport,
+    assert_preserved,
+    check_consistency,
+    content_types,
+    read_pkg,
+    worksheet_diff,
+    worksheet_members,
+)
+
+FIXTURES = {"Book1": BOOK1, **INSPECT_FIXTURES}
+PROBE = "Z99"
+
+# Parts xlsxedit rebuilds on every save: its live XmlParts and all relationships.
+# Every other member must keep its exact bytes, as StylesPart promises styles.xml.
+REBUILT_ON_SAVE = frozenset(
+    {
+        CT.WORKBOOK,
+        CT.WORKBOOK_MACRO_ENABLED,
+        CT.WORKBOOK_TEMPLATE,
+        CT.WORKBOOK_MACRO_ENABLED_TEMPLATE,
+        CT.WORKSHEET,
+        CT.SHARED_STRINGS,
+        CT.OPC_CORE_PROPERTIES,
+        CT.OPC_RELATIONSHIPS,
+    }
+)
 
 _C = f"{{{SML_NS}}}c"
 _MERGE = f"{{{SML_NS}}}mergeCell"
@@ -18,75 +50,80 @@ _CF = f"{{{SML_NS}}}conditionalFormatting"
 _F = f"{{{SML_NS}}}f"
 
 
-def _tier_a_unchanged(orig: zipfile.ZipFile, saved: zipfile.ZipFile, paths: list[str]) -> None:
-    for p in paths:
-        if p not in orig.namelist():
-            continue
-        assert orig.read(p) == saved.read(p), p
-
-
-def _save_roundtrip(src: Path, tmp_path: Path, *, edit: bool) -> Path:
-    out = tmp_path / f"{src.stem}_out.xlsx"
-    wb = Workbook.open(src)
-    if edit:
-        wb[list(wb.sheetnames)[0]]["Z99"].value = "probe"
+def _probe_first_sheet(name: str, value) -> tuple[dict[str, bytes], dict[str, bytes], str]:
+    """Write ``value`` to ``PROBE`` on the first sheet; return before, after, sheet member."""
+    before = read_pkg(FIXTURES[name])
+    wb = Workbook.open(FIXTURES[name])
+    sheet = wb.sheetnames[0]
+    wb[sheet][PROBE].value = value
+    out = io.BytesIO()
     wb.save(out)
-    return out
+    assert Workbook.open(io.BytesIO(out.getvalue()))[sheet][PROBE].value == value
+    return before, read_pkg(out.getvalue()), worksheet_members(before)[sheet]
 
 
-@pytest.mark.parametrize("name", list(INSPECT_FIXTURES))
-def test_fidelity_no_edit(name: str, fixtures_dir: Path, tmp_path: Path):
-    src = INSPECT_FIXTURES[name]
-    out = _save_roundtrip(src, tmp_path, edit=False)
-    with zipfile.ZipFile(src) as orig, zipfile.ZipFile(out) as saved:
-        assert set(orig.namelist()) == set(saved.namelist())
-        if name == "images":
-            _tier_a_unchanged(orig, saved, [
-                "xl/media/image1.jpeg", "xl/drawings/drawing1.xml", "xl/drawings/drawing2.xml",
-                "xl/styles.xml", "xl/theme/theme1.xml",
-            ])
-        elif name == "ChartsAndTables":
-            _tier_a_unchanged(orig, saved, [
-                "xl/charts/chart1.xml", "xl/charts/chart2.xml", "xl/tables/table1.xml",
-                "xl/drawings/drawing1.xml", "xl/drawings/drawing2.xml",
-                "xl/styles.xml", "xl/theme/theme1.xml",
-            ])
-        else:
-            _tier_a_unchanged(orig, saved, ["xl/styles.xml", "xl/theme/theme1.xml"])
+def _assert_bytes_kept(before: dict[str, bytes], report: PreservationReport) -> None:
+    types = content_types(before)
+    rewritten = {
+        m for m in report.reserialised - {CONTENT_TYPES} if types[m] not in REBUILT_ON_SAVE
+    }
+    assert not rewritten, f"re-serialised parts that should keep their bytes: {sorted(rewritten)}"
 
 
-@pytest.mark.parametrize("name", list(INSPECT_FIXTURES))
-def test_fidelity_harmless_edit(name: str, tmp_path: Path):
-    src = INSPECT_FIXTURES[name]
-    out = _save_roundtrip(src, tmp_path, edit=True)
-    wb = Workbook.open(out)
-    ws = wb[wb.sheetnames[0]]
-    assert ws["Z99"].value == "probe"
+def _saved_sheet(name: str, member: str = "xl/worksheets/sheet1.xml"):
+    return parse_xml(read_pkg(Workbook.open(FIXTURES[name]))[member])
 
 
-def test_merged_cells_semantic(tmp_path: Path, fixtures_dir: Path):
-    src = INSPECT_FIXTURES["MergedCells"]
-    out = _save_roundtrip(src, tmp_path, edit=False)
-    with zipfile.ZipFile(out) as z:
-        root = parse_xml(z.read("xl/worksheets/sheet1.xml"))
-    merges = root.findall(f".//{_MERGE}")
-    assert len(merges) == 5
+@pytest.mark.parametrize("name", FIXTURES)
+def test_fixture_is_consistent(name: str):
+    check_consistency(FIXTURES[name])
 
 
-def test_conditional_formatting_semantic(tmp_path: Path):
-    src = INSPECT_FIXTURES["ConditionalFormatting"]
-    out = _save_roundtrip(src, tmp_path, edit=False)
-    with zipfile.ZipFile(out) as z:
-        root = parse_xml(z.read("xl/worksheets/sheet1.xml"))
+@pytest.mark.parametrize("name", FIXTURES)
+def test_no_edit_save_changes_nothing(name: str):
+    """Not even ``[Content_Types].xml``: rewriting its ``Default`` entries as
+    ``Override``s keeps every part's effective content type."""
+    before = read_pkg(FIXTURES[name])
+    _assert_bytes_kept(before, assert_preserved(before, Workbook.open(FIXTURES[name])))
+
+
+@pytest.mark.parametrize("name", FIXTURES)
+def test_number_edit_changes_only_the_probed_sheet(name: str):
+    before, after, member = _probe_first_sheet(name, 42)
+    _assert_bytes_kept(before, assert_preserved(before, after, expected_changed={member}))
+    diff = worksheet_diff(before[member], after[member])
+    assert diff.added == {PROBE: CellState(t=None, s=None, formula=None, value="42")}
+    assert diff.rows in ({}, {99: (None, {"r": "99"})})
+    assert not (diff.removed or diff.changed or diff.children or diff.root or diff.order)
+
+
+@pytest.mark.parametrize("name", FIXTURES)
+def test_string_edit_changes_only_the_probed_sheet_and_shared_strings(name: str):
+    sst = [
+        m for m, ct in content_types(read_pkg(FIXTURES[name])).items() if ct == CT.SHARED_STRINGS
+    ]
+    if not sst:
+        pytest.skip("no shared strings part to append to")
+    before, after, member = _probe_first_sheet(name, "probe")
+    _assert_bytes_kept(before, assert_preserved(before, after, expected_changed={member, *sst}))
+    diff = worksheet_diff(before[member], after[member])
+    assert list(diff.added) == [PROBE]
+    assert diff.added[PROBE].t == "s"
+    assert not (diff.removed or diff.changed or diff.children or diff.root or diff.order)
+
+
+def test_merged_cells_semantic():
+    assert len(_saved_sheet("MergedCells").findall(f".//{_MERGE}")) == 5
+
+
+def test_conditional_formatting_semantic():
+    root = _saved_sheet("ConditionalFormatting")
     assert len(root.findall(f".//{_CF}")) == 5
     assert root.find(f"{{{SML_NS}}}extLst") is not None
 
 
-def test_custom_cell_size_semantic(tmp_path: Path):
-    src = INSPECT_FIXTURES["CustomCellSize"]
-    out = _save_roundtrip(src, tmp_path, edit=False)
-    with zipfile.ZipFile(out) as z:
-        root = parse_xml(z.read("xl/worksheets/sheet1.xml"))
+def test_custom_cell_size_semantic():
+    root = _saved_sheet("CustomCellSize")
     cols = root.find(f"{{{SML_NS}}}cols")
     assert cols is not None
     assert cols[0].get("width") == "32"
@@ -95,17 +132,13 @@ def test_custom_cell_size_semantic(tmp_path: Path):
     assert row4.get("ht") == "47"
 
 
-def test_different_cell_types_values(tmp_path: Path):
-    src = INSPECT_FIXTURES["DifferentCellTypes"]
-    wb = Workbook.open(src)
+def test_different_cell_types_values():
+    wb = Workbook.open(FIXTURES["DifferentCellTypes"])
     assert wb["Sheet1"]["B5"].value.day == 7
     assert wb["Sheet1"]["B6"].value.month == 8
 
 
-def test_simple_formula_shared(tmp_path: Path):
-    src = INSPECT_FIXTURES["SimpleFormula"]
-    out = _save_roundtrip(src, tmp_path, edit=False)
-    with zipfile.ZipFile(out) as z:
-        root = parse_xml(z.read("xl/worksheets/sheet1.xml"))
+def test_simple_formula_shared():
+    root = _saved_sheet("SimpleFormula")
     shared = [c for c in root.iter(_C) if (f := c.find(_F)) is not None and f.get("t") == "shared"]
     assert len(shared) >= 4
