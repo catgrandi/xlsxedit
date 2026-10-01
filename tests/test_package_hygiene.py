@@ -9,7 +9,7 @@ import pytest
 from lxml import etree
 
 from xlsxedit import Workbook
-from xlsxedit.opc.constants import CT
+from xlsxedit.opc.constants import CT, SML_NS
 from xlsxedit.opc.package import OpcPackage
 from xlsxedit.opc.packuri import PackURI, encode_partname, is_partname
 from xlsxedit.opc.part import Part
@@ -17,10 +17,28 @@ from xlsxedit.opc.pkgwriter import PackageWriter
 from xlsxedit.opc.serialize import XML_DECLARATION
 from tests.conftest import BOOK1, INSPECT_FIXTURES
 from tests.preservation import CONTENT_TYPES, assert_preserved, content_types, read_pkg
+from tests.schema_validate import assert_valid_package
 
 CHARTS = INSPECT_FIXTURES["ChartsAndTables"]
 WORKBOOK = "xl/workbook.xml"
 WORKBOOK_RELS = "xl/_rels/workbook.xml.rels"
+_RT = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_DEFINED_NAME = f"{{{SML_NS}}}definedName"
+_WORKBOOK_VIEW = f"{{{SML_NS}}}bookViews/{{{SML_NS}}}workbookView"
+
+# what removing "bar chart", the first ChartsAndTables sheet, must take with it
+BAR_CHART_PARTS = frozenset(
+    {
+        "xl/worksheets/sheet1.xml",
+        "xl/worksheets/_rels/sheet1.xml.rels",
+        "xl/drawings/drawing1.xml",
+        "xl/drawings/_rels/drawing1.xml.rels",
+        "xl/charts/chart1.xml",
+        "xl/charts/_rels/chart1.xml.rels",
+        "xl/charts/style1.xml",
+        "xl/charts/colors1.xml",
+    }
+)
 
 
 def _edit(pkg: dict[str, bytes], member: str, old: bytes, new: bytes) -> dict[str, bytes]:
@@ -42,6 +60,135 @@ def _saved(wb: Workbook, **kwargs) -> dict[str, bytes]:
     buf = io.BytesIO()
     wb.save(buf, **kwargs)
     return read_pkg(buf.getvalue())
+
+
+def _charts_with_chain_and_local_names() -> dict[str, bytes]:
+    """ChartsAndTables plus a formula and calcChain entry on "bar chart", and a
+    ``_xlnm.Print_Area`` scoped to each of the three sheets."""
+    pkg = read_pkg(CHARTS)
+    _edit(
+        pkg,
+        "xl/worksheets/sheet1.xml",
+        b'<c r="B6"><v>0</v></c>',
+        b'<c r="B6"><f>SUM(B3:B5)</f><v>11008</v></c>',
+    )
+    pkg["xl/calcChain.xml"] = (
+        b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
+        b'<calcChain xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b'<c r="B6" i="1"/></calcChain>'
+    )
+    _edit(
+        pkg,
+        WORKBOOK_RELS,
+        b"</Relationships>",
+        f'<Relationship Id="rId99" Type="{_RT}/calcChain" Target="calcChain.xml"/>'.encode()
+        + b"</Relationships>",
+    )
+    _edit(
+        pkg,
+        CONTENT_TYPES,
+        b"</Types>",
+        f'<Override PartName="/xl/calcChain.xml" ContentType="{CT.CALC_CHAIN}"/>'.encode()
+        + b"</Types>",
+    )
+    local_names = "".join(
+        f'<definedName name="_xlnm.Print_Area" localSheetId="{i}">{ref}</definedName>'
+        for i, ref in enumerate(("'bar chart'!$A$1:$D$6", "'line chart'!$A$1:$B$12", "Table!$A$1:$C$11"))
+    )
+    _edit(pkg, WORKBOOK, b"<definedNames>", b"<definedNames>" + local_names.encode())
+    return pkg
+
+
+def _local_names(pkg: dict[str, bytes]) -> list[tuple[str | None, str]]:
+    root = etree.fromstring(pkg[WORKBOOK])
+    return [(elm.get("localSheetId"), elm.text) for elm in root.iter(_DEFINED_NAME)]
+
+
+def test_remove_worksheet_drops_what_only_that_sheet_reached():
+    before = _charts_with_chain_and_local_names()
+    wb = Workbook.open(_zip(before))
+    wb.remove_worksheet("bar chart")
+    after = _saved(wb)
+
+    assert_preserved(
+        before,
+        after,
+        expected_changed={WORKBOOK, WORKBOOK_RELS},
+        expected_removed=BAR_CHART_PARTS | {"xl/calcChain.xml"},
+    )
+    assert _local_names(after)[:2] == [
+        ("0", "'line chart'!$A$1:$B$12"),
+        ("1", "Table!$A$1:$C$11"),
+    ]
+    assert all(local is None for local, _ in _local_names(after)[2:])
+    assert etree.fromstring(after[WORKBOOK]).find(_WORKBOOK_VIEW).get("activeTab") == "1"
+    assert b"/xl/worksheets/sheet1.xml" not in after[CONTENT_TYPES]
+    assert_valid_package(_zip(after))
+
+
+def test_remove_worksheet_keep_unreachable_leaves_the_parts_in_the_package():
+    before = _charts_with_chain_and_local_names()
+    wb = Workbook.open(_zip(before))
+    wb.remove_worksheet("bar chart", keep_unreachable=True)
+    after = _saved(wb)
+
+    kept = BAR_CHART_PARTS - {"xl/worksheets/sheet1.xml", "xl/worksheets/_rels/sheet1.xml.rels"}
+    assert kept <= after.keys()
+    assert {"xl/worksheets/sheet1.xml", "xl/calcChain.xml"}.isdisjoint(after)
+    reopened = Workbook.open(_zip(after))
+    assert set(reopened.orphan_partnames) >= {"/xl/drawings/drawing1.xml", "/xl/charts/chart1.xml"}
+
+
+def test_remove_worksheet_drops_the_only_definednames_block():
+    pkg = _edit(
+        read_pkg(INSPECT_FIXTURES["TestBook"]),
+        WORKBOOK,
+        b"</sheets>",
+        b'</sheets><definedNames><definedName name="x" localSheetId="0">Sheet1!$A$1'
+        b"</definedName></definedNames>",
+    )
+    wb = Workbook.open(_zip(pkg))
+    wb.remove_worksheet("Sheet1")
+    assert etree.fromstring(_saved(wb)[WORKBOOK]).find(f"{{{SML_NS}}}definedNames") is None
+
+
+@pytest.mark.parametrize(
+    ("removed", "active_tab"),
+    [("bar chart", "1"), ("line chart", "1"), ("Table", "1")],
+    ids=["before-active", "before-active-adjacent", "active-and-last"],
+)
+def test_remove_worksheet_keeps_the_active_tab_in_range(removed: str, active_tab: str):
+    wb = Workbook.open(CHARTS)
+    wb.remove_worksheet(removed)
+    assert etree.fromstring(_saved(wb)[WORKBOOK]).find(_WORKBOOK_VIEW).get("activeTab") == active_tab
+
+
+def test_remove_worksheet_keeps_parts_another_sheet_shares():
+    """Copy a sheet whose drawing shares an image, then remove the copy: the
+    package returns to its exact source bytes, image included."""
+    src = INSPECT_FIXTURES["images"]
+    before = read_pkg(src)
+    wb = Workbook.open(src)
+    wb.copy_worksheet(wb.sheetnames[0], "copy")
+    wb.remove_worksheet("copy")
+    report = assert_preserved(before, _saved(wb))
+    assert not report.reserialised
+
+
+def test_prune_unreachable_returns_the_dropped_parts_and_keeps_orphans():
+    pkg = read_pkg(CHARTS)
+    pkg["custom/cargo.bin"] = b"cargo"
+    package = OpcPackage.open(_zip(pkg))
+    sheet1 = package.main_document_part().rels["rId1"].target_part
+    sheet1.rels._rels.clear()
+    assert sorted(package.prune_unreachable()) == [
+        "/xl/charts/chart1.xml",
+        "/xl/charts/colors1.xml",
+        "/xl/charts/style1.xml",
+        "/xl/drawings/drawing1.xml",
+    ]
+    assert package.prune_unreachable() == []
+    assert package.orphan_partnames == ("/custom/cargo.bin",)
 
 
 def test_next_partname_skips_orphan_names_case_insensitively():

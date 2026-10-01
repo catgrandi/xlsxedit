@@ -81,6 +81,24 @@ class OpcPackage:
                 return candidate
         raise RuntimeError(f"could not allocate partname from {template!r}")
 
+    def prune_unreachable(self) -> list[PackURI]:
+        """Drop the parts no relationship chain from the package root reaches.
+
+        Orphan parts are kept apart and left alone. Returns the dropped names.
+        """
+        reachable: set[Part] = set()
+        pending = [self._rels]
+        while pending:
+            for rel in pending.pop():
+                if rel.is_external or rel.target_part in reachable:
+                    continue
+                reachable.add(rel.target_part)
+                pending.append(rel.target_part.rels)
+        dropped = [name for name, part in self._parts.items() if part not in reachable]
+        for name in dropped:
+            del self._parts[name]
+        return dropped
+
 
 class Unmarshaller:
     """Assemble Part objects and wire relationships from a PackageReader."""
