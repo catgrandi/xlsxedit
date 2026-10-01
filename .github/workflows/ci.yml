@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        # Quoted: YAML reads an unquoted 3.10 as the float 3.1.
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        include:
+          # One leg also installs pandas, so the importorskip tests run there and
+          # skip everywhere else, and reports coverage (no threshold).
+          - os: ubuntu-latest
+            python-version: "3.12"
+            extras: dev,pandas
+            coverage: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Check committed line endings
+        if: runner.os == 'Linux'
+        run: |
+          git ls-files --eol
+          if git ls-files --eol | grep -E '^i/crlf'; then
+            echo "::error::CRLF blobs are committed; committed blobs must be LF (see .gitattributes)."
+            exit 1
+          fi
+
+      - name: Install
+        run: python -m pip install -e ".[${{ matrix.extras || 'dev' }}]"
+
+      - name: Test
+        if: ${{ !matrix.coverage }}
+        run: python -m pytest -q
+
+      - name: Test with coverage
+        if: ${{ matrix.coverage }}
+        run: |
+          python -m pip install pytest-cov
+          python -m pytest -q --cov=xlsxedit --cov-report=term-missing
+          python -m coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
+
+      # Deselected from the normal run (see addopts in pyproject.toml); run it once at the
+      # default row count so the benchmark cannot silently rot.
+      - name: Benchmark smoke run
+        if: ${{ matrix.coverage }}
+        run: python -m pytest -q -m bench
