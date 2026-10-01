@@ -32,6 +32,7 @@ from xlsxedit.oxml.address import MAX_COL, MAX_ROW, col_to_index, index_to_col
 from xlsxedit.oxml.parser import parse_xml, serialize_xml
 from xlsxedit.range_set import CellRange, SheetRangeSet
 from xlsxedit.styles import datetime_to_serial, normalize_rgb
+from xlsxedit.worksheet_order import insert_worksheet_child
 
 _ROW = f"{{{SML_NS}}}row"
 _C = f"{{{SML_NS}}}c"
@@ -951,6 +952,52 @@ def check_style_specs(*spec_lists: list[dict] | None) -> None:
                     normalize_rgb(color)
             if "font_size" in normalized:
                 int(normalized["font_size"])
+
+
+def template_row_merges(
+    merges: list[str], template_rows: list[int], at_row: int, count: int
+) -> list[CellRange]:
+    """The one-row merges of each template row, copied onto the ``count`` rows from ``at_row``.
+
+    ``template_rows`` cycle over the new rows and name rows as they are before
+    the insert; merges of any ``ST_Ref`` form are read.
+    """
+    if not template_rows:
+        return []
+    bands: dict[int, list[CellRange]] = {row: [] for row in template_rows}
+    for ref in merges:
+        area = CellRange.parse(ref)
+        if area.min_row == area.max_row and area.min_col != area.max_col and area.min_row in bands:
+            bands[area.min_row].append(area)
+    copies = []
+    for offset in range(count):
+        row = at_row + offset
+        for area in bands[template_rows[offset % len(template_rows)]]:
+            copies.append(CellRange.from_bounds(area.min_col, row, area.max_col, row))
+    return copies
+
+
+def append_merges(ws_element: etree._Element, areas: list[CellRange]) -> None:
+    """Add ``areas`` as ``<mergeCell>`` elements in one pass (checked beforehand)."""
+    if not areas:
+        return
+    block = ws_element.find(_MERGE_CELLS)
+    if block is None:
+        block = etree.Element(_MERGE_CELLS)
+        insert_worksheet_child(ws_element, block)
+    for area in areas:
+        etree.SubElement(block, _MERGE_CELL).set("ref", str(area))
+    block.set("count", str(sum(1 for _ in block.iterchildren(_MERGE_CELL))))
+
+
+def check_merges_disjoint(existing: list[CellRange], new: list[CellRange]) -> None:
+    """Raise ``ValueError``, as ``Worksheet.merge_cells`` does, when a merge in
+    ``new`` overlaps one in ``existing``. ``new`` holds single-row merges copied
+    from one template row each, so they cannot overlap one another."""
+    for area in new:
+        for other in existing:
+            if area.intersects(other):
+                raise ValueError(f"merge range {str(area)!r} overlaps existing {str(other)!r}")
 
 
 def _column_key(c: etree._Element) -> int:

@@ -1034,3 +1034,53 @@ def test_rows_and_cells_without_r_are_numbered(method, kwargs, rows):
         for row in ws._part.element.iterfind("m:sheetData/m:row", NS)
     ]
     assert found == rows
+
+
+# -- template rows ------------------------------------------------------------
+
+
+def test_template_row_at_the_insert_row_styles_the_new_rows():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A3"].value = "styled"
+    ws["A3"].apply_style(bold=True)
+    ws["B3"].apply_style(italic=True)
+    styles = (ws["A3"]._element.get("s"), ws["B3"]._element.get("s"))
+    ws.insert_rows([["new", 1], ["new", 2]], at_row=3, template_rows=3)
+    assert (ws["A3"]._element.get("s"), ws["B3"]._element.get("s")) == styles
+    assert (ws["A4"]._element.get("s"), ws["B4"]._element.get("s")) == styles
+    assert ws["A5"].value == "styled"
+
+
+def test_template_row_for_insert_columns_is_read_before_the_shift():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["B1"].apply_style(bold=True)
+    style = ws["B1"]._element.get("s")
+    ws.insert_columns([("new", "x")], at_col="B", template_rows=1)
+    assert ws["B1"]._element.get("s") == style
+    assert ws["B2"]._element.get("s") == style
+    assert ws["C1"]._element.get("s") == style
+
+
+def test_template_rows_name_rows_as_they_were_before_the_insert():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A9"].apply_style(bold=True)
+    ws["A10"].apply_style(italic=True)
+    italic = ws["A10"]._element.get("s")
+    ws.merge_cells("B10:C10")
+    ws.insert_rows([["new"]], at_row=5, template_rows=10)
+    assert ws["A5"]._element.get("s") == italic
+    assert "B5:C5" in ws.merged_ranges and "B11:C11" in ws.merged_ranges
+
+
+def test_a_template_merge_overlapping_a_grown_merge_refuses_the_insert():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws.merge_cells("A2:C2")
+    ws.merge_cells("B5:B8")
+    before = _saved(wb)
+    with pytest.raises(ValueError, match="overlaps existing 'B5:B9'"):
+        ws.insert_rows([["x"]], at_row=6, template_rows=2)
+    assert_preserved(before, _saved(wb))
