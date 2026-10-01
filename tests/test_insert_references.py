@@ -15,7 +15,7 @@ from xlsxedit.opc.constants import SML_NS
 from xlsxedit.row_shift import rewrite_formula_refs
 from xlsxedit.worksheet_order import insert_worksheet_child
 from tests.conftest import INSPECT_FIXTURES
-from tests.preservation import assert_preserved
+from tests.preservation import assert_preserved, read_pkg
 from tests.schema_validate import assert_valid_package
 from tests.test_insert_rows import _add_defined_name, _defined_name_text
 
@@ -38,6 +38,10 @@ def _add(ws, fragment: str) -> etree._Element:
 def _attr(ws, path: str, attr: str) -> str | None:
     elm = ws._part.element.find(path, NS)
     return None if elm is None else elm.get(attr)
+
+
+def _texts(ws, path: str) -> list[str]:
+    return [e.text for e in ws._part.element.iterfind(path, NS)]
 
 
 def _saved(wb: Workbook) -> bytes:
@@ -429,3 +433,77 @@ def test_a_bad_inline_style_refuses_before_changing_anything(method, styles):
         else:
             ws.insert_columns([["ok", 1]], at_col="B", **styles)
     assert_preserved(before, _saved(wb))
+
+
+# -- formula ranges and recalculation -----------------------------------------
+
+
+def test_data_table_ranges_and_input_cells_move():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    f = etree.SubElement(ws["C3"]._element, f"{{{SML_NS}}}f")
+    f.attrib.update({"t": "dataTable", "ref": "C3:D9", "dt2D": "1", "dtr": "1", "r1": "A1", "r2": "B12"})
+    ws.insert_rows([[None], [None]], at_row=5)
+    assert dict(f.attrib) == {
+        "t": "dataTable",
+        "ref": "C3:D11",
+        "dt2D": "1",
+        "dtr": "1",
+        "r1": "A1",
+        "r2": "B14",
+    }
+    ws.insert_columns([[None]], at_col="B")
+    assert (f.get("ref"), f.get("r1"), f.get("r2")) == ("D3:E11", "A1", "C14")
+
+
+def test_a_data_table_input_cell_pushed_off_refuses_the_insert():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    f = etree.SubElement(ws["C3"]._element, f"{{{SML_NS}}}f")
+    f.attrib.update({"t": "dataTable", "ref": "C3:D9", "dt2D": "0", "dtr": "0", "r1": "A1048576"})
+    before = _saved(wb)
+    with pytest.raises(GridOverflowError, match="dataTable"):
+        ws.insert_rows([[None]], at_row=5)
+    assert_preserved(before, _saved(wb))
+
+
+def test_shared_formula_range_moves_with_its_followers():
+    wb = Workbook.open(INSPECT_FIXTURES["SimpleFormula"])
+    ws = wb["Sheet1"]
+    ws.insert_columns([[None]], at_col="C")
+    master = ws._find_cell_element("D4").find(f"{{{SML_NS}}}f")
+    assert (master.get("ref"), master.text) == ("D4:D7", "A4*B4")
+    ws.insert_rows([[None]], at_row=6)
+    assert master.get("ref") == "D4:D8"
+    assert ws._find_cell_element("D8").find(f"{{{SML_NS}}}f").get("si") == "0"
+
+
+@pytest.mark.parametrize("method", ["insert_rows", "insert_columns"])
+def test_both_entry_points_drop_the_calc_chain_and_request_a_full_recalc(method: str):
+    wb = Workbook.open(INSPECT_FIXTURES["SimpleFormula"])
+    before = read_pkg(wb)
+    ws = wb["Sheet1"]
+    if method == "insert_rows":
+        ws.insert_rows([[1]], at_row=5)
+    else:
+        ws.insert_columns([[1]], at_col="B")
+    after = read_pkg(wb)
+    assert_preserved(
+        before,
+        after,
+        expected_changed={"xl/worksheets/sheet1.xml", "xl/workbook.xml", "xl/_rels/workbook.xml.rels"},
+        expected_removed={"xl/calcChain.xml"},
+    )
+    assert b'fullCalcOnLoad="1"' in after["xl/workbook.xml"]
+
+
+def test_formula_text_is_not_rewritten():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    etree.SubElement(ws["A1"]._element, f"{{{SML_NS}}}f").text = "B10*2"
+    _add(ws, '<conditionalFormatting sqref="C1"><cfRule type="expression" priority="1"><formula>$B$10&gt;0</formula></cfRule></conditionalFormatting>')
+    _add(ws, '<dataValidations count="1"><dataValidation type="list" sqref="D1"><formula1>$B$10:$B$12</formula1></dataValidation></dataValidations>')
+    ws.insert_rows([[None]], at_row=5)
+    assert ws["A1"]._element.find(f"{{{SML_NS}}}f").text == "B10*2"
+    assert _texts(ws, ".//m:cfRule/m:formula") == ["$B$10>0"]
+    assert _texts(ws, ".//m:formula1") == ["$B$10:$B$12"]
