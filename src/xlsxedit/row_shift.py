@@ -285,6 +285,8 @@ def _walk_sheet_data(sheet_data: etree._Element | None, ins: _Insert, *, apply: 
         r = row.get("r")
         number = _number(r, "row/@r") if r is not None else number + 1
         if not ins.rows:
+            if apply and r is None:
+                row.set("r", str(number))
             _move_cells_right(row, number, ins, apply=apply)
         elif number >= ins.at or r is None:  # rows above the insertion stay
             _move_row_down(sheet_data, row, number, ins, apply=apply)
@@ -546,6 +548,7 @@ class _Planner:
                 self.area_attr(elm, "r", "scenario inputCells/@r", lost="raise")
         if not self.ins.rows:
             self.columns(root)
+            self.row_spans(root.find(_SHEET_DATA))
         self.extensions(root)
 
     def merge_cells(self, root: etree._Element) -> None:
@@ -700,6 +703,26 @@ class _Planner:
             self.set(col, "min", str(new_lo))
             self.set(col, "max", str(min(hi + self.ins.count, MAX_COL)))
 
+    def row_spans(self, sheet_data: etree._Element | None) -> None:
+        """Move each row's ``spans`` hint (columns of its block's cells)."""
+        if sheet_data is None:
+            return
+        for row in sheet_data.iterchildren(_ROW):
+            spans = row.get("spans")
+            if not spans:
+                continue
+            intervals = _parse_spans(spans)
+            if intervals is None:
+                continue  # an optimisation hint only; leave what we cannot read
+            moved = []
+            for lo, hi in intervals:
+                if hi >= self.ins.at:
+                    lo, hi = self.ins.move(lo), min(hi + self.ins.count, MAX_COL)
+                if lo <= MAX_COL:
+                    moved.append(f"{lo}:{hi}")
+            if moved:
+                self.set(row, "spans", " ".join(moved))
+
     def extensions(self, root: etree._Element) -> None:
         """``xm:sqref`` anywhere in the worksheet's extensions, and x14 ``xm:f`` references."""
         ext_lst = root.find(_EXT_LST)
@@ -760,6 +783,16 @@ class _Planner:
             local = index is not None and local_id is not None and local_id == str(index)
             new = rewrite_formula_refs(elm.text, self.sheet_name, self.ins.area, unqualified=local)
             self.set_text(elm, new)
+
+
+def _parse_spans(spans: str) -> list[tuple[int, int]] | None:
+    intervals = []
+    for item in spans.split():
+        lo, sep, hi = item.partition(":")
+        if not (sep and lo.isdigit() and hi.isdigit()):
+            return None
+        intervals.append((int(lo), int(hi)))
+    return intervals
 
 
 _DEFERRED_MARKERS = (_XM_NS.encode(), b"location=")
@@ -918,6 +951,51 @@ def check_style_specs(*spec_lists: list[dict] | None) -> None:
                     normalize_rgb(color)
             if "font_size" in normalized:
                 int(normalized["font_size"])
+
+
+def _column_key(c: etree._Element) -> int:
+    address = c.get("r")
+    m = _CELL_ADDRESS_RE.fullmatch(address or "")
+    return col_to_index(m.group(1)) if m else -1
+
+
+def sort_row_cells(sheet_data: etree._Element, first_row: int, last_row: int) -> None:
+    """Put the ``<c>`` children of rows ``first_row..last_row`` back in column order.
+
+    The bulk writer appends cells; after ``insert_columns`` new cells land
+    after the moved ones, and Excel repairs a row whose cells are out of order.
+    """
+    for row in sheet_data.iterchildren(_ROW):
+        r = row.get("r")
+        if r is None or not r.isdigit() or not first_row <= int(r) <= last_row:
+            continue
+        children = [child for child in row if isinstance(child.tag, str)]
+        cells = [child for child in children if child.tag == _C]
+        keys = [_column_key(c) for c in cells]
+        if children[: len(cells)] == cells and all(a < b for a, b in zip(keys, keys[1:])):
+            continue
+        # CT_Row is c* then extLst: cells first, in column order
+        for index, (_, c) in enumerate(sorted(zip(keys, cells), key=lambda kc: kc[0])):
+            row.insert(index, c)
+
+
+def widen_row_spans(sheet_data: etree._Element, first_row: int, last_row: int) -> None:
+    """Grow the ``spans`` hint of rows ``first_row..last_row`` to cover their cells."""
+    for row in sheet_data.iterchildren(_ROW):
+        spans, r = row.get("spans"), row.get("r")
+        if not spans or r is None or not r.isdigit() or not first_row <= int(r) <= last_row:
+            continue
+        intervals = _parse_spans(spans)
+        cols = [
+            _cell_column(c.get("r"), "c/@r") for c in row.iterchildren(_C) if c.get("r")
+        ]
+        if intervals is None or not cols:
+            continue
+        if all(any(lo <= col <= hi for lo, hi in intervals) for col in cols):
+            continue
+        lo = min(min(cols), *(lo for lo, _ in intervals))
+        hi = max(max(cols), *(hi for _, hi in intervals))
+        row.set("spans", f"{lo}:{hi}")
 
 
 def shift_range_ref(ref: str, at_row: int, delta: int) -> str:
