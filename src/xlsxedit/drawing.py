@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import mimetypes
+import re
 from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterator
@@ -23,6 +24,7 @@ from xlsxedit.parts import ChartPart, DrawingPart
 from xlsxedit.worksheet_order import insert_ordered, insert_worksheet_child
 
 if TYPE_CHECKING:
+    from xlsxedit.styles import Styles
     from xlsxedit.worksheet import Worksheet
 
 XDR_NS = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
@@ -79,11 +81,14 @@ _WS_DRAWING = f"{{{SML_NS}}}drawing"
 _TABLE_PARTS = f"{{{SML_NS}}}tableParts"
 _TABLE_PART = f"{{{SML_NS}}}tablePart"
 _A_XFRM = f"{{{A_NS}}}xfrm"
+_C_FORMAT_CODE = f"{{{CHART_NS}}}formatCode"
 _SHEET_DATA = f"{{{SML_NS}}}sheetData"
 _SHEET_FORMAT_PR = f"{{{SML_NS}}}sheetFormatPr"
 _COLS = f"{{{SML_NS}}}cols"
 _COL = f"{{{SML_NS}}}col"
 _ROW = f"{{{SML_NS}}}row"
+_C = f"{{{SML_NS}}}c"
+_V = f"{{{SML_NS}}}v"
 
 EMU_PER_INCH = 914400
 EMU_PER_PIXEL = 9525  # 96 dpi approximation
@@ -92,6 +97,39 @@ _MAX_COL = 16_384
 _MAX_ROW = 1_048_576
 # Maximum digit width, in pixels, of Excel's default 11-point body font (Calibri, Aptos).
 _MAX_DIGIT_WIDTH_PX = 7
+
+# Built-in number formats (ECMA-376 Part 1, 18.8.30), which styles.xml does not spell out.
+_BUILTIN_FORMAT_CODES = {
+    0: "General",
+    1: "0",
+    2: "0.00",
+    3: "#,##0",
+    4: "#,##0.00",
+    9: "0%",
+    10: "0.00%",
+    11: "0.00E+00",
+    12: "# ?/?",
+    13: "# ??/??",
+    14: "mm-dd-yy",
+    15: "d-mmm-yy",
+    16: "d-mmm",
+    17: "mmm-yy",
+    18: "h:mm AM/PM",
+    19: "h:mm:ss AM/PM",
+    20: "h:mm",
+    21: "h:mm:ss",
+    22: "m/d/yy h:mm",
+    37: "#,##0 ;(#,##0)",
+    38: "#,##0 ;[Red](#,##0)",
+    39: "#,##0.00;(#,##0.00)",
+    40: "#,##0.00;[Red](#,##0.00)",
+    45: "mm:ss",
+    46: "[h]:mm:ss",
+    47: "mmss.0",
+    48: "##0.0E+0",
+    49: "@",
+}
+_XSD_DOUBLE = re.compile(r"[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?")
 
 
 def _px_to_emu(pixels: int) -> int:
@@ -348,45 +386,109 @@ def _parse_chart_formula(formula: str) -> tuple[str, str, int, str, int]:
     return sheet_name, c1, r1, c2, r2
 
 
-def _iter_range_cells(worksheet: Worksheet, c1: str, r1: int, c2: str, r2: int):
-    from xlsxedit.oxml.address import col_to_index, index_to_col, join_address
+def _range_cells(worksheet: Worksheet, c1: str, r1: int, c2: str, r2: int) -> list[_Element | None]:
+    """``<c>`` elements of a range in row-major order, ``None`` where a cell is absent.
 
-    col_start = col_to_index(c1)
-    col_end = col_to_index(c2)
-    row_start, row_end = min(r1, r2), max(r1, r2)
-    col_lo, col_hi = min(col_start, col_end), max(col_start, col_end)
-    for row in range(row_start, row_end + 1):
-        for col_idx in range(col_lo, col_hi + 1):
-            yield worksheet[join_address(index_to_col(col_idx), row)]
+    Reads the sheet without creating cells, which ``worksheet[address]`` would.
+    """
+    col_lo, col_hi = sorted((col_to_index(c1), col_to_index(c2)))
+    row_lo, row_hi = sorted((r1, r2))
+    found: dict[tuple[int, int], _Element] = {}
+    sheet_data = worksheet._part.element.find(_SHEET_DATA)
+    row_number = 0
+    for row in sheet_data.iterchildren(_ROW) if sheet_data is not None else ():
+        row_number = int(row.get("r") or row_number + 1)
+        if not row_lo <= row_number <= row_hi:
+            continue
+        col = -1
+        for c in row.iterchildren(_C):
+            ref = c.get("r")
+            col = col_to_index(split_address(ref)[0]) if ref else col + 1
+            if col_lo <= col <= col_hi:
+                found[(row_number, col)] = c
+    return [
+        found.get((row, col))
+        for row in range(row_lo, row_hi + 1)
+        for col in range(col_lo, col_hi + 1)
+    ]
+
+
+def _number_text(c: _Element | None) -> str | None:
+    """The ``xsd:double`` text of a numeric cell, ``None`` for blank and non-numeric cells."""
+    if c is None or c.get("t", "n") != "n":
+        return None
+    text = (c.findtext(_V) or "").strip()
+    return text if _XSD_DOUBLE.fullmatch(text) else None
+
+
+def _format_code(c: _Element, styles: Styles | None) -> str:
+    style_index = c.get("s", "0")
+    num_fmt_id = styles.num_format_id(style_index) if styles is not None else None
+    if num_fmt_id is None:
+        return "General"
+    return styles.format_code(style_index) or _BUILTIN_FORMAT_CODES.get(num_fmt_id, "General")
+
+
+def _string_text(c: _Element | None, worksheet: Worksheet) -> str | None:
+    """Display text of a cell for a string cache, ``None`` for a blank cell."""
+    from xlsxedit.cell import Cell
+
+    if c is None:
+        return None
+    value = Cell(c, worksheet).value
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    return str(value)
 
 
 def _rebuild_series_cache(parent: _Element, formula: str, worksheet: Worksheet) -> None:
+    """Rebuild the cache of a ``c:strRef`` or ``c:numRef`` from the cells ``formula`` names.
+
+    ``c:ptCount`` is the size of the range. A numeric cache holds only numbers,
+    so blank and non-numeric cells get no ``c:pt`` and ``c:pt/@idx`` is sparse;
+    a string cache leaves out blank cells. ``c:formatCode`` is the number format
+    of the first numeric cell, and a point whose cell has another format
+    carries it in ``c:pt/@formatCode``.
+    """
     _, c1, r1, c2, r2 = _parse_chart_formula(formula)
-    cells = list(_iter_range_cells(worksheet, c1, r1, c2, r2))
+    cells = _range_cells(worksheet, c1, r1, c2, r2)
 
     if parent.tag == _C_STR_REF:
-        cache = parent.find(_C_STR_CACHE)
-        if cache is not None:
-            parent.remove(cache)
-        cache = etree.SubElement(parent, _C_STR_CACHE)
+        old = parent.find(_C_STR_CACHE)
+        cache = etree.Element(_C_STR_CACHE)
         etree.SubElement(cache, _C_PT_COUNT, val=str(len(cells)))
-        for idx, cell in enumerate(cells):
-            pt = etree.SubElement(cache, _C_PT, idx=str(idx))
-            v = etree.SubElement(pt, _C_V)
-            value = cell.value
-            v.text = "" if value is None else str(value)
+        for idx, c in enumerate(cells):
+            text = _string_text(c, worksheet)
+            if text is not None:
+                pt = etree.SubElement(cache, _C_PT, idx=str(idx))
+                etree.SubElement(pt, _C_V).text = text
     elif parent.tag == _C_NUM_REF:
-        cache = parent.find(_C_NUM_CACHE)
-        if cache is not None:
-            parent.remove(cache)
-        cache = etree.SubElement(parent, _C_NUM_CACHE)
-        etree.SubElement(cache, f"{{{CHART_NS}}}formatCode").text = "General"
+        old = parent.find(_C_NUM_CACHE)
+        styles = getattr(worksheet._workbook, "styles", None)
+        points = [
+            (idx, text, _format_code(c, styles))
+            for idx, c in enumerate(cells)
+            if (text := _number_text(c)) is not None
+        ]
+        format_code = points[0][2] if points else "General"
+        cache = etree.Element(_C_NUM_CACHE)
+        etree.SubElement(cache, _C_FORMAT_CODE).text = format_code
         etree.SubElement(cache, _C_PT_COUNT, val=str(len(cells)))
-        for idx, cell in enumerate(cells):
+        for idx, text, code in points:
             pt = etree.SubElement(cache, _C_PT, idx=str(idx))
-            v = etree.SubElement(pt, _C_V)
-            value = cell.value
-            v.text = "0" if value is None else str(value)
+            if code != format_code:
+                pt.set("formatCode", code)
+            etree.SubElement(pt, _C_V).text = text
+    else:
+        return
+
+    # The cache directly follows the required c:f in CT_StrRef and CT_NumRef.
+    if old is not None:
+        parent.replace(old, cache)
+    else:
+        parent.find(_C_F).addnext(cache)
 
 
 def _anchor_address(from_elm: _Element) -> str:
