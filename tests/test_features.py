@@ -119,9 +119,13 @@ def test_conditional_formatting_sheet2_cell_is_dxf():
     assert ws.conditional_formatting[0].cell_range == "B6:B7"
 
 
-def test_optional_combined_fixture(fixtures_dir: Path):
-    path = fixtures_dir / "CustomCellSizeWithImage.xlsx"
-    if not path.is_file():
-        pytest.skip("optional CustomCellSizeWithImage.xlsx not added yet")
-    wb = Workbook.open(path)
-    assert wb["Sheet1"].images
+def test_custom_cell_size_with_added_image_roundtrip(assets_dir: Path, tmp_path: Path):
+    wb = Workbook.open(INSPECT_FIXTURES["CustomCellSize"])
+    wb["Sheet1"].add_image(assets_dir / "coco-happy-swiss-nature.jpg", anchor="E2")
+    out = tmp_path / "sized_with_image.xlsx"
+    wb.save(out)
+
+    ws = Workbook.open(out)["Sheet1"]
+    assert len(ws.images) == 1
+    assert ws.column_dimensions["C"].width == 32.0
+    assert ws.row_dimensions[4].height == 47.0

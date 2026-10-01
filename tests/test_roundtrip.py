@@ -22,15 +22,14 @@ def test_roundtrip_preserves_opaque_parts(book1_path: Path, tmp_path: Path):
         assert orig.read("xl/theme/theme1.xml") == saved.read("xl/theme/theme1.xml")
 
 
-def test_open_unpacked_directory(book1_path: Path):
-    # Book1 source tree lives next to the package root fixtures
-    book1_dir = book1_path.resolve().parents[2] / "Book1"
-    if not book1_dir.is_dir():
-        import pytest
+def test_open_unpacked_directory(book1_path: Path, tmp_path: Path):
+    book1_dir = tmp_path / "Book1"
+    with zipfile.ZipFile(book1_path) as z:
+        z.extractall(book1_dir)
+    assert (book1_dir / "[Content_Types].xml").is_file()
 
-        pytest.skip(f"unpacked Book1 not present at {book1_dir}")
     wb = Workbook.open(book1_dir)
-    assert "Sheet1" in wb.sheetnames
+    assert wb.sheetnames == Workbook.open(book1_path).sheetnames
 
 
 def test_numeric_cells_unchanged_on_save(book1_path: Path, tmp_path: Path):
