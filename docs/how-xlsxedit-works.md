@@ -178,16 +178,19 @@ if wb.orphan_partnames:
 wb.save("out.xlsx", include_orphans=True)  # keep that cargo
 ```
 
-2. **XML parts we *do* understand are re-serialized when they change.**  
+2. **Removing a worksheet removes what only it reached.**  
+   `remove_worksheet` drops the parts no other relationship chain reaches once the sheet is gone (its drawings, charts, chart styles, tables, …) instead of leaving them as unreachable cargo; parts the workbook or another sheet still reaches, such as a shared image, stay. Pass `keep_unreachable=True` to keep them in the package. It also drops `calcChain.xml`; Excel rebuilds it on open. `docProps/app.xml` is left as it was.
+
+3. **XML parts we *do* understand are re-serialized when they change.**  
    An edited workbook, worksheet, or sharedStrings part is written from its lxml tree, so whitespace, attribute order, or namespace-declaration placement may differ from the source even outside the nodes you edited. Semantic content for unedited nodes remains. A part whose tree did not change keeps its exact bytes.
 
-3. **Package bookkeeping is regenerated when the graph changes.**  
+4. **Package bookkeeping is regenerated when the graph changes.**  
    `[Content_Types].xml` and each `.rels` item keep their source bytes while they still describe the package; once a part or relationship is added or removed they are rebuilt from the loaded graph. Targets and types are preserved; exact original XML formatting is not. A rebuilt `[Content_Types].xml` keeps the source `Default` entries, adds an `Override` only for a part whose type differs from its extension’s `Default`, and drops entries for parts no longer in the package. Orphans included via `include_orphans=True` get content-type entries when written.
 
-4. **We do not implement every Excel behavior.**  
+5. **We do not implement every Excel behavior.**  
    Unknown features are preserved as cargo, not edited. `replace` will not search text inside charts, text boxes, headers as drawing text, or pivot caches — only worksheet string cells / SST / inlineStr as documented.
 
-5. **Macros / binary parts**  
+6. **Macros / binary parts**  
    If present and related (e.g. `vbaProject.bin`), they round-trip as blobs. The library does not inspect or resign them.
 
 ### Practical checklist

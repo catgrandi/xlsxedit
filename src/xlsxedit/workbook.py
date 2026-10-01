@@ -538,20 +538,54 @@ class Workbook:
         self._refresh_sheets()
         return self._sheets_by_name[new_name]
 
-    def remove_worksheet(self, name: str) -> None:
+    def remove_worksheet(self, name: str, *, keep_unreachable: bool = False) -> None:
+        """Remove a worksheet and the package state that belonged to it.
+
+        Drops ``calcChain.xml`` (Excel rebuilds it), the defined names scoped
+        to the sheet, and every part only that sheet reached (drawings,
+        charts, chart styles, tables...); later sheets' ``localSheetId`` and
+        the workbook view's tab indexes are renumbered. Pass
+        ``keep_unreachable=True`` to leave those parts in the package.
+        """
         if len(self._sheets) <= 1:
             raise ValueError("cannot remove the only worksheet")
         if name not in self._sheets_by_name:
             raise WorksheetNotFoundError(f"worksheet {name!r} not found")
+        names = [elm.get("name") for elm in self._workbook_part.sheet_elements]
         removed = self._workbook_part.remove_sheet_element(name)
         if removed is None:
             raise WorksheetNotFoundError(f"worksheet {name!r} not found")
+        index = names.index(name)
         r_id, _sheet_id = removed
         rel = self._workbook_part.rels.get(r_id)
         if rel is not None and not rel.is_external:
             part = rel.target_part
             self._workbook_part.rels._rels.pop(r_id, None)
             self._package._remove_part(part)
+        self._invalidate_calc_chain()
+
+        wb_elm = self._workbook_part.element
+        defined_names = wb_elm.find(f"{{{SML_NS}}}definedNames")
+        if defined_names is not None:
+            for elm in defined_names.findall(f"{{{SML_NS}}}definedName"):
+                local_id = elm.get("localSheetId")
+                if local_id is None or not local_id.isdigit():
+                    continue
+                if int(local_id) == index:
+                    defined_names.remove(elm)
+                elif int(local_id) > index:
+                    elm.set("localSheetId", str(int(local_id) - 1))
+            if defined_names.find(f"{{{SML_NS}}}definedName") is None:
+                wb_elm.remove(defined_names)
+        last = len(names) - 2
+        for view in wb_elm.iterfind(f"{{{SML_NS}}}bookViews/{{{SML_NS}}}workbookView"):
+            for attr in ("activeTab", "firstSheet"):
+                tab = view.get(attr)
+                if tab is not None and tab.isdigit() and (int(tab) > index or int(tab) > last):
+                    view.set(attr, str(int(tab) - 1))
+
+        if not keep_unreachable:
+            self._package.prune_unreachable()
         self._refresh_sheets()
 
     def add_worksheet(self, name: str) -> Worksheet:
