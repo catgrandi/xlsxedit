@@ -14,9 +14,11 @@ from xlsxedit.opc.package import OpcPackage
 from xlsxedit.opc.packuri import PackURI, encode_partname, is_partname
 from xlsxedit.opc.part import Part
 from xlsxedit.opc.pkgwriter import PackageWriter
+from xlsxedit.opc.serialize import XML_DECLARATION
 from tests.conftest import BOOK1, INSPECT_FIXTURES
 from tests.preservation import CONTENT_TYPES, assert_preserved, content_types, read_pkg
 
+CHARTS = INSPECT_FIXTURES["ChartsAndTables"]
 WORKBOOK = "xl/workbook.xml"
 WORKBOOK_RELS = "xl/_rels/workbook.xml.rels"
 
@@ -73,12 +75,13 @@ def test_regenerated_content_types_keep_the_source_defaults():
     wb = Workbook.open(src)
     wb.add_worksheet("New")
     after = _saved(wb)
-    assert_preserved(
+    report = assert_preserved(
         before,
         after,
         expected_changed={WORKBOOK, WORKBOOK_RELS},
         expected_added={"xl/worksheets/sheet3.xml"},
     )
+    assert report.reserialised == {CONTENT_TYPES}
     root = etree.fromstring(after[CONTENT_TYPES])
     defaults = [(e.get("Extension"), e.get("ContentType")) for e in root.iterchildren("{*}Default")]
     assert defaults == [
@@ -90,6 +93,41 @@ def test_regenerated_content_types_keep_the_source_defaults():
     overridden = {e.get("PartName") for e in root.iterchildren("{*}Override")}
     assert {"/xl/media/image1.jpeg", "/xl/media/image2.jpg"}.isdisjoint(overridden)
     assert "/xl/worksheets/sheet3.xml" in overridden
+
+
+def test_untouched_parts_keep_their_bytes_after_a_reverted_edit():
+    before = read_pkg(BOOK1)
+    wb = Workbook.open(BOOK1)
+    cell = wb["Sheet1"]["A1"]._element
+    cell.set("probe", "1")
+    del cell.attrib["probe"]
+    report = assert_preserved(before, _saved(wb))
+    assert not report.reserialised
+
+
+@pytest.mark.parametrize("large", [False, True], ids=["eager", "deferred"])
+def test_read_only_access_keeps_every_byte(large: bool):
+    before = read_pkg(CHARTS)
+    wb = Workbook.open(CHARTS, large=large)
+    assert [cell.value for ws in wb.worksheets for cell in ws.cells]
+    report = assert_preserved(before, _saved(wb))
+    assert not report.reserialised
+
+
+def test_rewritten_parts_use_excels_xml_declaration():
+    wb = Workbook.open(BOOK1)
+    wb["Sheet1"]["Z99"].value = 1
+    after = _saved(wb)
+    assert after["xl/worksheets/sheet1.xml"].startswith(XML_DECLARATION)
+
+
+def test_mark_dirty_rewrites_an_unchanged_part():
+    before = read_pkg(BOOK1)
+    wb = Workbook.open(BOOK1)
+    wb._workbook_part.styles_part.mark_dirty()
+    after = _saved(wb)
+    assert assert_preserved(before, after).reserialised == {"xl/styles.xml"}
+    assert after["xl/styles.xml"].startswith(XML_DECLARATION)
 
 
 def test_part_without_a_declared_content_type_loads_and_saves():

@@ -79,32 +79,20 @@ class WorkbookPart(XmlPart):
 class WorksheetPart(XmlPart):
     """``xl/worksheets/sheetN.xml``."""
 
-    _defer_blob: bytes | None = None
-
     @classmethod
     def load_deferred(cls, partname, content_type, blob, package=None):
-        part = cls.__new__(cls)
-        Part.__init__(part, partname, content_type, None, package)
-        part._element = None  # type: ignore[assignment]
-        part._defer_blob = blob
+        """Keep the source bytes and parse them on first ``element`` access."""
+        part = cls(partname, content_type, None, package)
+        part._orig_blob = blob
         return part
 
     @property
     def element(self) -> etree._Element:
         if self._element is None:
-            defer_blob = getattr(self, "_defer_blob", None)
-            if defer_blob is None:
+            if self._orig_blob is None:
                 raise MissingPartError("worksheet part has no XML content")
-            self._element = parse_xml(defer_blob)
-            self._defer_blob = None
-        return self._element
-
-    @property
-    def blob(self) -> bytes:
-        defer_blob = getattr(self, "_defer_blob", None)
-        if defer_blob is not None:
-            return defer_blob
-        return serialize_xml(self.element)
+            self._element = parse_xml(self._orig_blob)
+        return super().element
 
 
 class SharedStringsPart(XmlPart):
@@ -114,27 +102,9 @@ class SharedStringsPart(XmlPart):
 class StylesPart(XmlPart):
     """``xl/styles.xml`` — live stylesheet element.
 
-    Keeps the original blob and serves it until the stylesheet is mutated, so
-    untouched workbooks round-trip ``styles.xml`` byte-identically.
+    ``Styles`` calls :meth:`mark_dirty` when it mutates the stylesheet; until
+    then an untouched ``styles.xml`` round-trips byte-identically.
     """
-
-    _orig_blob: bytes | None = None
-    _dirty: bool = False
-
-    @classmethod
-    def load(cls, partname, content_type, blob, package=None):
-        part = super().load(partname, content_type, blob, package)
-        part._orig_blob = blob
-        return part
-
-    def mark_dirty(self) -> None:
-        self._dirty = True
-
-    @property
-    def blob(self) -> bytes:
-        if self._orig_blob is not None and not self._dirty:
-            return self._orig_blob
-        return serialize_xml(self.element)
 
 
 class CorePropertiesPart(XmlPart):

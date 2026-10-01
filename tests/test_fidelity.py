@@ -28,21 +28,6 @@ from tests.preservation import (
 FIXTURES = {"Book1": BOOK1, **INSPECT_FIXTURES}
 PROBE = "Z99"
 
-# Parts xlsxedit rebuilds on every save: its live XmlParts and all relationships.
-# Every other member must keep its exact bytes, as StylesPart promises styles.xml.
-REBUILT_ON_SAVE = frozenset(
-    {
-        CT.WORKBOOK,
-        CT.WORKBOOK_MACRO_ENABLED,
-        CT.WORKBOOK_TEMPLATE,
-        CT.WORKBOOK_MACRO_ENABLED_TEMPLATE,
-        CT.WORKSHEET,
-        CT.SHARED_STRINGS,
-        CT.OPC_CORE_PROPERTIES,
-        CT.OPC_RELATIONSHIPS,
-    }
-)
-
 _C = f"{{{SML_NS}}}c"
 _MERGE = f"{{{SML_NS}}}mergeCell"
 _CF = f"{{{SML_NS}}}conditionalFormatting"
@@ -61,10 +46,10 @@ def _probe_first_sheet(name: str, value) -> tuple[dict[str, bytes], dict[str, by
     return before, read_pkg(out.getvalue()), worksheet_members(before)[sheet]
 
 
-def _assert_bytes_kept(before: dict[str, bytes], report: PreservationReport) -> None:
-    types = content_types(before)
-    rewritten = {m for m in report.reserialised if types.get(m) not in REBUILT_ON_SAVE}
-    assert not rewritten, f"re-serialised parts that should keep their bytes: {sorted(rewritten)}"
+def _assert_bytes_kept(report: PreservationReport) -> None:
+    """Every member the save did not change keeps its exact bytes: live XML parts,
+    relationships and ``[Content_Types].xml`` included."""
+    assert not report.reserialised, f"re-serialised: {sorted(report.reserialised)}"
 
 
 def _saved_sheet(name: str, member: str = "xl/worksheets/sheet1.xml"):
@@ -78,15 +63,15 @@ def test_fixture_is_consistent(name: str):
 
 @pytest.mark.parametrize("name", FIXTURES)
 def test_no_edit_save_changes_nothing(name: str):
-    """Not even ``[Content_Types].xml``, which keeps its bytes."""
+    """Not a single byte of any member."""
     before = read_pkg(FIXTURES[name])
-    _assert_bytes_kept(before, assert_preserved(before, Workbook.open(FIXTURES[name])))
+    _assert_bytes_kept(assert_preserved(before, Workbook.open(FIXTURES[name])))
 
 
 @pytest.mark.parametrize("name", FIXTURES)
 def test_number_edit_changes_only_the_probed_sheet(name: str):
     before, after, member = _probe_first_sheet(name, 42)
-    _assert_bytes_kept(before, assert_preserved(before, after, expected_changed={member}))
+    _assert_bytes_kept(assert_preserved(before, after, expected_changed={member}))
     diff = worksheet_diff(before[member], after[member])
     assert diff.added == {PROBE: CellState(t=None, s=None, formula=None, value="42")}
     assert diff.rows in ({}, {99: (None, {"r": "99"})})
@@ -101,7 +86,7 @@ def test_string_edit_changes_only_the_probed_sheet_and_shared_strings(name: str)
     if not sst:
         pytest.skip("no shared strings part to append to")
     before, after, member = _probe_first_sheet(name, "probe")
-    _assert_bytes_kept(before, assert_preserved(before, after, expected_changed={member, *sst}))
+    _assert_bytes_kept(assert_preserved(before, after, expected_changed={member, *sst}))
     diff = worksheet_diff(before[member], after[member])
     assert list(diff.added) == [PROBE]
     assert diff.added[PROBE].t == "s"
