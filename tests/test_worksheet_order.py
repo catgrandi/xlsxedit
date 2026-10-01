@@ -45,7 +45,7 @@ def test_table_then_cf_then_drawing_order(tmp_path: Path):
     ws["A2"].value = "Mon"
     ws["B2"].value = 1
     ws.merge_cells("A1:B1")
-    ws.add_table("A1:B2", ["Day", "N"], name="T1")
+    ws.add_table("A1:B2", ["Day", "N"], name="Days")
     ws.add_conditional_formatting("B2", operator="greaterThan", formula="0")
     ws.add_color_scale_formatting("B2:B2")
     ws.add_chart("bar", anchor="D2", data_range="A1:B2", title="T")
@@ -87,7 +87,7 @@ def test_new_children_go_before_legacy_drawing(tmp_path: Path):
     ws["A5"].value = "link"
     ws["A5"].hyperlink.url = "https://example.com"
     ws.add_image(ASSETS / "coco-happy-swiss-nature.jpg", anchor="F2")
-    ws.add_table("A1:B2", ["Day", "N"], name="T1")
+    ws.add_table("A1:B2", ["Day", "N"], name="Days")
 
     out = tmp_path / "legacy.xlsx"
     wb.save(out)

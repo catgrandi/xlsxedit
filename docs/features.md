@@ -73,7 +73,7 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | `ws.charts` | List of `Chart` | |
 | `ws.add_chart(type, *, anchor, data_range, title, name, to_anchor)` | Add bar chart | `chart_type="bar"` today; flush from template; ``to_anchor`` optional end cell |
 | `ws.tables` | List of `Table` | |
-| `ws.add_table(cell_range, columns, *, name)` | Add Excel table | |
+| `ws.add_table(cell_range, columns, *, name, display_name, write_header)` | Add Excel table | Header row must hold `columns`, or pass `write_header=True`; `name` defaults to `TableN`, N being the new table's id or the next free number; raises `xlsxedit.exceptions.TableError` for invalid or duplicate names or columns and for overlapping tables |
 | `ws.conditional_formatting` | Read CF blocks | colorScale, dataBar, cellIs, … |
 | `ws.add_conditional_formatting(cell_range, *, operator, formula, …)` | Add `cellIs` rule | With optional dxf colors |
 | `ws.add_color_scale_formatting(cell_range)` | Add color-scale rule | |
@@ -177,7 +177,8 @@ Image SAR: `wb.replace_image(name, path)`, `wb.insert_image_at_placeholder("{log
 | `row_styles` | List of style dicts cycled per row |
 | `column_styles` | List of style dicts per column |
 | `clear_range` | Clear before overwrite when re-exporting fewer rows |
-| `resize_table` | Auto-resize first table after write |
+| `resize_table` | Resize the table the written rows overlap (overwrite mode) |
+| `table` | Table to resize instead (name or `Table`), e.g. to grow a table from below |
 | `expand_conditional_formatting` | Extend conditional-formatting ranges |
 
 Full guide: [large-data-export.md](large-data-export.md)

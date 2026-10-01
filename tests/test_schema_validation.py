@@ -38,11 +38,11 @@ def _ids(paths: list[Path]) -> list[str]:
 
 
 # insert_rows and insert_columns still break these consistency invariants on
-# some fixtures (issues #5 and #7). The two tests below assert schema validity,
+# some fixtures (issue #5). The two tests below assert schema validity,
 # so they opt out of the suite guard and tolerate exactly these codes; every
 # other invariant must still hold. The strict xfails in test_consistency.py
 # report when the bugs are fixed. Remove a code here when its issue lands.
-_KNOWN_STRUCTURAL_BUGS = frozenset({"shared-formula", "calc-chain", "x14-cf", "table-columns"})
+_KNOWN_STRUCTURAL_BUGS = frozenset({"shared-formula", "calc-chain", "x14-cf"})
 
 
 def _assert_consistent_apart_from_known_bugs(wb: Workbook) -> None:
@@ -110,7 +110,7 @@ def test_sheet_with_legacy_drawing_validates_after_edits():
     ws["A5"].value = "link"
     ws["A5"].hyperlink.url = "https://example.com"
     ws.add_image(ASSETS / "coco-happy-swiss-nature.jpg", anchor="F2")
-    ws.add_table("A1:B2", ["Day", "N"], name="T1")
+    ws.add_table("A1:B2", ["Day", "N"], name="Days")
     assert_valid_package(wb)
 
 

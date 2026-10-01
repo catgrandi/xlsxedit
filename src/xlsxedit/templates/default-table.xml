@@ -2,12 +2,10 @@
 <table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
   xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision"
-  xmlns:xr3="http://schemas.microsoft.com/office/spreadsheetml/2016/revision3" mc:Ignorable="xr xr3" id="2" xr:uid="{ADEF1FC0-C6FE-3447-9A1E-67E59ED4BB8C}" name="Table2" displayName="Table2" ref="A1:C11" totalsRowShown="0">
-  <autoFilter ref="A1:C11" xr:uid="{ADEF1FC0-C6FE-3447-9A1E-67E59ED4BB8C}" />
-  <tableColumns count="3">
-    <tableColumn id="1" xr3:uid="{54273001-98B0-DA43-A786-292A1776F894}" name="Item" />
-    <tableColumn id="2" xr3:uid="{113E2DD3-0CE7-6A46-AE28-C0973E699BD0}" name="Price" />
-    <tableColumn id="3" xr3:uid="{9F639D51-ACAA-DA40-9063-8CC81DF9D1F6}" name="Quantity" />
+  xmlns:xr3="http://schemas.microsoft.com/office/spreadsheetml/2016/revision3" mc:Ignorable="xr xr3" id="1" xr:uid="{00000000-0000-0000-0000-000000000000}" name="Table1" displayName="Table1" ref="A1:A2" totalsRowShown="0">
+  <autoFilter ref="A1:A2" xr:uid="{00000000-0000-0000-0000-000000000000}" />
+  <tableColumns count="1">
+    <tableColumn id="1" name="Column1" />
   </tableColumns>
   <tableStyleInfo name="TableStyleMedium2" showFirstColumn="0" showLastColumn="0" showRowStripes="1" showColumnStripes="0" />
 </table>

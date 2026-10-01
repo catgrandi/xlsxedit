@@ -421,21 +421,18 @@ def test_insert_rows_moves_array_formula_refs():
     check_consistency(wb)
 
 
-@_known_bug("#7", "table-columns", reason="write_dataframe resizes a table it did not write into")
 def test_write_dataframe_leaves_other_tables_alone():
     wb = Workbook.open(INSPECT_FIXTURES["ChartsAndTables"])
     wb.write_dataframe([("a", 1), ("b", 2)], sheet="Table", at_cell="F1", header=False)
     check_consistency(wb)
 
 
-@_known_bug("#7", "table-columns", reason="insert_columns widens a table without a tableColumn")
 def test_insert_columns_inside_a_table_adds_a_table_column():
     wb = Workbook.open(INSPECT_FIXTURES["ChartsAndTables"])
     wb["Table"].insert_columns([[None]], at_col="B")
     check_consistency(wb)
 
 
-@_known_bug("#7", "table-name", reason="add_table reuses displayName Table1")
 def test_add_table_names_each_table_uniquely():
     wb = Workbook.create()
     ws = wb.worksheets[0]
