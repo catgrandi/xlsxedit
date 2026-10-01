@@ -418,7 +418,6 @@ def test_insert_rows_keeps_formulas_and_calc_chain_consistent():
     check_consistency(wb)
 
 
-@_known_bug("#5", "x14-cf", reason="insert_rows never shifts x14 xm:sqref")
 def test_insert_rows_moves_x14_conditional_formatting():
     wb = Workbook.open(INSPECT_FIXTURES["ConditionalFormatting"])
     wb["Sheet1"].insert_rows([[None]], at_row=3)

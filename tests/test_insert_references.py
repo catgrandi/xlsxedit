@@ -507,3 +507,216 @@ def test_formula_text_is_not_rewritten():
     assert ws["A1"]._element.find(f"{{{SML_NS}}}f").text == "B10*2"
     assert _texts(ws, ".//m:cfRule/m:formula") == ["$B$10>0"]
     assert _texts(ws, ".//m:formula1") == ["$B$10:$B$12"]
+
+
+# -- x14 extensions and single-reference text ---------------------------------
+
+
+def test_x14_conditional_formatting_moves_with_its_base_rule_on_column_insert():
+    wb = Workbook.open(INSPECT_FIXTURES["ConditionalFormatting"])
+    ws = wb["Sheet1"]
+    ws.insert_columns([[None]], at_col="B")
+    assert [cf.cell_range for cf in ws.conditional_formatting] == [
+        "A2:A7",
+        "D2:D7",
+        "F2:F7",
+        "H2:H7",
+        "J2:J7",
+    ]
+    assert _texts(ws, ".//xm:sqref") == ["D2:D7"]
+
+
+_X14_EXT = """
+<extLst>
+  <ext uri="{CCE6A557-97BC-4b89-ADB6-D9C93CAAB3DF}">
+    <x14:dataValidations count="3">
+      <x14:dataValidation type="list">
+        <x14:formula1><xm:f>Lists!$A$1:$A$5</xm:f></x14:formula1>
+        <xm:sqref>B10:B20</xm:sqref>
+      </x14:dataValidation>
+      <x14:dataValidation type="list">
+        <x14:formula1><xm:f>Sheet1!$H$10:$H$12</xm:f></x14:formula1>
+        <xm:sqref>C10</xm:sqref>
+      </x14:dataValidation>
+      <x14:dataValidation type="list">
+        <x14:formula1><xm:f>Lists!$A$1:$A$5</xm:f></x14:formula1>
+        <xm:sqref>D1048576</xm:sqref>
+      </x14:dataValidation>
+    </x14:dataValidations>
+  </ext>
+  <ext uri="{05C60535-1F16-4fd2-B633-F4F36F0B64E0}">
+    <x14:sparklineGroups>
+      <x14:sparklineGroup displayEmptyCellsAs="gap">
+        <x14:colorSeries rgb="FF376092"/>
+        <x14:sparklines>
+          <x14:sparkline><xm:f>Sheet1!A10:E10</xm:f><xm:sqref>F10</xm:sqref></x14:sparkline>
+          <x14:sparkline><xm:f>Sheet1!A3:E3</xm:f><xm:sqref>F3</xm:sqref></x14:sparkline>
+        </x14:sparklines>
+      </x14:sparklineGroup>
+    </x14:sparklineGroups>
+  </ext>
+</extLst>
+"""
+
+
+def test_x14_validations_and_sparklines_move():
+    wb = Workbook.create()
+    wb.add_worksheet("Lists")
+    ws = wb["Sheet1"]
+    _add(ws, _X14_EXT)
+    ws.insert_rows([[1], [2]], at_row=5)
+    assert _texts(ws, ".//x14:dataValidation/xm:sqref") == ["B12:B22", "C12"]
+    assert _attr(ws, ".//x14:dataValidations", "count") == "2"
+    assert _texts(ws, ".//x14:dataValidation//xm:f") == ["Lists!$A$1:$A$5", "Sheet1!$H$12:$H$14"]
+    assert _texts(ws, ".//x14:sparkline/xm:f") == ["Sheet1!A12:E12", "Sheet1!A3:E3"]
+    assert _texts(ws, ".//x14:sparkline/xm:sqref") == ["F12", "F3"]
+    assert_valid_package(wb)
+
+
+def test_another_sheets_sparklines_follow_the_shifted_sheet():
+    wb = Workbook.create()
+    summary = wb.add_worksheet("Summary")
+    _add(summary, _X14_EXT.replace("Sheet1!$H", "Summary!$H"))
+    wb["Sheet1"].insert_columns([[1]], at_col="B")
+    assert _texts(summary, ".//x14:sparkline/xm:f") == ["Sheet1!A10:F10", "Sheet1!A3:F3"]
+    assert _texts(summary, ".//x14:sparkline/xm:sqref") == ["F10", "F3"]
+    assert _texts(summary, ".//x14:dataValidation//xm:f")[1] == "Summary!$H$10:$H$12"
+
+
+def test_a_sparkline_group_left_without_sparklines_is_removed():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    _add(
+        ws,
+        '<extLst><ext uri="{05C60535-1F16-4fd2-B633-F4F36F0B64E0}"><x14:sparklineGroups>'
+        '<x14:sparklineGroup><x14:colorSeries rgb="FF376092"/><x14:sparklines>'
+        "<x14:sparkline><xm:f>Sheet1!A1:E1</xm:f><xm:sqref>F1048576</xm:sqref></x14:sparkline>"
+        "</x14:sparklines></x14:sparklineGroup></x14:sparklineGroups></ext></extLst>",
+    )
+    ws.insert_rows([[1]], at_row=1)
+    assert ws._part.element.find("m:extLst", NS) is None
+
+
+def test_a_malformed_xm_sqref_refuses_the_insert(unchecked_workbooks):
+    wb = Workbook.open(INSPECT_FIXTURES["SimpleFormula"])
+    ws = wb["Sheet1"]
+    _add(
+        ws,
+        '<extLst><ext uri="{CCE6A557-97BC-4b89-ADB6-D9C93CAAB3DF}"><x14:dataValidations count="1">'
+        "<x14:dataValidation><xm:sqref>B10:</xm:sqref></x14:dataValidation>"
+        "</x14:dataValidations></ext></extLst>",
+    )
+    before = _saved(wb)
+    with pytest.raises(InvalidRangeError):
+        ws.insert_rows([[1]], at_row=3)
+    assert_preserved(before, _saved(wb))
+
+
+def test_conditional_format_value_references_move_with_their_x14_twin():
+    wb = Workbook.create()
+    wb.add_worksheet("Other")
+    ws = wb["Sheet1"]
+    _add(
+        ws,
+        '<conditionalFormatting sqref="C2:C20"><cfRule type="dataBar" priority="1"><dataBar>'
+        '<cfvo type="formula" val="$B$10"/><cfvo type="max"/><color rgb="FF638EC6"/></dataBar>'
+        '<extLst><ext uri="{B025F937-C7B1-47D3-B67F-A62EFF666E3E}">'
+        "<x14:id>{00000000-0000-0000-0000-000000000001}</x14:id></ext></extLst>"
+        "</cfRule></conditionalFormatting>",
+    )
+    _add(
+        ws,
+        '<extLst><ext uri="{78C0D931-6437-407d-A8EE-F0AAD7539E65}"><x14:conditionalFormattings>'
+        "<x14:conditionalFormatting>"
+        '<x14:cfRule type="dataBar" id="{00000000-0000-0000-0000-000000000001}"><x14:dataBar>'
+        '<x14:cfvo type="formula"><xm:f>$B$10</xm:f></x14:cfvo><x14:cfvo type="autoMax"/>'
+        "</x14:dataBar></x14:cfRule>"
+        '<x14:cfRule type="cellIs" priority="2" operator="greaterThan" id="{00000000-0000-0000-0000-000000000002}">'
+        "<xm:f>Other!$A$5</xm:f><x14:dxf/></x14:cfRule>"
+        "<xm:sqref>C2:C20</xm:sqref></x14:conditionalFormatting>"
+        "</x14:conditionalFormattings></ext></extLst>",
+    )
+    ws.insert_rows([[1]], at_row=5)
+    assert _attr(ws, ".//m:cfvo", "val") == "$B$11"
+    assert _texts(ws, ".//xm:f") == ["$B$11", "Other!$A$5"]
+    wb["Other"].insert_rows([[1]], at_row=1)
+    assert _texts(ws, ".//xm:f") == ["$B$11", "Other!$A$6"]
+
+
+def test_another_sheets_cfvo_moves_with_its_x14_twin():
+    wb = Workbook.create()
+    other = wb.add_worksheet("Other")
+    ws = wb["Sheet1"]
+    _add(
+        ws,
+        '<conditionalFormatting sqref="C2:C20"><cfRule type="dataBar" priority="1"><dataBar>'
+        '<cfvo type="formula" val="Other!$B$10"/><cfvo type="max"/><color rgb="FF638EC6"/>'
+        "</dataBar></cfRule></conditionalFormatting>",
+    )
+    _add(
+        ws,
+        '<extLst><ext uri="{78C0D931-6437-407d-A8EE-F0AAD7539E65}"><x14:conditionalFormattings>'
+        '<x14:conditionalFormatting><x14:cfRule type="dataBar" id="{00000000-0000-0000-0000-000000000003}">'
+        '<x14:dataBar><x14:cfvo type="formula"><xm:f>Other!$B$10</xm:f></x14:cfvo>'
+        '<x14:cfvo type="autoMax"/></x14:dataBar></x14:cfRule><xm:sqref>C2:C20</xm:sqref>'
+        "</x14:conditionalFormatting></x14:conditionalFormattings></ext></extLst>",
+    )
+    other.insert_rows([[1]], at_row=1)
+    assert _attr(ws, ".//m:cfvo", "val") == "Other!$B$11"
+    assert _texts(ws, ".//xm:f") == ["Other!$B$11"]
+
+
+def test_hyperlink_locations_follow_the_shifted_sheet():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    other = wb.add_worksheet("Other")
+    ws["A1"].hyperlink.location = "A10"
+    other["A1"].hyperlink.location = "Sheet1!A10"
+    other["A2"].hyperlink.location = "A10"
+    ws.insert_rows([[1]], at_row=5)
+    assert ws["A1"].hyperlink.location == "A11"
+    assert other["A1"].hyperlink.location == "Sheet1!A11"
+    assert other["A2"].hyperlink.location == "A10"
+
+
+def test_external_hyperlink_locations_stay():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    other = wb.add_worksheet("Other")
+
+    def external(sheet, address: str, location: str) -> None:
+        sheet[address].hyperlink.url = "Budget.xlsx"
+        sheet._part.element.find(f".//m:hyperlink[@ref='{address}']", NS).set("location", location)
+
+    external(ws, "B2", "A10")
+    external(ws, "B3", "Sheet1!A10")
+    external(other, "B2", "Sheet1!A10")
+    other["B4"].hyperlink.location = "Sheet1!A10"
+    ws.insert_rows([[1]], at_row=5)
+    ws.insert_columns([[1]], at_col="A")
+    locations = sorted(
+        link.get("location")
+        for sheet in (ws, other)
+        for link in sheet._part.element.iterfind(".//m:hyperlink", NS)
+    )
+    assert locations == ["A10", "Sheet1!A10", "Sheet1!A10", "Sheet1!B11"]
+
+
+def test_large_workbooks_stay_lazy_for_sheets_that_cannot_refer_to_the_shifted_one():
+    wb = Workbook.open(INSPECT_FIXTURES["ChartsAndTables"], large=True)
+    wb["Table"].insert_rows([[1]], at_row=3)
+    assert getattr(wb["bar chart"]._part, "_defer_blob", None) is not None
+
+
+def test_large_workbooks_rewrite_deferred_sheets_that_refer_to_the_shifted_one():
+    wb = Workbook.create()
+    summary = wb.add_worksheet("Summary")
+    _add(summary, _X14_EXT.replace("Sheet1!$H", "Summary!$H"))
+    summary["A1"].hyperlink.location = "Sheet1!A10"
+    buf = io.BytesIO(_saved(wb))
+    wb = Workbook.open(buf, large=True)
+    assert getattr(wb["Summary"]._part, "_defer_blob", None) is not None
+    wb["Sheet1"].insert_rows([[1]], at_row=5)
+    summary = wb["Summary"]
+    assert _texts(summary, ".//x14:sparkline/xm:f") == ["Sheet1!A11:E11", "Sheet1!A3:E3"]
+    assert summary["A1"].hyperlink.location == "Sheet1!A11"
