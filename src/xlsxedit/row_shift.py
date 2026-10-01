@@ -1121,11 +1121,74 @@ def shift_table_parts(worksheet, at_row: int, delta: int) -> None:
         part._blob = serialize_xml(table_elm)
 
 
+_TABLE_COLUMNS = f"{{{SML_NS}}}tableColumns"
+_TABLE_COLUMN = f"{{{SML_NS}}}tableColumn"
+_FILTER_COLUMN = f"{{{SML_NS}}}filterColumn"
+
+
+def _inner_column_offset(ref: str | None, at_col: int) -> int | None:
+    """Where ``at_col`` falls in table ``ref`` when inserting there widens the table.
+
+    That is the case strictly inside the table: an insertion at its first
+    column moves the whole table right, and one past its last column misses it.
+    """
+    if not ref:
+        return None
+    c1, _, c2, _ = parse_range(ref)
+    first, last = col_to_index(c1), col_to_index(c2)
+    return at_col - first if first < at_col <= last else None
+
+
+def _insert_table_columns(table_elm: etree._Element, offset: int, delta: int) -> None:
+    """Add ``delta`` ``tableColumn``s before the one at ``offset``, like Excel names them.
+
+    Each gets the next free ``id`` and the first unused ``ColumnN`` name;
+    ``autoFilter`` ``filterColumn`` ids at or after ``offset`` move with
+    their columns.
+    """
+    cols_elm = table_elm.find(_TABLE_COLUMNS)
+    if cols_elm is None:
+        return
+    existing = cols_elm.findall(_TABLE_COLUMN)
+    next_id = max((int(c.get("id")) for c in existing if c.get("id", "").isdigit()), default=0)
+    used = {(c.get("name") or "").casefold() for c in existing}
+    anchor = existing[offset] if offset < len(existing) else None
+    n = 0
+    for _ in range(delta):
+        n += 1
+        while f"column{n}" in used:
+            n += 1
+        next_id += 1
+        column = etree.Element(_TABLE_COLUMN)
+        column.set("id", str(next_id))
+        column.set("name", f"Column{n}")
+        if anchor is None:
+            cols_elm.append(column)
+        else:
+            anchor.addprevious(column)
+    cols_elm.set("count", str(len(existing) + delta))
+    af = table_elm.find(_AUTO_FILTER)
+    if af is not None:
+        for fc in af.iterchildren(_FILTER_COLUMN):
+            col_id = fc.get("colId", "")
+            if col_id.isdigit() and int(col_id) >= offset:
+                fc.set("colId", str(int(col_id) + delta))
+
+
 def shift_table_parts_cols(worksheet, at_col: int, delta: int) -> None:
-    """Shift table ``ref`` / ``autoFilter`` columns after column insertion."""
+    """Shift table ``ref`` / ``autoFilter`` columns after column insertion.
+
+    Columns inserted strictly inside a table join it as new ``tableColumn``s
+    (see ``_insert_table_columns``). Raises ``TableError``, before changing
+    any table part, when such a table is bound to a query: its query table
+    part would not know the new columns.
+    """
+    from xlsxedit.exceptions import TableError
+
     tp = worksheet._part.element.find(_TABLE_PARTS)
     if tp is None:
         return
+    tables = []
     for rel_elm in tp.findall(_TABLE_PART):
         r_id = rel_elm.get(f"{{{OFFICE_REL_NS}}}id")
         if r_id is None:
@@ -1135,6 +1198,19 @@ def shift_table_parts_cols(worksheet, at_col: int, delta: int) -> None:
         except KeyError:
             continue
         table_elm = parse_xml(part.blob)
+        tables.append((part, table_elm, _inner_column_offset(table_elm.get("ref"), at_col)))
+    for _part, table_elm, offset in tables:
+        if offset is not None and any(
+            c.get("queryTableFieldId") is not None for c in table_elm.iter(_TABLE_COLUMN)
+        ):
+            raise TableError(
+                f"cannot insert columns inside table {table_elm.get('displayName')!r} "
+                f"({table_elm.get('ref')}): its columns are bound to a query "
+                "(queryTableFieldId), and the query table part is not updated"
+            )
+    for part, table_elm, offset in tables:
+        if offset is not None:
+            _insert_table_columns(table_elm, offset, delta)
         ref = table_elm.get("ref")
         if ref:
             table_elm.set("ref", shift_range_ref_cols(ref, at_col, delta))

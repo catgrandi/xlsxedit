@@ -1,5 +1,5 @@
 """Table part integrity: ``write_dataframe`` resizing, ``add_table`` naming and
-validation, and ``copy_worksheet`` clones.
+validation, ``copy_worksheet`` clones, and ``tableColumns`` on column insert.
 
 Every test reads the table parts back from the saved package; the suite guard
 in ``tests/conftest.py`` also runs ``check_consistency`` on every workbook
@@ -504,3 +504,68 @@ def test_copy_worksheet_refreshes_the_column_uids_of_a_cloned_table():
     clone_uids = {c.get(_XR3_UID) for c in clone.iter(_sml("tableColumn"))}
     assert len(clone_uids) == 3
     assert not source_uids & clone_uids
+
+
+# --- insert_columns --------------------------------------------------------------
+
+
+def test_insert_columns_inside_a_table_adds_table_columns_in_place():
+    wb = Workbook.open(TABLES)
+    wb["Table"].insert_columns([[None, "a"], [None, 1]], at_col="B")
+    table = _saved_tables(wb)[TABLE]
+    columns = [("1", "Item"), ("4", "Column1"), ("5", "Column2"), ("2", "Price"), ("3", "Quantity")]
+    assert _summary(table) == _fixture_table("A1:E11", columns)
+    uids = {c.get("name"): c.get(_XR3_UID) for c in table.iter(_sml("tableColumn"))}
+    assert uids["Item"] == "{54273001-98B0-DA43-A786-292A1776F894}"
+    assert uids["Column1"] is None
+    assert_valid_package(wb)
+
+
+def test_insert_columns_names_new_table_columns_like_excel():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    _fill(ws, "A1", ["Column1", "column3"], rows=1)
+    ws.add_table("A1:B2", ["Column1", "column3"])
+    ws.insert_columns([[None], [None], [None]], at_col="B")
+    names = [name for _, name in _summary(_saved_tables(wb)[TABLE])["columns"]]
+    assert names == ["Column1", "Column2", "Column4", "Column5", "column3"]
+
+
+@pytest.mark.parametrize(("at_col", "ref"), [("A", "B1:D11"), ("D", "A1:C11")])
+def test_insert_columns_at_a_table_edge_moves_or_misses_it(at_col, ref):
+    wb = Workbook.open(TABLES)
+    wb["Table"].insert_columns([[None]], at_col=at_col)
+    assert _summary(_saved_tables(wb)[TABLE]) == _fixture_table(ref)
+
+
+def test_insert_columns_moves_filter_columns_with_their_columns():
+    wb = Workbook.open(TABLES)
+    part = wb["Table"].tables[0]._part
+    filters = (
+        b'<filterColumn colId="0"><filters><filter val="Pen"/></filters></filterColumn>'
+        b'<filterColumn colId="2"><filters><filter val="3"/></filters></filterColumn>'
+    )
+    part._blob = part.blob.replace(
+        b'4BB8C}"/><tableColumns', b'4BB8C}">' + filters + b"</autoFilter><tableColumns"
+    )
+    wb["Table"].insert_columns([[None]], at_col="B")
+    table = _saved_tables(wb)[TABLE]
+    assert [fc.get("colId") for fc in table.iter(_sml("filterColumn"))] == ["0", "3"]
+
+
+def test_insert_columns_refuses_a_table_bound_to_a_query():
+    wb = Workbook.open(TABLES)
+    part = wb["Table"].tables[0]._part
+    part._blob = part.blob.replace(b'name="Price"/>', b'name="Price" queryTableFieldId="2"/>')
+    bound = part.blob
+    with pytest.raises(
+        TableError, match=r"cannot insert columns inside table 'Table2' \(A1:C11\)"
+    ):
+        wb["Table"].insert_columns([[None]], at_col="B")
+    assert part.blob == bound
+
+    wb = Workbook.open(TABLES)
+    part = wb["Table"].tables[0]._part
+    part._blob = part.blob.replace(b'name="Price"/>', b'name="Price" queryTableFieldId="2"/>')
+    wb["Table"].insert_columns([[None]], at_col="A")
+    assert _summary(_saved_tables(wb)[TABLE])["ref"] == "B1:D11"
