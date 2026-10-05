@@ -290,6 +290,19 @@ def test_an_edited_chart_part_uses_excels_xml_declaration():
     assert b"Renamed" in after["xl/charts/chart1.xml"]
 
 
+def test_new_and_rewritten_table_parts_use_excels_xml_declaration():
+    wb = Workbook.open(CHARTS)
+    ws = wb["Table"]
+    ws.insert_rows([["above"]], at_row=1)
+    ws.add_table("F1:G3", ["x", "y"], write_header=True)
+    wb.copy_worksheet("Table", "Copy")
+    after = _saved(wb)
+    tables = [m for m in after if m.startswith("xl/tables/")]
+    assert len(tables) == 4
+    assert all(after[m].startswith(XML_DECLARATION) for m in tables)
+    assert_valid_package(wb)
+
+
 def test_an_edit_made_on_a_drawing_objects_element_is_saved():
     before = read_pkg(CHARTS)
     wb = Workbook.open(CHARTS)

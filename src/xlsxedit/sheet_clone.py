@@ -8,7 +8,8 @@ from copy import deepcopy
 from xlsxedit.opc.constants import CT, RT, SML_NS
 from xlsxedit.opc.packuri import PackURI
 from xlsxedit.opc.part import Part, XmlPart
-from xlsxedit.oxml.parser import parse_xml, serialize_xml
+from xlsxedit.opc.serialize import serialize_part_xml
+from xlsxedit.oxml.parser import parse_xml
 from xlsxedit.parts import WorksheetPart
 
 _DEFINED_NAMES = f"{{{SML_NS}}}definedNames"
@@ -86,7 +87,7 @@ def _uniquify_table(part: Part, workbook) -> None:
     elm.set("name", name)
     elm.set("displayName", name)
     _refresh_revision_uids(elm)
-    part._blob = serialize_xml(elm)
+    part._blob = serialize_part_xml(elm)
 
 
 def clone_sheet_relationships(source_part: WorksheetPart, dest_part: WorksheetPart, workbook) -> None:
