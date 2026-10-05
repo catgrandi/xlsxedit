@@ -426,6 +426,8 @@ def test_pandas_nat_refuses_before_changing_anything():
         {"row_styles": [{"font_name": 7}]},
         {"row_styles": [{"horizontal_align": "middle"}]},
         {"column_styles": [{"vertical_align": 1}]},
+        {"column_styles": [{"font_color": "12345\x01"}]},
+        {"row_styles": [{"bg_color": "GGGGGG"}]},
     ],
 )
 def test_a_bad_inline_style_refuses_before_changing_anything(method, styles):

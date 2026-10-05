@@ -448,6 +448,7 @@ class Worksheet:
             template_rows=template_rows,
             row_styles=row_styles,
         )
+        check_style_specs(row_styles, column_styles)
 
         if template_maps is None:  # insert_* resolve them before shifting
             template_maps = self._resolve_template_style_maps(
