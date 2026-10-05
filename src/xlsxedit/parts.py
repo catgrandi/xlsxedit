@@ -87,6 +87,15 @@ class WorksheetPart(XmlPart):
         return part
 
     @property
+    def unparsed_blob(self) -> bytes | None:
+        """The source bytes while the part is still deferred, else ``None``.
+
+        Lets a caller scan a sheet opened with ``large=True`` for a marker
+        without parsing it; reading :attr:`element` ends the deferral.
+        """
+        return self._orig_blob if self._element is None else None
+
+    @property
     def element(self) -> etree._Element:
         if self._element is None:
             if self._orig_blob is None:
