@@ -15,7 +15,7 @@ import pytest
 from lxml import etree
 
 from xlsxedit import Table, Workbook
-from xlsxedit.exceptions import InvalidRangeError, TableError
+from xlsxedit.exceptions import FormulaGroupError, InvalidRangeError, TableError
 from xlsxedit.opc.constants import SML_NS
 from tests.conftest import INSPECT_FIXTURES
 from tests.preservation import assert_preserved, check_consistency, read_pkg
@@ -468,6 +468,31 @@ def test_add_table_write_header_writes_the_names_in_column_order():
     assert [ws[a].value for a in ("A1", "B1", "C1", "D1")] == ["x", "y", "z", "kept"]
     assert not ws["B1"].has_formula
     assert_valid_package(wb)
+
+
+@pytest.mark.parametrize("kind", ["array", "dataTable"])
+def test_add_table_write_header_refuses_a_range_formula_anchor_before_writing(kind):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A1"].value = "old"
+    anchor = ws._get_or_create_cell_element("B1")
+    etree.SubElement(anchor, _sml("f"), t=kind, ref="B1:B3").text = "ROW(1:3)"
+    before = read_pkg(wb)
+    with pytest.raises(FormulaGroupError, match="B1 anchors"):
+        ws.add_table("A1:C4", ["x", "y", "z"], write_header=True)
+    assert ws.tables == []
+    assert_preserved(before, read_pkg(wb))
+
+
+@pytest.mark.parametrize("write_header", [False, True])
+def test_add_table_refuses_a_column_name_xml_cannot_store(write_header):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A1"].value = "old"
+    before = read_pkg(wb)
+    with pytest.raises(TableError, match="XML cannot store"):
+        ws.add_table("A1:B2", ["x", "y\x01"], write_header=write_header)
+    assert_preserved(before, read_pkg(wb))
 
 
 # --- copy_worksheet ------------------------------------------------------------
