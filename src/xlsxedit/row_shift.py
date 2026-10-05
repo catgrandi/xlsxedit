@@ -36,7 +36,7 @@ from xlsxedit.opc.constants import OFFICE_REL_NS, SML_NS
 from xlsxedit.oxml.address import MAX_COL, MAX_ROW, col_to_index, index_to_col
 from xlsxedit.oxml.parser import parse_xml, serialize_xml
 from xlsxedit.range_set import CellRange, SheetRangeSet
-from xlsxedit.styles import datetime_to_serial, normalize_rgb
+from xlsxedit.styles import _XML_ILLEGAL, check_style_text, datetime_to_serial, normalize_rgb
 from xlsxedit.worksheet_order import insert_worksheet_child
 
 _ROW = f"{{{SML_NS}}}row"
@@ -115,7 +115,6 @@ _CONTENT = frozenset({f"{{{SML_NS}}}v", _F, f"{{{SML_NS}}}is"})
 _RANGED_FORMULAS = frozenset({"shared", "array", "dataTable"})
 _CFVO = f"{{{SML_NS}}}cfvo"
 _WRITABLE = (str, int, float, date)  # bool is an int and datetime a date
-_XML_ILLEGAL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
 
 _CELL_ADDRESS_RE = re.compile(r"([A-Za-z]{1,3})([0-9]+)")
 
@@ -948,10 +947,12 @@ def check_values_writable(
 
 def check_style_specs(*spec_lists: list[dict] | None) -> None:
     """Refuse, before anything changes, an inline style the bulk writer would fail on:
-    a colour ``normalize_rgb`` rejects or a ``font_size`` that is not a number."""
+    a colour ``normalize_rgb`` rejects, a ``font_size`` that is not a number, or
+    text and alignments ``check_style_text`` rejects."""
     for specs in spec_lists:
         for spec in specs or ():
             normalized = normalize_style_spec(spec)
+            check_style_text(normalized)
             for key in ("font_color", "bg_color"):
                 color = normalized.get(key)
                 if color is not None:
