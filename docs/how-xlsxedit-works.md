@@ -33,7 +33,7 @@ ws.merge_cells("A1:C1")
 ws["B1"].hyperlink.url = "https://xlsxedit.jonasruilong.com"
 ws.add_image("logo.jpg", anchor="E2")
 ws.add_chart("bar", anchor="G2", data_range="A1:B5", title="Sales")
-ws.add_table("A1:C10", ["Item", "Price"])
+ws.add_table("A5:C10", ["Item", "Price", "Qty"], write_header=True)
 ws.add_conditional_formatting("A2:A10", operator="greaterThan", formula="0")
 wb.add_worksheet("Report")
 wb.replace("old", "new")          # SAR convenience — calls base cell APIs
@@ -88,7 +88,8 @@ flowchart LR
 2. Read `[Content_Types].xml` and `/_rels/.rels`. A part neither lists falls back to `application/xml` (`.xml`) or `application/octet-stream`.
 3. **Walk the relationship graph** from the package root (same idea as Word’s OPC model): follow each internal relationship, load that part, then follow *its* relationships, and so on.
 4. For each part, `PartFactory` picks a class by content type:
-   - workbook / worksheet / sharedStrings → `XmlPart` subclass (parsed to lxml)
+   - workbook / worksheet / sharedStrings / styles / core properties → `XmlPart` subclass (parsed to lxml)
+   - drawing / chart → `XmlPart` subclass that keeps its bytes unparsed until an API first reads it
    - **everything else** → base `Part` (keeps original bytes)
 5. Wire relationship objects so `rId`s point at real part instances.
 6. `Workbook` wraps the workbook part, builds sheet proxies, and attaches the shared string table if present.
@@ -115,8 +116,10 @@ Only these content types are registered as live XML:
 | sharedStrings | `SharedStringsPart` | Yes — `<t>` text mutated in place |
 | styles | `StylesPart` | Live element; serves original bytes until a style is mutated |
 | core properties (`docProps/core.xml`) | `CorePropertiesPart` | Via `wb.properties` |
+| drawing (`xl/drawings/drawingN.xml`) | `DrawingPart` | No; parsed on first use by `ws.images`, `ws.charts` or `ws.drawing_objects` |
+| chart (`xl/charts/chartN.xml`) | `ChartPart` | No; parsed on first use |
 
-Everything else (theme, drawings, charts, pivot caches, VBA, slicers, customXml, printer settings, …) falls through to opaque `Part`.
+Everything else (theme, media, chart styles and colours, pivot caches, VBA, slicers, customXml, printer settings, …) falls through to opaque `Part`.
 
 So for a text-only replace:
 
@@ -146,7 +149,8 @@ That is why formatting survives: style indexes and property XML are left alone.
 
 | Situation | Behavior |
 |-----------|----------|
-| Chart, drawing, image, pivot cache, VBA, slicer, timeline, custom XML part, future Microsoft part | Loaded via the relationship graph → opaque `Part` → **same bytes on save** |
+| Image, pivot cache, VBA, slicer, timeline, custom XML part, future Microsoft part | Loaded via the relationship graph → opaque `Part` → **same bytes on save** |
+| Drawing, chart | Kept as source bytes and parsed only when an API reads them → **same bytes on save** unless an edit changed them |
 | New content type you have never registered | Same — default is opaque `Part` |
 | Relationships pointing at those parts | Re-emitted on save from the in-memory graph |
 | Cell style indexes (`s`), column widths, merged-region XML inside a sheet | Left alone by `replace` (the sheet is re-serialized only if a cell in it changed) |
@@ -160,11 +164,12 @@ workbook.xml.rels → worksheets/sheet1.xml
 sheet1.xml.rels     → drawings/drawing1.xml
 drawing1.xml.rels   → charts/chart1.xml  (+ maybe media/image1.png)
 
-None of those content types are registered → each is Part(blob=original)
-save → all those blobs written again
+drawing1.xml, chart1.xml → source bytes, parsed only when an API reads them
+image1.png               → Part(blob=original)
+save → the same bytes again, unless an edit changed a drawing or chart
 ```
 
-You never parse the chart XML, so you cannot corrupt it by misunderstanding it.
+A chart you never touch is never parsed, so it cannot be corrupted by misunderstanding it.
 
 ### Important caveats (honest limits)
 
@@ -182,7 +187,7 @@ wb.save("out.xlsx", include_orphans=True)  # keep that cargo
    `remove_worksheet` drops the parts no other relationship chain reaches once the sheet is gone (its drawings, charts, chart styles, tables, …) instead of leaving them as unreachable cargo; parts the workbook or another sheet still reaches, such as a shared image, stay. Pass `keep_unreachable=True` to keep them in the package. It also drops `calcChain.xml`, as `copy_worksheet` does; Excel rebuilds it on open. `docProps/app.xml` is left as it was.
 
 3. **XML parts we *do* understand are re-serialized when they change.**  
-   An edited workbook, worksheet, or sharedStrings part is written from its lxml tree, so whitespace, attribute order, or namespace-declaration placement may differ from the source even outside the nodes you edited. Semantic content for unedited nodes remains. A part whose tree did not change keeps its exact bytes.
+   An edited workbook, worksheet, sharedStrings, styles, drawing, or chart part is written from its lxml tree, so whitespace, attribute order, or namespace-declaration placement may differ from the source even outside the nodes you edited. Semantic content for unedited nodes remains. A part whose tree did not change keeps its exact bytes.
 
 4. **Package bookkeeping is regenerated when the graph changes.**  
    `[Content_Types].xml` and each `.rels` item keep their source bytes while they still describe the package; once a part or relationship is added or removed they are rebuilt from the loaded graph. Targets and types are preserved; exact original XML formatting is not. A rebuilt `[Content_Types].xml` keeps the source `Default` entries, adds an `Override` only for a part whose type differs from its extension’s `Default`, and drops entries for parts no longer in the package. Orphans included via `include_orphans=True` get content-type entries when written.
@@ -232,13 +237,16 @@ Neither approach produces a byte-identical ZIP: the container itself (member ord
 | `merge.py` | Merge range parsing and anchor map |
 | `hyperlinks.py` | Cell hyperlink get/set |
 | `conditional_formatting.py` | CF list and `cellIs` add |
-| `drawing.py` | `Picture`, `Chart`, `Table` proxies |
+| `drawing.py` | `Picture`, `Chart`, `Table` and `DrawingObject` proxies; walks a drawing's anchors, groups and `mc:AlternateContent` |
 | `shared_strings.py` | SST display text + in-place `<t>` replace |
-| `parts.py` | Registers workbook / worksheet / SST part types |
+| `parts.py` | Registers the typed parts: workbook, worksheet, SST, styles, core properties, drawing, chart |
+| `row_shift.py` | Plans and applies `insert_rows` / `insert_columns` |
+| `range_set.py` | `ST_Ref` / `ST_Sqref` ranges and how they shift on an insert |
 | `opc/package.py` | Load/save orchestration |
 | `opc/pkgreader.py` | Relationship-graph walk |
 | `opc/pkgwriter.py` | ZIP write + content types |
 | `opc/part.py` | Opaque `Part` vs `XmlPart` |
+| `opc/serialize.py` | Excel's XML declaration for rewritten parts |
 
 ---
 

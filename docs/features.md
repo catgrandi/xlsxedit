@@ -18,16 +18,16 @@ Docs: [xlsxedit.jonasruilong.com](https://xlsxedit.jonasruilong.com)
 | `Workbook.open(path, *, large=False)` | Load an existing `.xlsx` | Same as `Workbook(path)`; path, unpacked folder, or file-like; `large=True` for bulk |
 | `Workbook()` | New workbook from bundled template | Same as `Workbook.create()` |
 | `Workbook.create()` | New workbook from bundled template | Same as `Workbook()` |
-| `wb.save(path, *, include_orphans=False)` | Write package to a path or binary file-like |  |
+| `wb.save(path, *, include_orphans=False)` | Write package to a path or binary file-like | Raises `ValueError`, writing nothing, if two parts would share a name (ignoring case) |
 | `wb[sheet_name]` | Get worksheet by name | `KeyError` if missing |
 | `wb.sheetnames` | List of sheet names | |
 | `wb.worksheets` | List of `Worksheet` objects | |
 | `wb.add_worksheet(name)` | Add a sheet | Blank template |
-| `wb.copy_worksheet(name, new_name)` | Duplicate an existing sheet | Cells, styles, merges, drawings/tables; images shared |
+| `wb.copy_worksheet(name, new_name)` | Duplicate an existing sheet | Cells, styles, merges, drawings/tables; images shared; drops `calcChain.xml` |
 | `wb.rename_worksheet(old, new)` | Rename a sheet | |
-| `wb.remove_worksheet(name)` | Remove a sheet | Cannot remove last sheet |
+| `wb.remove_worksheet(name, *, keep_unreachable=False)` | Remove a sheet | Cannot remove last sheet; also drops `calcChain.xml`, the sheet's own defined names and the parts only that sheet reached (drawings, charts, tables) unless `keep_unreachable=True`; renumbers later `localSheetId`s and the workbook view's `activeTab`/`firstSheet` |
 | `wb.replace(old, new, *, value_type=None)` | SAR on all sheets | Substring or whole-cell typed; sets `fullCalcOnLoad` when any cell changes |
-| `wb.set_full_calc_on_load()` | Request Excel full recalc on open | Sets `calcPr/@fullCalcOnLoad`; use after non-`replace` edits |
+| `wb.set_full_calc_on_load()` | Request Excel full recalc on open | Sets `calcPr/@fullCalcOnLoad`; `replace`, `cell.formula`, `insert_rows` and `insert_columns` already set it |
 | `wb.find(value, *, sheet=None)` | First cell with exact ``value`` | All sheets if ``sheet`` omitted; skips formulas |
 | `wb.findall(value, *, sheet=None)` | All matching cells as `list[Cell]` | Sheet order, then row-major; `[]` if none |
 | `wb.replace_image(name, image_path)` | Replace picture by drawing name | |
@@ -74,7 +74,7 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | `ws.charts` | List of `Chart` | |
 | `ws.add_chart(type, *, anchor, data_range, title, name, to_anchor)` | Add bar chart | `chart_type="bar"` today; flush from template; ``to_anchor`` optional end cell |
 | `ws.tables` | List of `Table` | |
-| `ws.add_table(cell_range, columns, *, name, display_name, write_header)` | Add Excel table | Header row must hold `columns`, or pass `write_header=True`; `name` defaults to `TableN`, N being the new table's id or the next free number; raises `xlsxedit.exceptions.TableError` for invalid or duplicate names or columns and for overlapping tables |
+| `ws.add_table(cell_range, columns, *, name, display_name, write_header)` | Add Excel table | Header row must hold `columns`, or pass `write_header=True`; `name` defaults to `TableN`, N being the new table's id or the next free number; raises `TableError`, changing nothing, for invalid or duplicate names or columns and for overlapping tables, and `FormulaGroupError` when `write_header=True` would overwrite the anchor of a multi-cell array or data-table formula |
 | `ws.conditional_formatting` | Read CF blocks | colorScale, dataBar, cellIs, … |
 | `ws.add_conditional_formatting(cell_range, *, operator, formula, …)` | Add `cellIs` rule | With optional dxf colors |
 | `ws.add_color_scale_formatting(cell_range)` | Add color-scale rule | |
@@ -87,7 +87,7 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 - on the sheet: cells, merges, conditional formats and data validations (with their x14 extensions and sparklines), hyperlinks, tables, the `autoFilter` and its sort state, page breaks, sheet views, protected ranges, ignored errors, cell watches, scenarios, shared, array and data-table formula ranges and, for columns, the `<cols>` widths and row `spans`;
 - elsewhere: defined names, reference by reference, and other sheets' x14 formulas, conditional-format values and internal hyperlink locations that point at the sheet.
 
-A range that straddles the insert point grows; one that spans every row (column) ignores a row (column) insert. They do **not** rewrite formulas in cells, conditional-format `<formula>` or validation `formula1`/`formula2` text (an x14 `xm:f` or a `cfvo` value that is one reference does move), charts, drawings, comments or pivot tables. Inserting columns strictly inside a table does not add table columns yet.
+A range that straddles the insert point grows; one that spans every row (column) ignores a row (column) insert. They do **not** rewrite formulas in cells, conditional-format `<formula>` or validation `formula1`/`formula2` text (an x14 `xm:f` or a `cfvo` value that is one reference does move), charts, drawings, comments or pivot tables. Columns inserted strictly inside a table join it: each becomes a `tableColumn` with the next free id and the first unused name `Column1`, `Column2`, …, and the table's `filterColumn` ids move with their columns. The header cell of such a column keeps whatever the insert writes there, so write the column's name into it. Inserting at a table's first column moves the whole table; inserting just past its last column leaves it alone.
 
 Merges, formats, validations, hyperlinks and other ranges pushed past the last row or column are dropped; a single reference pushed off becomes `#REF!`. `template_rows` name rows as they are before the insert, and their one-row merges are copied onto the new rows. Both methods drop `calcChain.xml`, set `fullCalcOnLoad`, and return the number of rows (columns) inserted.
 
@@ -95,6 +95,8 @@ They refuse an insert, changing nothing, by raising:
 
 - `GridOverflowError` when the new cells, cell content, a table, a scenario input cell or a data-table input cell would pass row 1,048,576 or column XFD;
 - `InvalidRangeError` for a reference in the sheet they cannot parse, or an insert point off the grid (`TypeError` if it is not an integer);
+- `TableError` when columns would be inserted strictly inside a table whose columns are bound to a query (`queryTableFieldId`);
+- `FormulaGroupError` when a value aimed at a cell that a merge covers would overwrite a merge anchor holding a multi-cell array or data-table formula;
 - `ValueError` when a `template_rows` merge would overlap a merge, or when both `template_rows` and `row_styles` are given;
 - `TypeError` or `ValueError` for a value or inline style they cannot write.
 
@@ -127,7 +129,7 @@ Values aimed at cells that a merge covers follow the rule in [large-data-export.
 
 `bold`, `italic`, `underline`, `font_size`, `font_name`, `font_color`, `bg_color`, `horizontal_align`, `vertical_align`, `num_format`, `is_date`, `is_percent`
 
-`font_size` is an `int`, or a `float` for a fractional size such as `10.5`. `font_color` is a `xlsxedit.styles.Color` with `rgb`, `theme`, `tint`, `indexed`, and `auto` fields, or `None` when the font sets no colour; it compares equal to its `rgb` string, so `font_color == "FFFF0000"` works. `bg_color` is the fill's `rgb` string or `None`.
+`font_size` is an `int`, or a `float` for a fractional size such as `10.5`. `font_color` is a `xlsxedit.Color` with `rgb`, `theme`, `tint`, `indexed`, and `auto` fields, or `None` when the font sets no colour; it compares equal to its `rgb` string, so `font_color == "FFFF0000"` works. `bg_color` is the fill's `rgb` string or `None`.
 
 ---
 
@@ -257,7 +259,8 @@ All library errors derive from `XlsxeditError`, so you can catch everything with
 | `InvalidColorError` | `ValueError` | Invalid color value |
 | `InvalidImageError` | `ValueError` | Unsupported or corrupt image data |
 | `MissingPartError` | `RuntimeError` | A required package part is absent |
-| `FormulaGroupError` | `ValueError` | An edit would split a formula group: setting `cell.formula` on a shared-formula master that other cells still derive from, or on any cell of a multi-cell array or data-table formula; or overwriting, clearing, or removing the formula of such a multi-cell formula's anchor (`cell.value`, `cell.clear()`, `cell.formula = None`, `clear_range`, bulk writes). The refused cell keeps its content, though a styled bulk write may already have restyled it; `clear_range` and bulk writes keep the cells they wrote before it |
+| `TableError` | `ValueError` | A table edit would leave an invalid or inconsistent table: `add_table` names, columns, range, overlap or header cells; a `write_dataframe` resize that does not fit the table; `insert_columns` inside a table bound to a query |
+| `FormulaGroupError` | `ValueError` | An edit would split a formula group: setting `cell.formula` on a shared-formula master that other cells still derive from, or on any cell of a multi-cell array or data-table formula; or overwriting, clearing, or removing the formula of such a multi-cell formula's anchor (`cell.value`, `cell.clear()`, `cell.formula = None`, `clear_range`, bulk writes). The refused cell keeps its content, though a styled bulk write may already have restyled it; `clear_range` and bulk writes keep the cells they wrote before it, while `insert_rows`, `insert_columns` and `add_table` raise it before changing anything |
 | `DTDForbiddenError` | `ValueError` | An XML part xlsxedit reads declares a DTD (`<!DOCTYPE>`), which Excel never writes. Raised when the part is first parsed: on open, or when a worksheet, table, drawing, or chart is first used, which can be partway through an edit. Parsing never expands entities or fetches external resources |
 
 ---
@@ -279,7 +282,7 @@ Round-trip tests in `tests/test_fidelity.py` on:
 | VBA / macros | `.xlsm` opens/saves; VBA is opaque round-trip only |
 | All chart types | Add: bar template; read: existing charts |
 | All CF rule types | Read most; write `cellIs` and color scale |
-| Byte-identical ZIP | Semantic preservation, not diff tool |
+| Byte-identical ZIP | The ZIP container is rewritten; parts an edit does not change keep their exact bytes ([how](how-xlsxedit-works.md)) |
 | Style authoring from scratch | Clone/apply xf; not full theme designer |
 
 See roadmap in [how-xlsxedit-works.md](how-xlsxedit-works.md) §9.

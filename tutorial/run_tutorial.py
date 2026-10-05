@@ -430,8 +430,9 @@ def main() -> None:
     table_ws["A4"].value = "Gizmo"
     table_ws["B4"].value = 15
 
-    # ws.add_table(cell_range, column_names, *, name=) -> Table
-    # cell_range = initial data range including headers; column_names match header cells.
+    # ws.add_table(cell_range, columns, *, name=None, display_name=None, write_header=False) -> Table
+    # cell_range = initial data range including headers; the header cells must already hold
+    # the column names, unless write_header=True writes them.
     table = table_ws.add_table("A1:B2", ["Item", "Price"], name="TutorialTable")
 
     # table.resize(ref: str) -> None — grow or shrink the table range (and autoFilter).
@@ -535,7 +536,8 @@ def main() -> None:
     # -------------------------------------------------------------------------
     section("Save")
 
-    # wb.remove_worksheet(name: str) -> None — delete a tab (cannot remove the last sheet)
+    # wb.remove_worksheet(name, *, keep_unreachable=False) -> None — delete a tab and the parts
+    # only it reached (cannot remove the last sheet)
     scratch = wb.add_worksheet("Scratch")
     scratch["A1"].value = "will be removed"
     wb.remove_worksheet("Scratch")

@@ -82,7 +82,7 @@ pd.ExcelWriter("out.xlsx", engine="xlsxedit")
 1. For template fidelity, use **xlsxedit** — do not open → save with openpyxl when the user needs charts/images/styles preserved.
 2. Write a small Python script (or notebook cell); run it; open the output in Excel or ask the user to verify.
 3. Do not invent raw OOXML edits unless debugging a bug in xlsxedit itself.
-4. Formulas are **not** evaluated in Python — Excel recalculates on open. Overwriting a formula cell removes that formula.
+4. Formulas are **not** evaluated in Python — Excel recalculates on open. Overwriting a formula cell removes that formula; overwriting the anchor of a multi-cell array or data-table formula raises `FormulaGroupError`.
 5. Legacy `.xls` is unsupported — convert to `.xlsx` first.
 6. Image sizing kwargs are **pixels**, not mm/cm.
 

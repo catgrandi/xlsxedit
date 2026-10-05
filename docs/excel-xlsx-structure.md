@@ -354,8 +354,8 @@ $$
 
 | Library idea | OPC / SpreadsheetML reality |
 |--------------|-----------------------------|
-| Opaque parts | theme, styles (when only editing text), drawings, charts, media, tables, calcChain stay blobs |
-| Live XML parts | workbook, worksheets, sharedStrings parsed and mutated |
+| Opaque parts | theme, media, tables, pivot caches, calcChain and other unregistered parts stay blobs |
+| Live XML parts | workbook, worksheets, sharedStrings, styles, drawings and charts are parsed (drawings and charts on first use) and keep their bytes until edited; see [how-xlsxedit-works.md](how-xlsxedit-works.md) §3 |
 | `replace(old, new)` | rewrites `<t>` inside SST / inline strings; keeps cell `s` and SST indices |
 | `replace(…, value_type="number")` | whole-cell text → numeric `<v>`; keeps `s` |
 | Preserve formatting | don’t strip `s`; don’t rewrite `styles.xml` for text-only changes |
@@ -493,13 +493,14 @@ Excel stores one master formula and followers that share an index `si`:
 
 Optional part listing recalculation order (`SimpleFormula/xl/calcChain.xml`). Safe to keep as an **opaque blob** if you do not edit the formula graph.
 
-When xlsxedit **removes** a formula (`Cell.value` overwrite, `clear`, `clear_range`, bulk write), it **drops** `xl/calcChain.xml` and its workbook relationship. Excel rebuilds the chain on open. Leaving a stale chain after removing `<f>` causes Excel's "We found a problem with some content..." repair.
+When xlsxedit **removes** a formula (`Cell.value` overwrite, `clear`, `clear_range`, bulk write), it **drops** `xl/calcChain.xml` and its workbook relationship, as `insert_rows`, `insert_columns`, `copy_worksheet` and `remove_worksheet` do. Excel rebuilds the chain on open. Leaving a stale chain after removing `<f>` causes Excel's "We found a problem with some content..." repair.
 
 ### SAR / xlsxedit
 
 - `replace()` **skips** cells with `<f>` — avoids corrupting formulas
 - `cell.formula = "…"` must not strip `t="shared"` / `si` on neighboring cells
 - Overwriting a shared-formula **master** with a plain value also strips `<f>` from same-`si` followers (avoids orphan shared cells)
+- Overwriting, clearing or re-formulating the anchor of a multi-cell array or data-table formula raises `FormulaGroupError` ([features.md](features.md#exceptions))
 - Changing source cells (A3, B3) updates what Excel shows after recalc; cached `<v>` may be stale until Excel opens the file
 
 ---
