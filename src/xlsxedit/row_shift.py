@@ -28,7 +28,6 @@ from xlsxedit.bulk_styles import normalize_style_spec
 from xlsxedit.cell import _refuse_range_formula_edit
 from xlsxedit.exceptions import (
     GridOverflowError,
-    InvalidColorError,
     InvalidRangeError,
     TableError,
 )
@@ -958,8 +957,6 @@ def check_style_specs(*spec_lists: list[dict] | None) -> None:
             for key in ("font_color", "bg_color"):
                 color = normalized.get(key)
                 if color is not None:
-                    if not isinstance(color, str):
-                        raise InvalidColorError(f"invalid color: {color!r}")
                     normalize_rgb(color)
             if "font_size" in normalized:
                 int(normalized["font_size"])

@@ -415,7 +415,12 @@ def test_typed_date_replace_formats_a_cell_in_a_date_column():
     "apply",
     [
         lambda cell: cell.apply_number_format(5),
+        lambda cell: cell.apply_number_format(None),
         lambda cell: cell.apply_number_format("0\x01"),
+        lambda cell: cell.apply_style(font_color="GGGGGG"),
+        lambda cell: cell.apply_style(bg_color="12345\x01"),
+        lambda cell: cell.apply_style(bg_color=5),
+        lambda cell: cell.apply_style(font_color=Color(theme=4)),
         lambda cell: cell.apply_style(font_name=7),
         lambda cell: cell.apply_style(font_name="Arial\x01"),
         lambda cell: cell.apply_style(horizontal_align="middle"),
@@ -430,6 +435,29 @@ def test_style_text_the_stylesheet_cannot_hold_changes_nothing(apply):
         apply(wb["Sheet1"]["A1"])
     assert_preserved(before, read_pkg(wb))
     assert_valid_package(wb)
+
+
+def test_a_font_color_read_from_one_cell_can_be_applied_to_another():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A1"].value = "source"
+    ws["A1"].apply_style(font_color="#ff0000")
+    ws["B1"].value = "copy"
+    ws["B1"].apply_style(font_color=ws["A1"].style.font_color)
+    assert ws["B1"].style.font_color == "FFFF0000"
+    assert ws["B1"].style.style_index == ws["A1"].style.style_index
+    assert_valid_package(wb)
+
+
+@pytest.mark.parametrize("styles", [{"column_styles": [{"num_format": 5}]}, {"row_styles": [{"bg_color": "nope"}]}])
+def test_write_rows_checks_its_styles_before_writing(styles):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A1"].value = "kept"
+    before = read_pkg(wb)
+    with pytest.raises((TypeError, ValueError)):
+        ws.write_rows([["a", "b"], ["c", "d"]], at_row=3, **styles)
+    assert_preserved(before, read_pkg(wb))
 
 
 def test_style_reads_of_an_unstyled_cell_report_the_default_style():

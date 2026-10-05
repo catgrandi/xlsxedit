@@ -117,13 +117,20 @@ def check_style_text(spec: dict[str, Any]) -> None:
             raise ValueError(f"{key} must be one of {sorted(allowed)}, got {value!r}")
 
 
-def normalize_rgb(color: str) -> str:
-    """Normalize ``RRGGBB`` or ``AARRGGBB`` to 8-char ``AARRGGBB`` uppercase."""
-    c = color.strip().lstrip("#").upper()
-    if len(c) == 6:
-        return "FF" + c
-    if len(c) == 8:
-        return c
+_RGB = re.compile("(?:[0-9A-F]{2})?[0-9A-F]{6}")
+
+
+def normalize_rgb(color: str | Color) -> str:
+    """Normalize ``RRGGBB`` or ``AARRGGBB`` to 8-char ``AARRGGBB`` uppercase.
+
+    Also takes a ``Color`` that has an ``rgb`` value, so a colour read from one
+    cell can be applied to another. Anything else raises ``InvalidColorError``.
+    """
+    text = color.rgb if isinstance(color, Color) else color
+    if isinstance(text, str):
+        c = text.strip().lstrip("#").upper()
+        if _RGB.fullmatch(c):
+            return c if len(c) == 8 else "FF" + c
     raise InvalidColorError(f"invalid color: {color!r}")
 
 
@@ -562,6 +569,8 @@ class Styles:
         return num_fmts
 
     def ensure_num_format(self, format_code: str) -> int:
+        if not isinstance(format_code, str):
+            raise TypeError(f"num_format must be a str, got {type(format_code)!r}")
         for nf_id, code in self._num_fmts.items():
             if code == format_code:
                 return nf_id
