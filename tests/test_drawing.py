@@ -147,7 +147,10 @@ def test_insert_rows_on_another_sheet_keeps_drawing_and_chart_parts_byte_identic
         ws.charts, ws.images
     wb["Table"].insert_rows([[1, 2]], at_row=40)
 
-    report = assert_preserved(before, wb, expected_changed={worksheet_members(before)["Table"]})
+    # An insert also asks Excel for a full recalculation, which is in the workbook part.
+    report = assert_preserved(
+        before, wb, expected_changed={worksheet_members(before)["Table"], "xl/workbook.xml"}
+    )
     after = read_pkg(wb)
     drawing_members = list(filter(_drawing_payload, before))
     assert drawing_members
