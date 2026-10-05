@@ -10,7 +10,7 @@ import pytest
 from lxml import etree
 
 from xlsxedit import Workbook
-from xlsxedit.exceptions import GridOverflowError, InvalidRangeError
+from xlsxedit.exceptions import FormulaGroupError, GridOverflowError, InvalidRangeError
 from xlsxedit.opc.constants import SML_NS
 from xlsxedit.row_shift import rewrite_formula_refs
 from xlsxedit.worksheet_order import insert_worksheet_child
@@ -1136,6 +1136,58 @@ def test_a_write_that_fills_the_anchor_keeps_its_own_value(row_styles):
     ws.write_rows([["a", "b", "c"], ["d", None, "f"]], at_row=10, row_styles=row_styles)
     assert (ws["A10"].value, ws["A11"].value) == ("a", "d")
     assert not any(_has_value(ws, a) for a in ("B10", "C10", "B11", "C11"))
+
+
+def _anchor_range_formula(ws, address: str, kind: str, ref: str) -> None:
+    """Make ``address`` the anchor of an array or data-table formula over ``ref``."""
+    c = ws._get_or_create_cell_element(address)
+    for child in list(c):
+        c.remove(child)
+    etree.SubElement(c, f"{{{SML_NS}}}f", t=kind, ref=ref).text = "ROW(1:3)"
+
+
+@pytest.mark.parametrize("kind", ["array", "dataTable"])
+@pytest.mark.parametrize("method", ["insert_rows", "insert_columns"])
+def test_a_value_redirected_to_a_range_formula_anchor_refuses_before_changing_anything(
+    kind, method
+):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["C5"].value = "below"
+    ws["E1"].value = "right"
+    ws.merge_cells("A1:B3")
+    _anchor_range_formula(ws, "A1", kind, "A1:A3")
+    before = _saved(wb)
+    with pytest.raises(FormulaGroupError, match="A1 anchors"):
+        if method == "insert_rows":
+            ws.insert_rows([[None, "x"]], at_row=2)
+        else:
+            ws.insert_columns([[None, "x"]], at_col="B")
+    assert ws.merged_ranges == ["A1:B3"]
+    assert_preserved(before, _saved(wb))
+
+
+def test_an_insert_through_a_range_formula_merge_goes_ahead_when_no_value_is_redirected():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws.merge_cells("A1:B3")
+    _anchor_range_formula(ws, "A1", "array", "A1:A3")
+    assert ws.insert_rows([[None, None, "beside"]], at_row=2) == 1
+    assert ws.merged_ranges == ["A1:B4"]
+    assert ws["C2"].value == "beside"
+    assert ws["A1"].formula_type == "array"
+
+
+def test_a_template_merge_copy_is_not_checked_against_the_row_it_displaces():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A2"].value = "template"
+    ws.merge_cells("A2:B2")
+    _anchor_range_formula(ws, "A5", "array", "A5:A6")
+    ws.insert_rows([["x"]], at_cell="B5", template_rows=2)
+    assert ws.merged_ranges == ["A2:B2", "A5:B5"]
+    assert ws["A5"].value == "x"
+    assert ws["A6"].formula_type == "array"
 
 
 def test_several_values_for_one_outside_anchor_leave_the_last():

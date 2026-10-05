@@ -25,6 +25,7 @@ from functools import partial
 from lxml import etree
 
 from xlsxedit.bulk_styles import normalize_style_spec
+from xlsxedit.cell import _refuse_range_formula_edit
 from xlsxedit.exceptions import (
     GridOverflowError,
     InvalidColorError,
@@ -1007,6 +1008,47 @@ def check_merges_disjoint(existing: list[CellRange], new: list[CellRange]) -> No
         for other in existing:
             if area.intersects(other):
                 raise ValueError(f"merge range {str(area)!r} overlaps existing {str(other)!r}")
+
+
+def check_merge_anchors_writable(
+    worksheet,
+    merges: list[CellRange],
+    rows: list,
+    *,
+    start_row: int,
+    start_col_idx: int,
+    new_rows: bool,
+) -> None:
+    """Refuse, before anything changes, a value the bulk writer would send to a
+    merge's top-left cell that anchors a multi-cell array or data-table formula.
+
+    ``rows`` are the values for the cells of the new rows (``new_rows``) or
+    columns, from ``start_row`` / 0-based ``start_col_idx``; ``merges`` are the
+    sheet's merges as they will be once those cells exist. A merge whose
+    top-left cell is not new reaches the new cells by straddling the insertion
+    point, so that cell lies before the point and holds now what it will hold
+    then.
+    """
+    last_row = start_row + len(rows) - 1
+    for area in merges:
+        if area.min_row >= start_row if new_rows else area.min_col > start_col_idx:
+            continue  # the top-left cell is new as well: this call writes it, or it is empty
+        first, last = max(area.min_row, start_row), min(area.max_row, last_row)
+        lo, hi = max(area.min_col - 1 - start_col_idx, 0), area.max_col - start_col_idx
+        if first > last or lo >= hi:
+            continue
+        covered = (rows[row - start_row] for row in range(first, last + 1))
+        if not any(
+            value is not None
+            for values in covered
+            for value in (values if isinstance(values, (list, tuple)) else (values,))[lo:hi]
+        ):
+            continue
+        anchor = f"{index_to_col(area.min_col - 1)}{area.min_row}"
+        c = worksheet._find_cell_element(anchor)
+        f = None if c is None else c.find(_F)
+        if f is not None:
+            _refuse_range_formula_edit(anchor, f)
 
 
 def _column_key(c: etree._Element) -> int:

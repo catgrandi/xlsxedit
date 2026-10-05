@@ -38,6 +38,7 @@ from xlsxedit.range_set import column_number
 from xlsxedit.row_shift import (
     append_merges,
     check_block_in_grid,
+    check_merge_anchors_writable,
     check_merges_disjoint,
     check_style_specs,
     check_values_writable,
@@ -644,6 +645,14 @@ class Worksheet:
             self.merged_ranges, normalize_template_rows(template_rows), at_row, count
         )
         check_merges_disjoint(plan.merges, new_merges)
+        check_merge_anchors_writable(
+            self,
+            plan.merges + new_merges,
+            row_list,
+            start_row=at_row,
+            start_col_idx=start_col_idx,
+            new_rows=True,
+        )
         plan.apply()
         # Merge first, so the write treats the cells the new merges cover like any other.
         append_merges(self._part.element, new_merges)
@@ -723,6 +732,14 @@ class Worksheet:
         plan = plan_insert_columns(self, at_col_idx, count)
         template_maps = self._resolve_template_style_maps(
             template_rows=template_rows, start_col_idx=at_col_idx, row_list=row_list
+        )
+        check_merge_anchors_writable(
+            self,
+            plan.merges,
+            row_list,
+            start_row=start_row,
+            start_col_idx=at_col_idx,
+            new_rows=False,
         )
         plan.apply()
         self._invalidate_merge_map()
