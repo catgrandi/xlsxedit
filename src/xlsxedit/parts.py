@@ -6,8 +6,8 @@ from lxml import etree
 
 from xlsxedit.exceptions import MissingPartError
 from xlsxedit.opc.constants import CT, RT, SML_NS
-from xlsxedit.opc.part import Part, XmlPart
-from xlsxedit.oxml.parser import parse_xml, serialize_xml
+from xlsxedit.opc.part import XmlPart
+from xlsxedit.oxml.parser import parse_xml
 
 _OFFICE_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 _SHEET = f"{{{SML_NS}}}sheet"
@@ -117,15 +117,10 @@ class StylesPart(XmlPart):
 
 
 class LazyXmlPart(XmlPart):
-    """XML part parsed on first ``.element`` access.
+    """An ``XmlPart`` that parses its source bytes on first ``.element`` access.
 
-    Keeps the original blob and serves it until :meth:`mark_dirty`, so a part
-    that is only read round-trips byte-identically. Every mutation of the
-    live element must call :meth:`mark_dirty`.
+    Until then the bytes are written back without being parsed.
     """
-
-    _orig_blob: bytes | None = None
-    _dirty: bool = False
 
     @classmethod
     def load(cls, partname, content_type, blob, package=None):
@@ -139,16 +134,7 @@ class LazyXmlPart(XmlPart):
             if self._orig_blob is None:
                 raise MissingPartError(f"{self.partname} has no XML content")
             self._element = parse_xml(self._orig_blob)
-        return self._element
-
-    def mark_dirty(self) -> None:
-        self._dirty = True
-
-    @property
-    def blob(self) -> bytes:
-        if self._orig_blob is not None and not self._dirty:
-            return self._orig_blob
-        return serialize_xml(self.element)
+        return super().element
 
 
 class DrawingPart(LazyXmlPart):
