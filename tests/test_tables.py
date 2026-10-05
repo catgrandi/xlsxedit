@@ -409,7 +409,6 @@ def test_add_table_rejects_bad_column_names(columns, message):
         ("A0:B2", InvalidRangeError),
         ("XFD1:XFE2", InvalidRangeError),
         ("A1048576:B1048577", InvalidRangeError),
-        ("$A$1:$B$2", InvalidRangeError),
     ],
 )
 def test_add_table_rejects_ranges_that_cannot_hold_a_table(cell_range, error):
@@ -419,10 +418,11 @@ def test_add_table_rejects_ranges_that_cannot_hold_a_table(cell_range, error):
     assert ws.tables == []
 
 
-def test_add_table_normalises_the_range():
+@pytest.mark.parametrize("cell_range", ["a1:b3", "$A$1:$B$3"])
+def test_add_table_normalises_the_range(cell_range):
     wb = Workbook.create()
     ws = wb["Sheet1"]
-    ws.add_table("a1:b3", ["x", "y"], write_header=True)
+    ws.add_table(cell_range, ["x", "y"], write_header=True)
     assert _summary(_saved_tables(wb)[TABLE])["ref"] == "A1:B3"
 
 
@@ -558,11 +558,15 @@ def test_insert_columns_refuses_a_table_bound_to_a_query():
     part = wb["Table"].tables[0]._part
     part._blob = part.blob.replace(b'name="Price"/>', b'name="Price" queryTableFieldId="2"/>')
     bound = part.blob
+    sheet = wb["Table"]
+    cells_before = [(c.address, c.value) for c in sheet.cells]
     with pytest.raises(
         TableError, match=r"cannot insert columns inside table 'Table2' \(A1:C11\)"
     ):
-        wb["Table"].insert_columns([[None]], at_col="B")
+        sheet.insert_columns([[None]], at_col="B")
     assert part.blob == bound
+    # The refusal comes from the plan, before any cell on the sheet moves.
+    assert [(c.address, c.value) for c in sheet.cells] == cells_before
 
     wb = Workbook.open(TABLES)
     part = wb["Table"].tables[0]._part

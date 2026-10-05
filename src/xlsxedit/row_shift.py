@@ -25,7 +25,12 @@ from functools import partial
 from lxml import etree
 
 from xlsxedit.bulk_styles import normalize_style_spec
-from xlsxedit.exceptions import GridOverflowError, InvalidColorError, InvalidRangeError
+from xlsxedit.exceptions import (
+    GridOverflowError,
+    InvalidColorError,
+    InvalidRangeError,
+    TableError,
+)
 from xlsxedit.hyperlinks import _release_rel
 from xlsxedit.opc.constants import OFFICE_REL_NS, SML_NS
 from xlsxedit.oxml.address import MAX_COL, MAX_ROW, col_to_index, index_to_col
@@ -850,8 +855,9 @@ class InsertPlan:
         self.merges = planner.merges
 
     def _check_tables(self) -> None:
-        """Refuse an insertion that would push any part of a table off the grid:
-        its columns and rows cannot shrink with it."""
+        """Refuse an insertion that would push any part of a table off the grid
+        (its columns and rows cannot shrink with it), or that would add columns
+        inside a table bound to a query."""
         part = self._worksheet._part
         block = part.element.find(_TABLE_PARTS)
         if block is None:
@@ -867,6 +873,8 @@ class InsertPlan:
                 ref = None if elm is None else elm.get("ref")
                 if ref and self._insert.clamps(_area(ref, f"table {name!r}")):
                     raise self._insert.overflow(f"table {name!r} ({ref})")
+            if not self._insert.rows:
+                _check_table_accepts_columns(table, self._insert.at - 1)
 
     def apply(self) -> None:
         _walk_sheet_data(self._worksheet._part.element.find(_SHEET_DATA), self._insert, apply=True)
@@ -1123,20 +1131,32 @@ def shift_table_parts(worksheet, at_row: int, delta: int) -> None:
 
 _TABLE_COLUMNS = f"{{{SML_NS}}}tableColumns"
 _TABLE_COLUMN = f"{{{SML_NS}}}tableColumn"
-_FILTER_COLUMN = f"{{{SML_NS}}}filterColumn"
 
 
 def _inner_column_offset(ref: str | None, at_col: int) -> int | None:
-    """Where ``at_col`` falls in table ``ref`` when inserting there widens the table.
+    """Where 0-based ``at_col`` falls in table ``ref`` when inserting there widens the table.
 
     That is the case strictly inside the table: an insertion at its first
     column moves the whole table right, and one past its last column misses it.
     """
     if not ref:
         return None
-    c1, _, c2, _ = parse_range(ref)
-    first, last = col_to_index(c1), col_to_index(c2)
+    area = _area(ref, "table")
+    first, last = area.min_col - 1, area.max_col - 1
     return at_col - first if first < at_col <= last else None
+
+
+def _check_table_accepts_columns(table_elm: etree._Element, at_col: int) -> None:
+    """Raise ``TableError`` when columns inserted at 0-based ``at_col`` would join
+    a table bound to a query: its query table part would not know them."""
+    if _inner_column_offset(table_elm.get("ref"), at_col) is None:
+        return
+    if any(c.get("queryTableFieldId") is not None for c in table_elm.iter(_TABLE_COLUMN)):
+        raise TableError(
+            f"cannot insert columns inside table {table_elm.get('displayName')!r} "
+            f"({table_elm.get('ref')}): its columns are bound to a query "
+            "(queryTableFieldId), and the query table part is not updated"
+        )
 
 
 def _insert_table_columns(table_elm: etree._Element, offset: int, delta: int) -> None:
@@ -1181,10 +1201,9 @@ def shift_table_parts_cols(worksheet, at_col: int, delta: int) -> None:
     Columns inserted strictly inside a table join it as new ``tableColumn``s
     (see ``_insert_table_columns``). Raises ``TableError``, before changing
     any table part, when such a table is bound to a query: its query table
-    part would not know the new columns.
+    part would not know the new columns. ``plan_insert_columns`` makes the
+    same check before anything on the sheet moves.
     """
-    from xlsxedit.exceptions import TableError
-
     tp = worksheet._part.element.find(_TABLE_PARTS)
     if tp is None:
         return
@@ -1199,15 +1218,8 @@ def shift_table_parts_cols(worksheet, at_col: int, delta: int) -> None:
             continue
         table_elm = parse_xml(part.blob)
         tables.append((part, table_elm, _inner_column_offset(table_elm.get("ref"), at_col)))
-    for _part, table_elm, offset in tables:
-        if offset is not None and any(
-            c.get("queryTableFieldId") is not None for c in table_elm.iter(_TABLE_COLUMN)
-        ):
-            raise TableError(
-                f"cannot insert columns inside table {table_elm.get('displayName')!r} "
-                f"({table_elm.get('ref')}): its columns are bound to a query "
-                "(queryTableFieldId), and the query table part is not updated"
-            )
+    for _part, table_elm, _offset in tables:
+        _check_table_accepts_columns(table_elm, at_col)
     for part, table_elm, offset in tables:
         if offset is not None:
             _insert_table_columns(table_elm, offset, delta)
