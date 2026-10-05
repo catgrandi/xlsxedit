@@ -36,8 +36,9 @@ from xlsxedit.opc.constants import CT, OFFICE_REL_NS, RT, SML_NS
 from xlsxedit.opc.package import OpcPackage
 from xlsxedit.opc.part import Part
 from xlsxedit.opc.packuri import PackURI
+from xlsxedit.opc.serialize import serialize_part_xml
 from xlsxedit.oxml.address import col_to_index, index_to_col, join_address, split_address
-from xlsxedit.oxml.parser import parse_template_xml, parse_xml, serialize_xml
+from xlsxedit.oxml.parser import parse_template_xml, parse_xml
 from xlsxedit.parts import ChartPart, WorkbookPart, WorksheetPart, register_part_types
 from xlsxedit.shared_strings import SharedStringTable
 from xlsxedit.styles import _XML_ILLEGAL, Styles, datetime_to_serial
@@ -922,7 +923,7 @@ class Workbook:
         table_elm.set("id", str(table_id))
 
         table_partname = self._package.next_partname("/xl/tables/table%d.xml")
-        table_part = Part(table_partname, CT.TABLE, serialize_xml(table_elm), self._package)
+        table_part = Part(table_partname, CT.TABLE, serialize_part_xml(table_elm), self._package)
         self._package._add_part(table_part)
 
         from xlsxedit.worksheet_order import insert_worksheet_child, reposition_worksheet_child

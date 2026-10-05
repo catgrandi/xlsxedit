@@ -20,8 +20,10 @@ from xlsxedit.opc.constants import CT, OFFICE_REL_NS, RT, SML_NS
 from xlsxedit.opc.packuri import PackURI
 from xlsxedit.opc.part import Part
 from xlsxedit.oxml.address import col_to_index, index_to_col, join_address, split_address
-from xlsxedit.oxml.parser import parse_xml, serialize_xml
+from xlsxedit.opc.serialize import serialize_part_xml
+from xlsxedit.oxml.parser import parse_xml
 from xlsxedit.parts import ChartPart, DrawingPart
+from xlsxedit.styles import _XML_ILLEGAL
 from xlsxedit.worksheet_order import insert_ordered, insert_worksheet_child
 
 if TYPE_CHECKING:
@@ -1061,7 +1063,7 @@ class Table:
         if af is not None:
             af.set("ref", ref)
         if self._part is not None:
-            self._part._blob = serialize_xml(self._element)
+            self._part._blob = serialize_part_xml(self._element)
 
 
 def _chart_part_for(frame: _Element, drawing_part: DrawingPart) -> Part | None:

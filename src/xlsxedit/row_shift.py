@@ -35,7 +35,8 @@ from xlsxedit.exceptions import (
 from xlsxedit.hyperlinks import _release_rel
 from xlsxedit.opc.constants import OFFICE_REL_NS, SML_NS
 from xlsxedit.oxml.address import MAX_COL, MAX_ROW, col_to_index, index_to_col
-from xlsxedit.oxml.parser import parse_xml, serialize_xml
+from xlsxedit.opc.serialize import serialize_part_xml
+from xlsxedit.oxml.parser import parse_xml
 from xlsxedit.range_set import CellRange, SheetRangeSet
 from xlsxedit.styles import _XML_ILLEGAL, check_style_text, datetime_to_serial, normalize_rgb
 from xlsxedit.worksheet_order import insert_worksheet_child
@@ -1169,7 +1170,7 @@ def shift_table_parts(worksheet, at_row: int, delta: int) -> None:
         af = table_elm.find(_AUTO_FILTER)
         if af is not None and af.get("ref"):
             af.set("ref", shift_range_ref(af.get("ref"), at_row, delta))
-        part._blob = serialize_xml(table_elm)
+        part._blob = serialize_part_xml(table_elm)
 
 
 _TABLE_COLUMNS = f"{{{SML_NS}}}tableColumns"
@@ -1272,7 +1273,7 @@ def shift_table_parts_cols(worksheet, at_col: int, delta: int) -> None:
         af = table_elm.find(_AUTO_FILTER)
         if af is not None and af.get("ref"):
             af.set("ref", shift_range_ref_cols(af.get("ref"), at_col, delta))
-        part._blob = serialize_xml(table_elm)
+        part._blob = serialize_part_xml(table_elm)
 
 
 def shift_sheet_data_rows(sheet_data: etree._Element, at_row: int, delta: int) -> None:
