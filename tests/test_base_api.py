@@ -362,3 +362,23 @@ def test_add_table_and_resize(tmp_path: Path):
     wb.save(tmp_path / "table.xlsx")
     wb2 = Workbook.open(tmp_path / "table.xlsx")
     assert wb2["Sheet1"].tables[0].ref == "A1:B5"
+
+
+def test_every_public_name_is_exported_from_the_package_root():
+    import xlsxedit
+    from xlsxedit.drawing import DrawingObject
+    from xlsxedit.exceptions import TableError
+    from xlsxedit.styles import Color
+
+    assert (xlsxedit.TableError, xlsxedit.Color, xlsxedit.DrawingObject) == (
+        TableError,
+        Color,
+        DrawingObject,
+    )
+    assert all(hasattr(xlsxedit, name) for name in xlsxedit.__all__)
+    library_errors = {
+        name
+        for name, value in vars(xlsxedit.exceptions).items()
+        if isinstance(value, type) and issubclass(value, xlsxedit.XlsxeditError)
+    }
+    assert library_errors <= set(xlsxedit.__all__)
