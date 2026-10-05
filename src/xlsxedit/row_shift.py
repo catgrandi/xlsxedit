@@ -807,7 +807,7 @@ _DEFERRED_MARKERS = (_XM_NS.encode(), b"location=")
 def _root_if_it_may_refer(worksheet) -> etree._Element | None:
     """The worksheet's element, unless it is still unparsed and cannot hold a
     reference this module rewrites (keeps ``Workbook.open(large=True)`` lazy)."""
-    blob = getattr(worksheet._part, "_defer_blob", None)
+    blob = worksheet._part.unparsed_blob
     if blob is not None and not any(marker in blob for marker in _DEFERRED_MARKERS):
         return None
     return worksheet._part.element

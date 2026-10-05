@@ -705,7 +705,8 @@ def test_external_hyperlink_locations_stay():
 def test_large_workbooks_stay_lazy_for_sheets_that_cannot_refer_to_the_shifted_one():
     wb = Workbook.open(INSPECT_FIXTURES["ChartsAndTables"], large=True)
     wb["Table"].insert_rows([[1]], at_row=3)
-    assert getattr(wb["bar chart"]._part, "_defer_blob", None) is not None
+    assert wb["bar chart"]._part.unparsed_blob is not None
+    assert wb["Table"]._part.unparsed_blob is None
 
 
 def test_large_workbooks_rewrite_deferred_sheets_that_refer_to_the_shifted_one():
@@ -715,7 +716,7 @@ def test_large_workbooks_rewrite_deferred_sheets_that_refer_to_the_shifted_one()
     summary["A1"].hyperlink.location = "Sheet1!A10"
     buf = io.BytesIO(_saved(wb))
     wb = Workbook.open(buf, large=True)
-    assert getattr(wb["Summary"]._part, "_defer_blob", None) is not None
+    assert wb["Summary"]._part.unparsed_blob is not None
     wb["Sheet1"].insert_rows([[1]], at_row=5)
     summary = wb["Summary"]
     assert _texts(summary, ".//x14:sparkline/xm:f") == ["Sheet1!A11:E11", "Sheet1!A3:E3"]
