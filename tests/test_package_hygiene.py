@@ -282,6 +282,27 @@ def test_rewritten_parts_use_excels_xml_declaration():
     assert after["xl/worksheets/sheet1.xml"].startswith(XML_DECLARATION)
 
 
+def test_an_edited_chart_part_uses_excels_xml_declaration():
+    wb = Workbook.open(CHARTS)
+    wb["bar chart"].charts[0].title = "Renamed"
+    after = _saved(wb)
+    assert after["xl/charts/chart1.xml"].startswith(XML_DECLARATION)
+    assert b"Renamed" in after["xl/charts/chart1.xml"]
+
+
+def test_an_edit_made_on_a_drawing_objects_element_is_saved():
+    before = read_pkg(CHARTS)
+    wb = Workbook.open(CHARTS)
+    shape = wb["bar chart"].drawing_objects[0].element
+    props = next(e for e in shape.iter() if etree.QName(e).localname == "cNvPr")
+    props.set("descr", "edited in place")
+    after = _saved(wb)
+    changed = [m for m in after if after[m] != before[m]]
+    assert len(changed) == 1 and changed[0].startswith("xl/drawings/drawing")
+    assert b'descr="edited in place"' in after[changed[0]]
+    assert after[changed[0]].startswith(XML_DECLARATION)
+
+
 def test_mark_dirty_rewrites_an_unchanged_part():
     before = read_pkg(BOOK1)
     wb = Workbook.open(BOOK1)
