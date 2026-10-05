@@ -40,8 +40,8 @@ from xlsxedit.oxml.address import col_to_index, index_to_col, join_address, spli
 from xlsxedit.oxml.parser import parse_template_xml, parse_xml, serialize_xml
 from xlsxedit.parts import ChartPart, WorkbookPart, WorksheetPart, register_part_types
 from xlsxedit.shared_strings import SharedStringTable
-from xlsxedit.styles import Styles, datetime_to_serial
-from xlsxedit.cell import Cell
+from xlsxedit.styles import _XML_ILLEGAL, Styles, datetime_to_serial
+from xlsxedit.cell import Cell, _F, _refuse_range_formula_edit
 from xlsxedit.worksheet import Worksheet
 
 register_part_types()
@@ -209,8 +209,6 @@ class Workbook:
         stale ``calcChain.xml``. If the cell was a shared-formula master, also
         strips ``<f>`` from same-``si`` followers on that sheet.
         """
-        from xlsxedit.cell import _F, _refuse_range_formula_edit
-
         f_elm = c_elm.find(_F)
         if f_elm is not None:
             _refuse_range_formula_edit(c_elm.get("r", ""), f_elm)
@@ -840,6 +838,8 @@ class Workbook:
         for col_name in columns:
             if not isinstance(col_name, str) or not col_name:
                 raise TableError(f"column names must be non-empty strings, got {col_name!r}")
+            if _XML_ILLEGAL.search(col_name):
+                raise TableError(f"column name {col_name!r} holds characters XML cannot store")
             if col_name.casefold() in seen:
                 raise TableError(f"duplicate column name {col_name!r} (names ignore case)")
             seen.add(col_name.casefold())
@@ -872,6 +872,14 @@ class Workbook:
 
         cells = _row_cells(ws, header_row)
         if write_header:
+            # What the cell setter below would refuse, checked before the first write.
+            if ws.shared_strings is None:
+                raise ValueError("workbook has no shared strings part")
+            for offset in range(len(columns)):
+                address = join_address(index_to_col(first_col + offset), header_row)
+                f_elm = cells[address].find(_F) if address in cells else None
+                if f_elm is not None:
+                    _refuse_range_formula_edit(address, f_elm)
             row_elm = ws._ensure_row(header_row)
             for offset, col_name in enumerate(columns):
                 address = join_address(index_to_col(first_col + offset), header_row)
