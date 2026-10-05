@@ -421,6 +421,11 @@ def test_pandas_nat_refuses_before_changing_anything():
         {"column_styles": [{"font_size": "big"}]},
         {"row_styles": [{}, {"bg_color": 12}]},
         {"template_rows": 3, "column_styles": [{"font_color": "nope"}]},
+        {"column_styles": [{"num_format": 5}]},
+        {"column_styles": [{"num_format": "0\x01"}]},
+        {"row_styles": [{"font_name": 7}]},
+        {"row_styles": [{"horizontal_align": "middle"}]},
+        {"column_styles": [{"vertical_align": 1}]},
     ],
 )
 def test_a_bad_inline_style_refuses_before_changing_anything(method, styles):

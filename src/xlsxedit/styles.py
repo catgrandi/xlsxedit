@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -77,6 +78,43 @@ _BUILTIN_PERCENT_IDS = frozenset({9, 10})
 _BUILTIN_DATE_NUMFMT_ID = 14
 _EXCEL_EPOCH = datetime(1899, 12, 30)
 _MIN_CUSTOM_NUMFMT_ID = 164
+_XML_ILLEGAL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
+_ALIGNMENTS = {
+    "horizontal_align": frozenset(
+        {
+            "general",
+            "left",
+            "center",
+            "right",
+            "fill",
+            "justify",
+            "centerContinuous",
+            "distributed",
+        }
+    ),
+    "vertical_align": frozenset({"top", "center", "bottom", "justify", "distributed"}),
+}
+
+
+def check_style_text(spec: dict[str, Any]) -> None:
+    """Raise for style text the stylesheet cannot hold, before anything is built.
+
+    ``TypeError`` for a ``num_format`` or ``font_name`` that is not a ``str``;
+    ``ValueError`` for characters XML cannot store, or an alignment that
+    ``ST_HorizontalAlignment`` / ``ST_VerticalAlignment`` does not list.
+    """
+    for key in ("num_format", "font_name"):
+        text = spec.get(key)
+        if text is None:
+            continue
+        if not isinstance(text, str):
+            raise TypeError(f"{key} must be a str, got {type(text)!r}")
+        if _XML_ILLEGAL.search(text):
+            raise ValueError(f"{key} {text!r} holds characters XML cannot store")
+    for key, allowed in _ALIGNMENTS.items():
+        value = spec.get(key)
+        if value is not None and not (isinstance(value, str) and value in allowed):
+            raise ValueError(f"{key} must be one of {sorted(allowed)}, got {value!r}")
 
 
 def normalize_rgb(color: str) -> str:
@@ -527,12 +565,14 @@ class Styles:
         for nf_id, code in self._num_fmts.items():
             if code == format_code:
                 return nf_id
+        check_style_text({"num_format": format_code})
         num_fmts = self._ensure_num_fmts_block()
 
         nf_id = self._next_custom_num_fmt_id()
-        nf_elm = etree.SubElement(num_fmts, _NUM_FMT)
+        nf_elm = etree.Element(_NUM_FMT)
         nf_elm.set("numFmtId", str(nf_id))
         nf_elm.set("formatCode", format_code)
+        num_fmts.append(nf_elm)  # only once it is complete
         num_fmts.set("count", str(len(num_fmts.findall(_NUM_FMT))))
         self._num_fmts[nf_id] = format_code
         self._mark_dirty()
@@ -665,6 +705,7 @@ class Styles:
     def _style_kwargs_to_overrides(
         self, style_kwargs: dict[str, Any], *, base_xf: int = 0
     ) -> dict[str, Any]:
+        check_style_text(style_kwargs)
         overrides: dict[str, Any] = {}
 
         if style_kwargs.get("num_format") is not None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from lxml import etree
 
 from xlsxedit import Workbook
@@ -408,6 +409,27 @@ def test_typed_date_replace_formats_a_cell_in_a_date_column():
 
     assert ws["B2"].style_index is not None
     assert ws["B2"].style.is_date
+
+
+@pytest.mark.parametrize(
+    "apply",
+    [
+        lambda cell: cell.apply_number_format(5),
+        lambda cell: cell.apply_number_format("0\x01"),
+        lambda cell: cell.apply_style(font_name=7),
+        lambda cell: cell.apply_style(font_name="Arial\x01"),
+        lambda cell: cell.apply_style(horizontal_align="middle"),
+        lambda cell: cell.apply_style(vertical_align="middle"),
+    ],
+)
+def test_style_text_the_stylesheet_cannot_hold_changes_nothing(apply):
+    wb = Workbook.create()
+    wb["Sheet1"]["A1"].value = "kept"
+    before = read_pkg(wb)
+    with pytest.raises((TypeError, ValueError)):
+        apply(wb["Sheet1"]["A1"])
+    assert_preserved(before, read_pkg(wb))
+    assert_valid_package(wb)
 
 
 def test_style_reads_of_an_unstyled_cell_report_the_default_style():
