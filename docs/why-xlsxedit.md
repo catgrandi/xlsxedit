@@ -100,7 +100,7 @@ See [features.md](features.md) for the full API list.
 
 ## Limitations
 
-- Not byte-identical ZIP output — semantic preservation of unedited parts, not a diff tool
+- Not byte-identical ZIP output — the container is rewritten, though parts an edit does not change keep their exact bytes
 - Some conditional-formatting types are read-only
 - Pivot tables and comments are not edited yet
 - Unknown features are preserved as opaque parts, not exposed in the API

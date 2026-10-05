@@ -127,21 +127,23 @@ ws.merge_cells("A1:C1") # merge cells
 # insert_rows: insert one row at row 10 — writes A10="New line", B10=100; existing row 10+ shifts down
 ws.insert_rows([["New line", 100]], at_cell="A10")
 
-# insert_columns: insert one column at C — values top→bottom; existing C+ move right
-ws.insert_columns([("Note", "detail")], at_col="C")
+# insert_columns: insert one column at C — values top→bottom from C2; existing C+ move right
+# (the A1:C1 merge straddles the new column, so it grows to A1:D1)
+ws.insert_columns([("Note", "detail")], at_cell="C2")
 
 # write_rows: write at fixed rows without shifting (overwrites cells in that range)
 ws.write_rows([["Total", 520]], at_cell="A20")
 
 # add hyperlink
-ws["D1"].value = "Docs"
-ws["D1"].hyperlink.url = "https://xlsxedit.jonasruilong.com"
+ws["E1"].value = "Docs"
+ws["E1"].hyperlink.url = "https://xlsxedit.jonasruilong.com"
 
 ws.add_image("logo.jpg", anchor="E2", width=180, height=135)
 ws.add_chart("bar", anchor="G2", data_range="A1:B5", title="Sales")
 # optional to_anchor (default: anchor + 6 cols × 13 rows, e.g. C19 → I32):
 # ws.add_chart("bar", anchor="C19", to_anchor="H32", data_range="A1:B5")
-ws.add_table("A1:B10", ["Item", "Qty"], name="Items")
+# the header row must hold the column names; write_header=True writes them
+ws.add_table("F10:G15", ["Item", "Qty"], name="Items", write_header=True)
 ws.add_conditional_formatting("A2:A20", operator="greaterThan", formula="0")
 
 report = wb.add_worksheet("Report")
