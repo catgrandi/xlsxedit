@@ -116,8 +116,8 @@ Only these content types are registered as live XML:
 | sharedStrings | `SharedStringsPart` | Yes — `<t>` text mutated in place |
 | styles | `StylesPart` | Live element; serves original bytes until a style is mutated |
 | core properties (`docProps/core.xml`) | `CorePropertiesPart` | Via `wb.properties` |
-| drawing (`xl/drawings/drawingN.xml`) | `DrawingPart` | No; parsed on first use by `ws.images`, `ws.charts` or `ws.drawing_objects` |
-| chart (`xl/charts/chartN.xml`) | `ChartPart` | No; parsed on first use |
+| drawing (`xl/drawings/drawingN.xml`) | `DrawingPart` | No; parsed when first read or edited (`ws.images`, `ws.charts`, `ws.drawing_objects`, `add_image`, `add_chart`, `copy_worksheet`, …) |
+| chart (`xl/charts/chartN.xml`) | `ChartPart` | No; parsed when first read or edited |
 
 Everything else (theme, media, chart styles and colours, pivot caches, VBA, slicers, customXml, printer settings, …) falls through to opaque `Part`.
 
@@ -187,7 +187,7 @@ wb.save("out.xlsx", include_orphans=True)  # keep that cargo
    `remove_worksheet` drops the parts no other relationship chain reaches once the sheet is gone (its drawings, charts, chart styles, tables, …) instead of leaving them as unreachable cargo; parts the workbook or another sheet still reaches, such as a shared image, stay. Pass `keep_unreachable=True` to keep them in the package. It also drops `calcChain.xml`, as `copy_worksheet` does; Excel rebuilds it on open. `docProps/app.xml` is left as it was.
 
 3. **XML parts we *do* understand are re-serialized when they change.**  
-   An edited workbook, worksheet, sharedStrings, styles, drawing, or chart part is written from its lxml tree, so whitespace, attribute order, or namespace-declaration placement may differ from the source even outside the nodes you edited. Semantic content for unedited nodes remains. A part whose tree did not change keeps its exact bytes.
+   An edited workbook, worksheet, sharedStrings, styles, drawing, or chart part is written from its lxml tree, so whitespace, attribute order, or namespace-declaration placement may differ from the source even outside the nodes you edited. Semantic content for unedited nodes remains. A part whose tree did not change keeps its exact bytes, except that a picture or chart setter rewrites its part even when given the value it already had.
 
 4. **Package bookkeeping is regenerated when the graph changes.**  
    `[Content_Types].xml` and each `.rels` item keep their source bytes while they still describe the package; once a part or relationship is added or removed they are rebuilt from the loaded graph. Targets and types are preserved; exact original XML formatting is not. A rebuilt `[Content_Types].xml` keeps the source `Default` entries, adds an `Override` only for a part whose type differs from its extension’s `Default`, and drops entries for parts no longer in the package. Orphans included via `include_orphans=True` get content-type entries when written.
