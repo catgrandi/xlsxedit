@@ -178,6 +178,36 @@ def test_chart_title_edit_changes_only_its_chart_part():
     assert _reopen(wb)["bar chart"].charts[0].title == "Renamed"
 
 
+@pytest.mark.parametrize(
+    "edit",
+    [
+        lambda chart, ws: setattr(chart, "title", "bad\x01"),
+        lambda chart, ws: setattr(chart, "title", 5),
+        lambda chart, ws: chart.set_series_formula(1, "'bar\x01chart'!$A$2:$A$3", ws),
+        lambda chart, ws: chart.set_series_formula(1, None, ws),
+    ],
+)
+def test_a_refused_chart_edit_changes_nothing(edit):
+    path = INSPECT_FIXTURES["ChartsAndTables"]
+    wb = Workbook.open(path)
+    ws = wb["bar chart"]
+    with pytest.raises((TypeError, ValueError)):
+        edit(ws.charts[0], ws)
+    assert_preserved(path, wb)
+
+
+def test_clearing_a_chart_title_leaves_a_valid_chart(png: Path):
+    wb = Workbook.create()
+    chart = _chart_sheet(wb, png).charts[0]
+    chart.title = "Named"
+    assert chart.title == "Named"
+    chart.title = None
+    assert chart.title is None
+    title = etree.fromstring(read_pkg(wb)["xl/charts/chart1.xml"]).find(f".//{_C}title")
+    assert title is not None and title.find(f"{_C}tx") is None
+    assert_valid_package(wb)
+
+
 # --- Picture.anchor / resize ------------------------------------------------
 
 

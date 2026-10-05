@@ -989,19 +989,26 @@ class Chart(_AnchoredObject):
         chart_elm = root.find(f".//{{{CHART_NS}}}chart")
         if chart_elm is None:
             raise ValueError("invalid chart xml")
+        if value is not None and not isinstance(value, str):
+            raise TypeError(f"chart title must be a str or None, got {type(value)!r}")
         title_elm = chart_elm.find(_C_TITLE)
         if title_elm is None:
+            if not value:
+                return
             title_elm = etree.Element(_C_TITLE)
-            insert_ordered(chart_elm, title_elm, ORDER["CT_Chart"])
 
+        tx = None
+        if value:
+            # Built before the tree changes: text XML cannot hold raises here.
+            tx = etree.Element(_C_TX)
+            tx.append(_build_title_rich(title_elm, value))
         old_tx = title_elm.find(_C_TX)
         if old_tx is not None:
             title_elm.remove(old_tx)
-
-        tx = etree.Element(_C_TX)
-        title_elm.insert(0, tx)
-        if value:
-            tx.append(_build_title_rich(title_elm, value))
+        if tx is not None:
+            title_elm.insert(0, tx)
+        if title_elm.getparent() is None:
+            insert_ordered(chart_elm, title_elm, ORDER["CT_Chart"])
 
         self._save_chart_root(root)
 
@@ -1018,6 +1025,10 @@ class Chart(_AnchoredObject):
         formulas = [f for f in root.iter(_C_F) if f.text and "$" in (f.text or "")]
         if index < 0 or index >= len(formulas):
             raise IndexError(f"series formula index out of range: {index}")
+        if not isinstance(formula, str):
+            raise TypeError(f"series formula must be a str, got {type(formula)!r}")
+        if _XML_ILLEGAL.search(formula):
+            raise ValueError(f"series formula {formula!r} holds characters XML cannot store")
         target = formulas[index]
         parent = target.getparent()
         if parent is not None and worksheet is not None:
