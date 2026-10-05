@@ -4,7 +4,7 @@ from xlsxedit.cell import Cell
 from xlsxedit.conditional_formatting import ConditionalFormatRule, ConditionalFormatting
 from xlsxedit.coreprops import CoreProperties
 from xlsxedit.dimensions import ColumnDimension, RowDimension
-from xlsxedit.drawing import Chart, Picture, Table
+from xlsxedit.drawing import Chart, DrawingObject, Picture, Table
 from xlsxedit.exceptions import (
     DTDForbiddenError,
     DuplicateWorksheetError,
@@ -14,11 +14,12 @@ from xlsxedit.exceptions import (
     InvalidImageError,
     InvalidRangeError,
     MissingPartError,
+    TableError,
     WorksheetNotFoundError,
     XlsxeditError,
 )
 from xlsxedit.hyperlinks import Hyperlink
-from xlsxedit.styles import CellStyle
+from xlsxedit.styles import CellStyle, Color
 from xlsxedit.workbook import Workbook
 from xlsxedit.worksheet import Worksheet
 
@@ -35,6 +36,8 @@ __all__ = [
     "ConditionalFormatRule",
     "Hyperlink",
     "CellStyle",
+    "Color",
+    "DrawingObject",
     "CoreProperties",
     "ColumnDimension",
     "RowDimension",
@@ -49,5 +52,6 @@ __all__ = [
     "MissingPartError",
     "FormulaGroupError",
     "DTDForbiddenError",
+    "TableError",
 ]
 __version__ = "1.0.1"
