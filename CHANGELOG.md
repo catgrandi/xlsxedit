@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## Unreleased
 
 Several changes below are breaking, so the next release is a major one.
 
@@ -22,7 +22,7 @@ Several changes below are breaking, so the next release is a major one.
 
 ### Added
 
-- **Workbook** — `copy_worksheet(name, new_name)`; `remove_worksheet(name, *, keep_unreachable=False)`.
+- **Workbook** — `copy_worksheet(name, new_name)`. `remove_worksheet(name, keep_unreachable=True)` keeps the parts only that sheet reached.
 - **Exceptions** — `GridOverflowError`, `FormulaGroupError`, `DTDForbiddenError` and `TableError`.
 - **Formulas** — `Cell.formula_type`: `"normal"`, `"shared"`, `"array"`, `"dataTable"` or `None`.
 - **Drawings** — `ws.drawing_objects` lists every object of a sheet's drawing as a `DrawingObject`: pictures, charts, shapes, connectors, groups and their members, slicers, timelines and other graphic frames.
@@ -45,9 +45,9 @@ Several changes below are breaking, so the next release is a major one.
 - **Cells** — writing one row through both the cell API and a bulk API no longer saves duplicate `<row>` elements, and cells stay in column order. `ws["a6"]` reaches the same cell as `ws["A6"]`.
 - **Formulas** — `Cell.formula` drops the stale cached value and cell type, sets `fullCalcOnLoad`, and turns a shared-formula follower into a standalone formula.
 - **Tables** — `write_dataframe` no longer moves or resizes a table it did not write into. `add_table` and `copy_worksheet` give tables unique ids and names.
-- **Styles** — exports with `template_rows` and `column_styles` allocate one cell format per template row and styled column instead of one per cell. `font_size` reads fractional sizes, and `<b val="0"/>` no longer reads as bold. A `num_format`, `font_name` or alignment the stylesheet cannot hold raises `TypeError` or `ValueError` before anything changes, instead of leaving an incomplete `numFmt` or an invalid alignment in `styles.xml`.
+- **Styles** — exports with `template_rows` and `column_styles` allocate one cell format per template row and styled column instead of one per cell. `font_size` reads fractional sizes, and `<b val="0"/>` no longer reads as bold. A `num_format`, `font_name` or alignment the stylesheet cannot hold raises `TypeError` or `ValueError` before anything changes, instead of leaving an incomplete `numFmt` or an invalid alignment in `styles.xml`. `apply_style` accepts the `Color` that `font_color` returns, and a colour that is not six or eight hex digits raises `InvalidColorError`.
 - **Workbook** — `remove_worksheet` drops `calcChain.xml`, the sheet's own defined names and the parts only it reached, and renumbers later `localSheetId`s. New parts never take an orphan's name, and saving raises `ValueError` rather than write two members under one name.
-- **Drawings** — editing a chart and then a picture on one sheet keeps both edits. `Picture.anchor` moves the whole anchor, and `Picture.width` / `height` resize the picture with its anchor. Added images and charts get ids unique within their drawing. Rebuilt chart caches hold only numbers in `c:numCache`.
+- **Drawings** — editing a chart and then a picture on one sheet keeps both edits. `Picture.anchor` moves the whole anchor, and `Picture.width` / `height` resize the picture with its anchor. Added images and charts get ids unique within their drawing. Rebuilt chart caches hold only numbers in `c:numCache`. A refused chart title or series formula leaves the chart unchanged, and clearing a title no longer writes an empty `c:tx`.
 - **Worksheet XML order** — new worksheet and stylesheet children are placed in schema order around `legacyDrawing` and `mc:AlternateContent`.
 
 ### Security

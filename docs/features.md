@@ -117,7 +117,7 @@ Values aimed at cells that a merge covers follow the rule in [large-data-export.
 | `cell.worksheet` | Owning worksheet | |
 | `cell.offset(cols=0, rows=0)` | Neighbor cell | e.g. `offset(cols=1, rows=1)` is one right and one down |
 | `cell.style` | `CellStyle` read proxy | Effective style: the cell's own; an empty cell without one takes its row's (row formatted as a whole), else its column's; otherwise the default, as Excel shows it |
-| `cell.apply_style(**kwargs)` | Change only the passed style properties | `bold`, `font_color`, `bg_color`, `font_size`, …; builds on the effective style and keeps the current font's other properties; `False` turns bold/italic/underline off; reuses an identical existing format |
+| `cell.apply_style(**kwargs)` | Change only the passed style properties | `bold`, `font_color`, `bg_color`, `font_size`, …; a colour is six or eight hex digits (`#` optional) or a `Color` with an `rgb` value; builds on the effective style and keeps the current font's other properties; `False` turns bold/italic/underline off; reuses an identical existing format |
 | `cell.apply_date_format()` | Apply standard date format | Builds on the effective style |
 | `cell.apply_number_format(code)` | Apply custom number format | e.g. `"$#,##0.00"`; builds on the effective style |
 | `cell.hyperlink` | `Hyperlink` proxy | `.url`, `.location`, `.display` |
@@ -166,7 +166,7 @@ From `ws.charts` or `ws.add_chart(...)`.
 | `chart.anchor` | Top-left anchor cell get/set (preserves size span) |
 | `chart.to_anchor` | Bottom-right corner cell get/set |
 | `chart.offset_x`, `chart.offset_y` | Pixel inset within anchor cell (post-create tweak; add is flush) |
-| `chart.title` | Chart title get/set |
+| `chart.title` | Chart title get/set; `None` removes the title text |
 | `chart.partname` | Chart part path |
 | `chart.set_series_formula(index, formula, worksheet=None)` | Update series range; with `worksheet`, rebuild the series cache from its cells |
 
