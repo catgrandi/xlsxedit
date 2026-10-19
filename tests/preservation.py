@@ -616,7 +616,10 @@ INVARIANTS: dict[str, str] = {
         "and every cell with that si lies inside the master's ref"
     ),
     "formula-ref": "every array/dataTable formula master lies inside its own ref",
-    "calc-chain": "every calcChain entry names a cell with <f> on a worksheet whose sheetId exists",
+    "calc-chain": (
+        "every calcChain entry names a cell with <f>, or one inside a CSE array formula's ref, "
+        "on a worksheet whose sheetId exists"
+    ),
     "grid-bounds": (
         "every row, cell and reference in worksheets and tables parses and lies "
         "within A1:XFD1048576"
@@ -925,7 +928,10 @@ def _check_calc_chain(book: _Book) -> None:
     if chain is None:
         return
     sheets = {s.sheet_id: s for s in book.sheets}
-    formula_cells: dict[str, set[str]] = {}
+    # per member: cells with <f>, and the boxes of CSE array formulas, whose other
+    # cells Excel also lists in the chain though they carry no <f> (spill cells of
+    # a dynamic array, whose anchor has cm, are not listed)
+    formula_cells: dict[str, tuple[set[str], list[Box]]] = {}
     missing_sheets: dict[str, list[str]] = defaultdict(list)
     no_formula: dict[str, list[str]] = defaultdict(list)
     sheet_id = "0"  # schema default; an entry without i inherits the previous entry's
@@ -938,10 +944,19 @@ def _check_calc_chain(book: _Book) -> None:
             missing_sheets[sheet_id].append(addr)
             continue
         if sheet.member not in formula_cells:
-            formula_cells[sheet.member] = {
-                a for a, c in book.cells(sheet.member) if c.find(_F) is not None
-            }
-        if addr not in formula_cells[sheet.member]:
+            cells, arrays = set(), []
+            for a, c in book.cells(sheet.member):
+                f = c.find(_F)
+                if f is None:
+                    continue
+                cells.add(a)
+                if f.get("t") != "array" or c.get("cm") is not None:
+                    continue
+                if (box := _parse_ref(f.get("ref"))) is not None:
+                    arrays.append(box)
+            formula_cells[sheet.member] = cells, arrays
+        cells, arrays = formula_cells[sheet.member]
+        if addr not in cells and not (pos and any(_contains(b, *pos) for b in arrays)):
             no_formula[sheet.name].append(addr)
     for sheet_id, addrs in missing_sheets.items():
         book.flag(
