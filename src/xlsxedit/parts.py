@@ -145,6 +145,14 @@ class ChartPart(LazyXmlPart):
     """``xl/charts/chartN.xml`` — the one live ``c:chartSpace`` tree of the part."""
 
 
+class TablePart(LazyXmlPart):
+    """``xl/tables/tableN.xml`` — the one live ``table`` tree of the part.
+
+    ``Table`` proxies read and edit this tree in place; an untouched table
+    part round-trips byte-identically.
+    """
+
+
 class CorePropertiesPart(XmlPart):
     """``/docProps/core.xml`` — Dublin Core document metadata."""
 
@@ -180,3 +188,4 @@ def register_part_types() -> None:
     PartFactory.part_type_for[CT.OPC_CORE_PROPERTIES] = CorePropertiesPart
     PartFactory.part_type_for[CT.DRAWING] = DrawingPart
     PartFactory.part_type_for[CT.CHART] = ChartPart
+    PartFactory.part_type_for[CT.TABLE] = TablePart

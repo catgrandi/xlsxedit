@@ -527,7 +527,6 @@ def test_remove_worksheet_drops_its_calc_chain_entries():
     check_consistency(wb)
 
 
-@_known_bug("#13", "table-autofilter", reason="Table.resize puts the totals row inside autoFilter")
 def test_table_resize_keeps_the_totals_row_out_of_autofilter():
     pkg = _edit(_pkg("ChartsAndTables"), TABLE, b'totalsRowShown="0"', b'totalsRowCount="1"')
     _edit(pkg, TABLE, b'<autoFilter ref="A1:C11"', b'<autoFilter ref="A1:C10"')

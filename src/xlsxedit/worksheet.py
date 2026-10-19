@@ -32,13 +32,11 @@ from xlsxedit.dimensions import ColumnDimensions, RowDimensions
 from xlsxedit.drawing import (
     DrawingObject,
     Picture,
-    Table,
     Chart,
     drawing_parts_for_worksheet,
     iter_charts,
     iter_drawing_objects,
     iter_pictures,
-    table_parts_for_worksheet,
 )
 from xlsxedit.range_set import CellRange, SheetRangeSet, column_number
 from xlsxedit.row_shift import (
@@ -59,9 +57,10 @@ from xlsxedit.merge import MergeMap, normalize_range, parse_range, ranges_overla
 from xlsxedit.opc.constants import CT, OFFICE_REL_NS, RT, SML_NS
 from xlsxedit.oxml.address import col_to_index, index_to_col, join_address, split_address
 from xlsxedit.shared_strings import SharedStringTable
+from xlsxedit.table import Table, table_parts_for_worksheet
 
 if TYPE_CHECKING:
-    from xlsxedit.parts import WorksheetPart
+    from xlsxedit.parts import TablePart, WorksheetPart
     from xlsxedit.workbook import Workbook
 
 _ROW = f"{{{SML_NS}}}row"
@@ -92,6 +91,7 @@ class Worksheet:
         self._cell_index: dict[str, etree._Element] = {}
         self._cell_indexed_rows: set[int] = set()
         self._bulk_max_row_num = 0
+        self._table_proxies: dict[TablePart, Table] = {}
 
     def __repr__(self) -> str:
         return f"<Worksheet {self._name!r}>"
