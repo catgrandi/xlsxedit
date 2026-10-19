@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import bisect
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Iterator
 
@@ -71,6 +72,10 @@ _SHEET_DATA = f"{{{SML_NS}}}sheetData"
 _MERGE_CELLS = f"{{{SML_NS}}}mergeCells"
 _MERGE_CELL = f"{{{SML_NS}}}mergeCell"
 _DIMENSION = f"{{{SML_NS}}}dimension"
+_CELL_REFS = etree.XPath("m:row/m:c/@r", namespaces={"m": SML_NS}, smart_strings=False)
+_DIGIT_LETTER = re.compile(r"\d[A-Za-z]")
+_DIGITS = re.compile(r"\d+")
+_LETTERS = re.compile(r"[A-Za-z]+")
 
 
 def _holds_content(c_elm: etree._Element) -> bool:
@@ -889,22 +894,27 @@ class Worksheet:
         sheet_data = self._part.element.find(_SHEET_DATA)
         if sheet_data is None:
             return
-        min_row = min_col = None
-        max_row = max_col = None
-        for row in sheet_data.findall(_ROW):
-            row_num = int(row.get("r", "0"))
-            for c_elm in row.findall(_C):
-                addr = c_elm.get("r")
-                if not addr:
-                    continue
-                col, r = split_address(addr)
-                ci = col_to_index(col)
-                min_row = r if min_row is None else min(min_row, r)
-                max_row = r if max_row is None else max(max_row, r)
-                min_col = ci if min_col is None else min(min_col, ci)
-                max_col = ci if max_col is None else max(max_col, ci)
-        if min_row is None:
+        addresses = [addr for addr in _CELL_REFS(sheet_data) if addr]
+        if not addresses:
             return
+        # The regex engine runs over all addresses at once instead of once per cell.
+        joined = " ".join(addresses)
+        digits = _DIGITS.findall(joined)
+        letters = _LETTERS.findall(joined)
+        # Every address is letters then digits when no digit precedes a letter and
+        # one letter run and one digit run per address cover all but the separators.
+        n = len(addresses)
+        if (
+            len(digits) != n
+            or len(letters) != n
+            or sum(map(len, digits)) + sum(map(len, letters)) + n - 1 != len(joined)
+            or _DIGIT_LETTER.search(joined)
+        ):
+            for addr in addresses:
+                split_address(addr)  # raises for an invalid address
+        rows = [int(text) for text in set(digits)]
+        cols = [col_to_index(text) for text in set(letters)]
+        min_row, max_row, min_col, max_col = min(rows), max(rows), min(cols), max(cols)
         self._update_dimension_to(
             join_address(index_to_col(min_col), min_row),
             join_address(index_to_col(max_col), max_row),
