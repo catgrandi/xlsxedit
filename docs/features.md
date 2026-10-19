@@ -60,8 +60,8 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | `ws.merge_cells(cell_range)` | Merge range | e.g. `"A1:C1"` |
 | `ws.unmerge_cells(cell_range)` | Unmerge range | |
 | `ws.merged_ranges` | Merged ranges as `list[str]` | e.g. `["A1:C1"]` |
-| `ws.clear_range(cell_range)` | Clear values in range | Returns count cleared |
-| `ws.write_rows(rows, at_cell / at_row, …)` | Write rows at fixed positions | Bulk styling kwargs |
+| `ws.clear_range(cell_range)` | Clear values in range | Returns count cleared; refuses before clearing anything (see `FormulaGroupError`) |
+| `ws.write_rows(rows, at_cell / at_row, …)` | Write rows at fixed positions | Bulk styling kwargs; a write it cannot complete raises before any cell changes ([details](large-data-export.md#two-write-modes)) |
 | `ws.insert_rows(rows, at_cell, …)` | Insert rows, shift below down | See [Inserting rows and columns](#inserting-rows-and-columns) |
 | `ws.insert_columns(cols, at_col / at_cell, …)` | Insert columns, shift right | ``cols`` = column vectors (top→bottom); see [Inserting rows and columns](#inserting-rows-and-columns) |
 | `ws.update_dimension()` | Refresh `<dimension>` | Usually automatic |
@@ -353,14 +353,13 @@ All library errors derive from `XlsxeditError`, so you can catch everything with
 | `WorksheetNotFoundError` | `KeyError` | A worksheet name is not present |
 | `DuplicateWorksheetError` | `ValueError` | Adding/renaming to an existing sheet name |
 | `InvalidRangeError` | `ValueError` | Malformed cell address or range (e.g. `"A1:C3"`) |
-| `GridOverflowError` | `InvalidRangeError` | An insert would put cells past row 1,048,576 or column XFD ([details](#inserting-rows-and-columns)) |
+| `GridOverflowError` | `InvalidRangeError` | An insert or bulk write would put cells past row 1,048,576 or column XFD ([details](#inserting-rows-and-columns)) |
 | `InvalidColorError` | `ValueError` | Invalid color value |
 | `InvalidImageError` | `ValueError` | Unsupported or corrupt image data |
 | `MissingPartError` | `RuntimeError` | A required package part is absent |
 | `DataValidationError` | `ValueError` | A data-validation edit Excel would reject or cannot apply, or a change to a read-only x14 validation ([details](#data-validation)) |
 | `TableError` | `ValueError` | A table edit would leave an invalid or inconsistent table: `add_table` names, columns, range, overlap or header cells; `Table.resize` and the `Table` setters; a `write_dataframe` resize that does not fit the table; `insert_columns` inside a table bound to a query, or with a header value that cannot name a column joining a table |
-
-| `FormulaGroupError` | `ValueError` | An edit would split a formula group: setting `cell.formula` on a shared-formula master that other cells still derive from, or on any cell of a multi-cell array or data-table formula; or overwriting, clearing, or removing the formula of such a multi-cell formula's anchor (`cell.value`, `cell.clear()`, `cell.formula = None`, `clear_range`, bulk writes). The refused cell keeps its content, though a styled bulk write may already have restyled it; `clear_range` and bulk writes keep the cells they wrote before it, while `insert_rows`, `insert_columns` and `add_table` raise it before changing anything |
+| `FormulaGroupError` | `ValueError` | An edit would split a formula group: setting `cell.formula` on a shared-formula master that other cells still derive from, or on any cell of a multi-cell array or data-table formula; or overwriting, clearing, or removing the formula of such a multi-cell formula's anchor (`cell.value`, `cell.clear()`, `cell.formula = None`, `clear_range`, bulk writes, `add_table(write_header=True)`). Raised before anything changes, so a refused bulk write or `clear_range` changes no cell |
 | `DTDForbiddenError` | `ValueError` | An XML part xlsxedit reads declares a DTD (`<!DOCTYPE>`), which Excel never writes. Raised by `Workbook.open`, so never partway through an edit: the parts parsed only on first use (tables, drawings, charts, and worksheets opened with `large=True`) are checked without being parsed. Parts xlsxedit only carries as bytes may keep a DTD. Parsing never expands entities or fetches external resources |
 
 ---

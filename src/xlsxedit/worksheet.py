@@ -16,7 +16,13 @@ from xlsxedit.bulk_styles import (
     normalize_template_rows,
     validate_style_sources,
 )
-from xlsxedit.cell import Cell, _clear_cell_content
+from xlsxedit.cell import (
+    _RANGE_FORMULAS,
+    Cell,
+    _clear_cell_content,
+    _ref_contains,
+    _refuse_range_formula_edit,
+)
 from xlsxedit.conditional_formatting import (
     ConditionalFormatting,
     add_cell_is_rule,
@@ -31,6 +37,7 @@ from xlsxedit.data_validation import (
     new_data_validation,
 )
 from xlsxedit.dimensions import ColumnDimensions, RowDimensions
+from xlsxedit.exceptions import InvalidRangeError
 from xlsxedit.drawing import (
     DrawingObject,
     Picture,
@@ -82,12 +89,18 @@ _LETTERS = re.compile(r"[A-Za-z]+")
 
 def _holds_content(c_elm: etree._Element) -> bool:
     return any(child.tag in _CELL_CONTENT for child in c_elm)
+_CELL_FORMULA = f"{_C}/{_F}"
 
 
 def _column_key(address: str) -> tuple[int, str]:
     """Sort key for the column of an uppercase cell address (``Z1`` before ``AA1``)."""
     letters = address.rstrip("0123456789")
     return len(letters), letters
+
+
+def _row_values(values) -> tuple | list:
+    """A bulk write's values for one row: a sequence, or one value for one cell."""
+    return values if isinstance(values, (list, tuple)) else (values,)
 
 
 class Worksheet:
@@ -592,31 +605,33 @@ class Worksheet:
                     idx = style_cache.index_for(col_spec)
                 style_index = None if idx is None else str(idx)
 
-                if style_index is not None:
-                    c_elm.set("s", style_index)
-
+                target = c_elm
                 anchor = self._resolve_write_address(address) if has_merges else address
                 if anchor != address:
                     # A merge covers this cell: its value goes to the anchor, as with
                     # ws[address], unless it is None or this call writes the anchor too.
                     if value is None or writes_cell(anchor):
-                        continue
-                    anchor_row = split_address(anchor)[1]
-                    c_elm = self._bulk_get_or_create_cell(
-                        anchor,
-                        self._bulk_ensure_row(anchor_row),
-                        index=anchor_row in self._cell_indexed_rows,
-                    )
-                    place_cell_in_order(c_elm)
+                        target = None
+                    else:
+                        anchor_row = split_address(anchor)[1]
+                        target = self._bulk_get_or_create_cell(
+                            anchor,
+                            self._bulk_ensure_row(anchor_row),
+                            index=anchor_row in self._cell_indexed_rows,
+                        )
+                        place_cell_in_order(target)
 
-                write_cell_value(
-                    c_elm,
-                    value,
-                    sst,
-                    sst_cache,
-                    force_string=col_idx in string_columns,
-                    worksheet=self,
-                )
+                if target is not None:
+                    write_cell_value(
+                        target,
+                        value,
+                        sst,
+                        sst_cache,
+                        force_string=col_idx in string_columns,
+                        worksheet=self,
+                    )
+                if style_index is not None:
+                    c_elm.set("s", style_index)
             if before is not None and etree.tostring(row_elm, with_tail=False) != before:
                 unchanged = False
             count += 1
@@ -632,6 +647,85 @@ class Worksheet:
             )
         return count
 
+    def _check_overwrite(
+        self,
+        method: str,
+        row_list: list,
+        *,
+        start_row: int,
+        start_col_idx: int,
+        template_rows: int | list[int] | None,
+        row_styles: list[dict[str, Any]] | None,
+        column_styles: list[dict[str, Any]] | None,
+        string_columns: set[int] | None,
+    ) -> None:
+        """Refuse, before anything changes, a bulk overwrite ``_write_bulk_rows`` would
+        stop partway: conflicting or invalid styles, cells off the grid, values the
+        cells cannot hold, or the anchor of a multi-cell array or data-table formula."""
+        validate_style_sources(template_rows=template_rows, row_styles=row_styles)
+        check_style_specs(row_styles, column_styles)
+        if not row_list:
+            return
+        widths = [len(r) if isinstance(r, (list, tuple)) else 1 for r in row_list]
+        check_block_in_grid(method, start_row, start_col_idx, len(row_list), max(widths))
+        check_values_writable(
+            method,
+            row_list,
+            start_col_idx=start_col_idx,
+            string_columns=string_columns,
+            has_shared_strings=self.shared_strings is not None,
+        )
+        self._check_range_formula_anchors_kept(
+            row_list, widths, start_row=start_row, start_col_idx=start_col_idx
+        )
+
+    def _check_range_formula_anchors_kept(
+        self, row_list: list, widths: list[int], *, start_row: int, start_col_idx: int
+    ) -> None:
+        """Refuse an overwrite of a multi-cell array or data-table formula's anchor, by a
+        value for that cell or a value for another cell of a merge it is the top-left of."""
+
+        def writes(col_idx: int, row: int) -> bool:
+            offset = row - start_row
+            return 0 <= offset < len(widths) and 0 <= col_idx - start_col_idx < widths[offset]
+
+        for offset, width in enumerate(widths):
+            row_elm = self._find_row_element(start_row + offset) if width else None
+            if row_elm is None:
+                continue
+            for f_elm in row_elm.iterfind(_CELL_FORMULA):
+                if f_elm.get("t") not in ("array", "dataTable"):
+                    continue
+                address = f_elm.getparent().get("r", "")
+                try:
+                    col_idx = col_to_index(split_address(address)[0])
+                except InvalidRangeError:
+                    continue
+                if writes(col_idx, start_row + offset):
+                    _refuse_range_formula_edit(address, f_elm)
+
+        last_row = start_row + len(row_list) - 1
+        for ref in self.merged_ranges:
+            c1, r1, c2, r2 = parse_range(ref)
+            first_col, last_col = col_to_index(c1), col_to_index(c2)
+            if r2 < start_row or r1 > last_row or writes(first_col, r1):
+                continue
+            covered = (
+                value
+                for row in range(max(r1, start_row), min(r2, last_row) + 1)
+                for col_idx, value in enumerate(
+                    _row_values(row_list[row - start_row]), start=start_col_idx
+                )
+                if first_col <= col_idx <= last_col
+            )
+            if all(value is None for value in covered):
+                continue
+            anchor = join_address(c1, r1)
+            c_elm = self._find_cell_element(anchor)
+            f_elm = None if c_elm is None else c_elm.find(_F)
+            if f_elm is not None:
+                _refuse_range_formula_edit(anchor, f_elm)
+
     def _write_rows_at(
         self,
         rows,
@@ -642,14 +736,31 @@ class Worksheet:
         row_styles: list[dict[str, Any]] | None = None,
         column_styles: list[dict[str, Any]] | None = None,
         string_columns: set[int] | None = None,
+        clear_range: str | None = None,
+        method: str = "write_rows",
     ) -> int:
         """Write row sequences at ``start_row`` / ``start_col_idx`` (0-based column).
 
-        Internal helper for the pandas ExcelWriter engine and other bulk callers
-        that already have row tuples rather than a DataFrame.
+        Internal helper for ``write_rows``, ``write_dataframe``, the pandas
+        ExcelWriter engine and other bulk callers that already have row tuples
+        rather than a DataFrame. Every check comes first, then ``clear_range``
+        is cleared, then the rows are written, so a refused write changes nothing.
         """
+        row_list = list(rows)
+        self._check_overwrite(
+            method,
+            row_list,
+            start_row=start_row,
+            start_col_idx=start_col_idx,
+            template_rows=template_rows,
+            row_styles=row_styles,
+            column_styles=column_styles,
+            string_columns=string_columns,
+        )
+        if clear_range is not None:
+            self.clear_range(clear_range)
         return self._write_bulk_rows(
-            list(rows),
+            row_list,
             start_row=start_row,
             start_col_idx=start_col_idx,
             template_rows=template_rows,
@@ -669,7 +780,10 @@ class Worksheet:
         column_styles: list[dict[str, Any]] | None = None,
         string_columns: set[int] | None = None,
     ) -> int:
-        """Write rows at fixed addresses (overwrites existing cells in range)."""
+        """Write rows at fixed addresses (overwrites existing cells in range).
+
+        A write that cannot be completed raises before any cell changes.
+        """
         if at_cell is not None:
             start_col, at_row = split_address(at_cell)
             start_col_idx = col_to_index(start_col)
@@ -883,8 +997,16 @@ class Worksheet:
         return removed
 
     def clear_range(self, cell_range: str) -> int:
-        """Clear cell values in ``cell_range`` while preserving styles. Returns cells cleared."""
+        """Clear cell values in ``cell_range`` while preserving styles. Returns cells cleared.
+
+        Raises ``FormulaGroupError`` before clearing anything when the range holds
+        the anchor of a multi-cell array or data-table formula.
+        """
         c1, r1, c2, r2 = parse_range(cell_range)
+        for f_elm in _RANGE_FORMULAS(self._part.element):
+            address = f_elm.getparent().get("r", "")
+            if _ref_contains(cell_range, address):
+                _refuse_range_formula_edit(address, f_elm)
         c1i, c2i = col_to_index(c1), col_to_index(c2)
         cleared = 0
         changed = False

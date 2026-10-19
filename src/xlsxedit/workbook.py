@@ -355,9 +355,6 @@ class Workbook:
                 ws, rows_to_write[0], start_row=start_row, start_col=start_col_idx
             )
 
-        if mode == "overwrite" and clear_range is not None:
-            ws.clear_range(clear_range)
-
         effective_template = template_rows
         if effective_template is None and header and mode == "overwrite":
             effective_template = start_row
@@ -376,9 +373,12 @@ class Workbook:
                 **style_kwargs,
             )
         else:
-            count = ws.write_rows(
+            count = ws._write_rows_at(
                 rows_to_write,
-                at_cell=join_address(start_col, start_row),
+                start_row=start_row,
+                start_col_idx=start_col_idx,
+                clear_range=clear_range,
+                method="write_dataframe",
                 **style_kwargs,
             )
 

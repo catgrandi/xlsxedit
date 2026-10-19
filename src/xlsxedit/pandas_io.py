@@ -225,8 +225,7 @@ class XlsxeditWriter(ExcelWriter):
         sheet_name = self._get_sheet_name(sheet_name)
         ws = self._resolve_sheet(sheet_name)
 
-        if self._write_mode == "overwrite" and self._clear_range is not None:
-            ws.clear_range(self._clear_range)
+        clear_range = self._clear_range if self._write_mode == "overwrite" else None
 
         # Buffer pandas cells → dense row grid (values only; ignore formatter styles).
         by_row: dict[int, dict[int, Any]] = defaultdict(dict)
@@ -251,6 +250,8 @@ class XlsxeditWriter(ExcelWriter):
                 )
 
         if not by_row:
+            if clear_range is not None:
+                ws.clear_range(clear_range)
             return
 
         min_row = min(by_row)
@@ -275,6 +276,8 @@ class XlsxeditWriter(ExcelWriter):
                 row_list,
                 start_row=min_row,
                 start_col_idx=min_col,
+                clear_range=clear_range,
+                method="to_excel",
                 **style_kwargs,
             )
 
