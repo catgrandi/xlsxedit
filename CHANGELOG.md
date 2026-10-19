@@ -27,7 +27,7 @@ Several changes below are breaking, so the next release is a major one.
 
 ### Added
 
-- **Workbook** — `copy_worksheet(name, new_name)`. `remove_worksheet(name, keep_unreachable=True)` keeps the parts only that sheet reached.
+- **Workbook** — `copy_worksheet(name, new_name)`, which changes nothing when the copy fails. `remove_worksheet(name, keep_unreachable=True)` keeps the parts only that sheet reached.
 - **Exceptions** — `GridOverflowError`, `FormulaGroupError`, `DTDForbiddenError` and `TableError`.
 - **Formulas** — `Cell.formula_type`: `"normal"`, `"shared"`, `"array"`, `"dataTable"` or `None`.
 - **Drawings** — `ws.drawing_objects` lists every object of a sheet's drawing as a `DrawingObject`: pictures, charts, shapes, connectors, groups and their members, slicers, timelines and other graphic frames.

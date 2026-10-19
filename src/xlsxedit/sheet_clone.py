@@ -93,16 +93,24 @@ def clone_sheet_relationships(source_part: WorksheetPart, dest_part: WorksheetPa
     _copy_relationships(source_part, dest_part, workbook._package, cloned, workbook)
 
 
-def copy_local_defined_names(workbook, source_index: int, dest_index: int) -> None:
-    """Duplicate definedNames with ``localSheetId`` equal to ``source_index``."""
-    wb_elm = workbook._workbook_part.element
-    block = wb_elm.find(_DEFINED_NAMES)
+def local_defined_name_copies(workbook, source_index: int, dest_index: int) -> list:
+    """Copies of the definedNames with ``localSheetId`` equal to ``source_index``,
+    scoped to ``dest_index``; :func:`append_defined_names` adds them to the workbook."""
+    block = workbook._workbook_part.element.find(_DEFINED_NAMES)
     if block is None:
-        return
-    for elm in list(block.findall(_DEFINED_NAME)):
+        return []
+    copies = []
+    for elm in block.findall(_DEFINED_NAME):
         local_id = elm.get("localSheetId")
         if local_id is None or int(local_id) != source_index:
             continue
         clone = deepcopy(elm)
         clone.set("localSheetId", str(dest_index))
-        block.append(clone)
+        copies.append(clone)
+    return copies
+
+
+def append_defined_names(workbook, names: list) -> None:
+    """Append ``names`` from :func:`local_defined_name_copies` to the workbook's definedNames."""
+    if names:
+        workbook._workbook_part.element.find(_DEFINED_NAMES).extend(names)
