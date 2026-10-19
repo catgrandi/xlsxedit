@@ -555,7 +555,6 @@ class Worksheet:
         for offset, row_values in enumerate(row_list):
             row_num = start_row + offset
             row_elm = self._bulk_ensure_row(row_num)
-            indexed = row_num in self._cell_indexed_rows
             before = etree.tostring(row_elm, with_tail=False) if unchanged else None
             if not isinstance(row_values, (list, tuple)):
                 row_values = (row_values,)
@@ -563,7 +562,10 @@ class Worksheet:
             for col_offset, value in enumerate(row_values):
                 col_idx = start_col_idx + col_offset
                 address = join_address(index_to_col(col_idx), row_num)
-                c_elm = self._bulk_get_or_create_cell(address, row_elm, index=indexed)
+                # A merge anchor written earlier in this row can have indexed it since.
+                c_elm = self._bulk_get_or_create_cell(
+                    address, row_elm, index=row_num in self._cell_indexed_rows
+                )
 
                 col_spec = (
                     column_styles[col_offset]
