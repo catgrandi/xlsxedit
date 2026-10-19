@@ -122,7 +122,7 @@ def test_reads_base_rules_then_x14_rules():
 def test_reads_every_attribute_of_a_base_rule():
     wb, ws = _book(BASE_RULES)
     listed, ranged, _ = _reopened(wb)["Sheet1"].data_validations
-    assert (listed.type, listed.operator, listed.error_style) == ("list", "between", "stop")
+    assert (listed.type, listed.operator, listed.error_style) == ("list", None, "stop")
     assert (listed.allow_blank, listed.show_input_message, listed.show_error_message) == (
         True,
         True,
@@ -144,7 +144,7 @@ def test_reads_every_attribute_of_a_base_rule():
 def test_absent_attributes_read_as_schema_defaults():
     wb, ws = _book(BASE_RULES)
     bare = ws.data_validations[2]
-    assert (bare.type, bare.operator, bare.error_style) == ("none", "between", "stop")
+    assert (bare.type, bare.operator, bare.error_style) == ("none", None, "stop")
     assert (bare.allow_blank, bare.show_input_message, bare.show_error_message) == (
         False,
         False,
@@ -152,6 +152,31 @@ def test_absent_attributes_read_as_schema_defaults():
     )
     assert (bare.error_title, bare.error, bare.prompt_title, bare.prompt) == (None,) * 4
     assert (bare.formula1, bare.formula2) == (None, None)
+
+
+def test_operator_defaults_to_between_for_the_types_that_compare():
+    wb, ws = _book(
+        '<dataValidations count="2">'
+        '<dataValidation type="whole" sqref="A1"><formula1>1</formula1><formula2>2</formula2>'
+        "</dataValidation>"
+        '<dataValidation type="list" operator="equal" sqref="A2"><formula1>"a"</formula1>'
+        "</dataValidation></dataValidations>"
+    )
+    assert [dv.operator for dv in ws.data_validations] == ["between", None]
+
+
+def test_reads_a_formula_excel_wraps_in_alternate_content():
+    mc = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+    x12ac = "http://schemas.microsoft.com/office/spreadsheetml/2011/1/ac"
+    wb, ws = _book(
+        '<dataValidations count="1"><dataValidation type="list" allowBlank="1" sqref="B2">'
+        f'<mc:AlternateContent xmlns:mc="{mc}" xmlns:x12ac="{x12ac}">'
+        '<mc:Choice Requires="x12ac"><x12ac:list>"a,b",c</x12ac:list></mc:Choice>'
+        '<mc:Fallback><formula1>"a,b,c"</formula1></mc:Fallback>'
+        "</mc:AlternateContent></dataValidation></dataValidations>"
+    )
+    (rule,) = _reopened(wb)["Sheet1"].data_validations
+    assert (rule.type, rule.formula1, rule.formula2) == ("list", '"a,b,c"', None)
 
 
 def test_reads_x14_rules_of_the_validation_extension_only():
@@ -561,6 +586,34 @@ def test_add_needs_a_type():
     wb, ws = _book()
     with pytest.raises(TypeError):
         ws.add_data_validation("B2", formula1='"a"')
+
+
+def test_a_rule_read_back_adds_an_equal_rule():
+    wb, ws = _book(BASE_RULES)
+    copy = wb["Lists"]
+    names = (
+        "type",
+        "formula1",
+        "formula2",
+        "operator",
+        "allow_blank",
+        "show_input_message",
+        "show_error_message",
+        "error_style",
+        "error_title",
+        "error",
+        "prompt_title",
+        "prompt",
+    )
+
+    def fields(dv: DataValidation) -> list:
+        return [str(dv.sqref), *(getattr(dv, n) for n in names)]
+
+    for rule in ws.data_validations:
+        copy.add_data_validation(str(rule.sqref), **{n: getattr(rule, n) for n in names})
+    copied = _reopened(wb)["Lists"].data_validations
+    assert [fields(dv) for dv in copied] == [fields(dv) for dv in ws.data_validations]
+    assert_valid_package(wb)
 
 
 # -- sqref --------------------------------------------------------------------
