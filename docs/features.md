@@ -366,9 +366,7 @@ All library errors derive from `XlsxeditError`, so you can catch everything with
 
 ## Fidelity-tested fixtures
 
-Round-trip tests in `tests/test_fidelity.py` on:
-
-`TestBook`, `MergedCells`, `DifferentCellTypes`, `CustomCellSize`, `ConditionalFormatting`, `SimpleFormula`, `images`, `ChartsAndTables`, `TextSytle`, `hyperlink`
+Round-trip tests in `tests/test_fidelity.py` run on every workbook at the top of `fixtures/`, including Excel-authored ones with rich tables, data validation, conditional formatting, all three `editAs` modes of a drawing anchor, array and dynamic-array formulas, and a macro-enabled book with comments, a pivot table and a slicer. [`fixtures/MANIFEST.md`](../fixtures/MANIFEST.md) lists what each one contains.
 
 ---
 
