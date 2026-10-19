@@ -343,6 +343,58 @@ def test_x14_cf_matching_ignores_guid_case_and_area_order():
     assert _codes(pkg) == []
 
 
+
+_DV = b'<dataValidation type="list" sqref="A1"><formula1>"a,b"</formula1></dataValidation>'
+
+
+def _with_validations(block: bytes, ext: bytes = b"") -> dict[str, bytes]:
+    pkg = _edit(_pkg("SimpleFormula"), SHEET, b"</sheetData>", b"</sheetData>" + block)
+    if ext:
+        _edit(
+            pkg,
+            SHEET,
+            b"</worksheet>",
+            b'<extLst><ext uri="{CCE6A557-97BC-4b89-ADB6-D9C93CAAB3DF}" '
+            b'xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" '
+            b'xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">'
+            + ext
+            + b"</ext></extLst></worksheet>",
+        )
+    return pkg
+
+
+def test_data_validation_count_matches_its_children():
+    one = b'<dataValidations count="1">' + _DV + b"</dataValidations>"
+    assert _codes(_with_validations(one)) == []
+    assert _codes(_with_validations(b"<dataValidations>" + _DV + _DV + b"</dataValidations>")) == []
+    pkg = _with_validations(b'<dataValidations count="2">' + _DV + b"</dataValidations>")
+    assert _only(pkg, "data-validation") == "dataValidations/@count=2 but 1 dataValidation children"
+
+
+def test_data_validations_occur_once_and_name_a_sqref():
+    block = b'<dataValidations count="1">' + _DV + b"</dataValidations>"
+    twice = _with_validations(block + block)
+    assert _only(twice, "data-validation") == "2 dataValidations elements"
+    no_sqref = block.replace(b' sqref="A1"', b"")
+    assert _only(_with_validations(no_sqref), "data-validation") == "dataValidation 1 has no sqref"
+
+
+def test_x14_data_validation_count_and_sqref():
+    rule = (
+        b'<x14:dataValidation type="list">'
+        b"<x14:formula1><xm:f>Lists!$A$1:$A$3</xm:f></x14:formula1>"
+    )
+    good = rule + b"<xm:sqref>B1:B4</xm:sqref></x14:dataValidation>"
+    bare = rule + b"</x14:dataValidation>"
+    ok = b'<x14:dataValidations count="1">' + good + b"</x14:dataValidations>"
+    assert _codes(_with_validations(b"", ext=ok)) == []
+    pkg = _with_validations(
+        b"", ext=b'<x14:dataValidations count="3">' + good + bare + b"</x14:dataValidations>"
+    )
+    assert _only(pkg, "data-validation") == (
+        "x14:dataValidations/@count=3 but 2 children, x14:dataValidation 2 has no xm:sqref"
+    )
+
 def test_relationship_to_a_missing_part():
     pkg = dict(read_pkg(BOOK1))
     del pkg["xl/worksheets/sheet2.xml"]
