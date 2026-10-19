@@ -36,7 +36,6 @@ Several changes below are breaking, so the next release is a major one.
 - **Data validation** — `ws.data_validations` lists a sheet's validations as `DataValidation` objects, x14 ones read-only. `ws.add_data_validation(...)` and `ws.remove_data_validation(dv)` add and remove them, and `dv.sqref` is settable; a refused edit raises the new `DataValidationError`, `InvalidRangeError` or `TypeError` and changes nothing. `SheetRangeSet` and `CellRange`, the types of `dv.sqref` and its areas, are exported.
 - **Tables** — `Table` reads and writes `display_name`, `header_row_count`, `totals_row_count`, `totals_row_shown`, `style` (a `TableStyle`) and the six table dxf ids, and reads `id`, the cell style names, `header_range`, `data_range`, `totals_range`, `first_data_row` and `last_data_row`. `table.column_objects` lists each column as a `TableColumn`. `Table.resize(ref, columns=[...])` adds and drops columns.
 
-
 ### Changed
 
 - **Inserts** — `insert_rows` and `insert_columns` plan the whole move before changing anything, and now also move shared, array and data-table formula ranges, x14 conditional formats, validations and sparklines, internal hyperlinks, `autoFilter` and sort state, page breaks, sheet views, protected ranges, ignored errors, cell watches, scenarios, `<cols>` and row `spans`, and rewrite defined names reference by reference. Both drop `calcChain.xml` and set `fullCalcOnLoad`.
