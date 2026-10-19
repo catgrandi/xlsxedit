@@ -237,6 +237,12 @@ def test_prolog_with_a_dtd_is_refused(xml: str, codec: str):
         refuse_dtd_in_prolog(xml.encode(codec), "/part.xml")
 
 
+def test_dtd_in_a_utf7_prolog_is_refused():
+    xml = b'<?xml version="1.0" encoding="UTF-7"?>+ADw-!DOCTYPE a+AD4-<a/>'
+    with pytest.raises(DTDForbiddenError, match=r"<!DOCTYPE a>"):
+        refuse_dtd_in_prolog(xml, "/part.xml")
+
+
 def test_dtd_in_a_part_xlsxedit_never_parses_is_kept():
     """A related part of a type xlsxedit only carries as bytes may keep its DTD."""
     item = b'<?xml version="1.0"?><!DOCTYPE data><data/>'

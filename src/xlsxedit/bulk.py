@@ -47,7 +47,8 @@ def write_cell_value(
         serial = datetime_to_serial(value)
         text = str(int(serial)) if serial == int(serial) else repr(serial)
     elif isinstance(value, (int, float)):
-        text = repr(value) if isinstance(value, float) else str(value)
+        # NumPy 2 scalars repr as np.float64(...); int subclasses may override str()
+        text = repr(float(value)) if isinstance(value, float) else str(int(value))
     else:
         raise TypeError(
             f"bulk write accepts str, int, float, bool, datetime, date, or None; got {type(value)!r}"

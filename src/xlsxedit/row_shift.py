@@ -128,6 +128,7 @@ _FORMULA = f"{{{SML_NS}}}formula"
 _FORMULA1 = f"{{{SML_NS}}}formula1"
 _FORMULA2 = f"{{{SML_NS}}}formula2"
 _WRITABLE = (str, int, float, date)  # bool is an int and datetime a date
+_MAX_INT_BITS = 2_000  # at most 603 digits: under the lowest digit limit str() allows (640)
 
 _CELL_ADDRESS_RE = re.compile(r"([A-Za-z]{1,3})([0-9]+)")
 
@@ -1284,6 +1285,11 @@ def check_values_writable(
                     raise TypeError(f"{method} cannot write {value!r}: {exc}") from None
                 if not math.isfinite(serial):  # pandas.NaT
                     raise ValueError(f"{method} cannot write {value!r}; use None")
+            if isinstance(value, int) and value.bit_length() > _MAX_INT_BITS:
+                try:  # str() refuses more digits than sys.get_int_max_str_digits()
+                    str(value)
+                except ValueError as exc:
+                    raise ValueError(f"{method} cannot write an integer that long: {exc}") from None
             if forced or isinstance(value, str):
                 if not has_shared_strings:
                     raise ValueError("workbook has no shared strings part")

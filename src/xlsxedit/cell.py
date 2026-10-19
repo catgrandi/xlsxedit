@@ -88,12 +88,12 @@ def _refuse_range_formula_edit(address: str, f_elm: _Element) -> None:
 
 
 def _shared_string_index(text: str | None, size: int) -> int | None:
-    """The index ``text`` names in a table of ``size`` shared strings; ``None`` if it names none."""
-    try:
-        index = int(text)
-    except (TypeError, ValueError):
+    """The index ``text`` names in a table of ``size`` shared strings; ``None`` unless it
+    names one in the plain form ``_sst_index_ref_count`` counts."""
+    if text is None or not (text.isascii() and text.isdigit()):
         return None
-    return index if 0 <= index < size else None
+    index = int(text)
+    return index if index < size and str(index) == text else None
 
 
 def _inline_t_nodes(is_elm: _Element) -> list[_Element]:
@@ -436,9 +436,9 @@ class Cell:
                 del self._element.attrib["t"]
             v = _ensure_v(self._element)
             if isinstance(new_value, float):
-                v.text = repr(new_value)
+                v.text = repr(float(new_value))  # NumPy 2 scalars repr as np.float64(...)
             else:
-                v.text = str(new_value)
+                v.text = str(int(new_value))
             return
 
         if not isinstance(new_value, str):

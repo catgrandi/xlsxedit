@@ -44,6 +44,9 @@ _BYTE_ORDER_MARKS = (  # UTF-32 first: its little-endian mark starts like UTF-16
 )
 _PROLOG_SPACE = re.compile(r"[ \t\r\n]*")
 _DOCTYPE_NAME = re.compile(r"[ \t\r\n]*([^ \t\r\n[>]*)")
+_DECLARED_ENCODING = re.compile(
+    r"<\?xml[^>]*?encoding[ \t\r\n]*=[ \t\r\n]*[\x22']([A-Za-z0-9._-]+)"
+)
 _MORE = object()
 
 
@@ -101,6 +104,11 @@ def refuse_dtd_in_prolog(blob: bytes, partname: str) -> None:
     markup that is not well formed is left for the parser to report.
     """
     codec, start = _prolog_codec(blob)
+    if codec == "latin-1":
+        # UTF-7 writes "<" as "+ADw-", so its markup is only seen once decoded.
+        declared = _DECLARED_ENCODING.match(blob[start : start + 256].decode("latin-1"))
+        if declared and declared.group(1).lower().replace("_", "-") == "utf-7":
+            codec = "utf-7"
     size = 4096
     while True:
         complete = start + size >= len(blob)
