@@ -56,3 +56,10 @@ def test_an_invalid_address_raises(bad: str):
     ws = _sheet_with(f'<row r="1"><c r="A1"/><c r="{bad}"/><c r="B2"/></row>')
     with pytest.raises(InvalidRangeError, match="invalid cell address"):
         ws.update_dimension()
+
+
+@pytest.mark.parametrize("row_ref", ["x", ""])
+def test_a_row_number_that_is_not_one_raises(row_ref: str):
+    ws = _sheet_with(f'<row r="{row_ref}"><c r="A1"/></row>')
+    with pytest.raises(ValueError):
+        ws.update_dimension()

@@ -73,6 +73,7 @@ _MERGE_CELLS = f"{{{SML_NS}}}mergeCells"
 _MERGE_CELL = f"{{{SML_NS}}}mergeCell"
 _DIMENSION = f"{{{SML_NS}}}dimension"
 _CELL_CONTENT = (f"{{{SML_NS}}}v", _F, f"{{{SML_NS}}}is")
+_ROW_REFS = etree.XPath("m:row/@r", namespaces={"m": SML_NS}, smart_strings=False)
 _CELL_REFS = etree.XPath("m:row/m:c/@r", namespaces={"m": SML_NS}, smart_strings=False)
 _DIGIT_LETTER = re.compile(r"\d[A-Za-z]")
 _DIGITS = re.compile(r"\d+")
@@ -910,6 +911,8 @@ class Worksheet:
         sheet_data = self._part.element.find(_SHEET_DATA)
         if sheet_data is None:
             return
+        for row_ref in _ROW_REFS(sheet_data):
+            int(row_ref)  # raises for a row number that is not one
         addresses = [addr for addr in _CELL_REFS(sheet_data) if addr]
         if not addresses:
             return
