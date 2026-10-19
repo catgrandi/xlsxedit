@@ -3,6 +3,7 @@
 from xlsxedit.cell import Cell
 from xlsxedit.conditional_formatting import ConditionalFormatRule, ConditionalFormatting
 from xlsxedit.coreprops import CoreProperties
+from xlsxedit.data_validation import DataValidation
 from xlsxedit.dimensions import ColumnDimension, RowDimension
 from xlsxedit.drawing import Chart, DrawingObject, Picture, Table
 from xlsxedit.exceptions import (
@@ -19,6 +20,7 @@ from xlsxedit.exceptions import (
     XlsxeditError,
 )
 from xlsxedit.hyperlinks import Hyperlink
+from xlsxedit.range_set import CellRange, SheetRangeSet
 from xlsxedit.styles import CellStyle, Color
 from xlsxedit.workbook import Workbook
 from xlsxedit.worksheet import Worksheet
@@ -34,6 +36,9 @@ __all__ = [
     # Return types
     "ConditionalFormatting",
     "ConditionalFormatRule",
+    "DataValidation",
+    "SheetRangeSet",
+    "CellRange",
     "Hyperlink",
     "CellStyle",
     "Color",

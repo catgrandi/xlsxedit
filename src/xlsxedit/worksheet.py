@@ -22,6 +22,7 @@ from xlsxedit.conditional_formatting import (
     expand_conditional_formatting_to_row,
     iter_conditional_formatting,
 )
+from xlsxedit.data_validation import DataValidation, iter_data_validations
 from xlsxedit.dimensions import ColumnDimensions, RowDimensions
 from xlsxedit.drawing import (
     DrawingObject,
@@ -889,6 +890,12 @@ class Worksheet:
     @property
     def conditional_formatting(self) -> list[ConditionalFormatting]:
         return iter_conditional_formatting(self)
+
+    @property
+    def data_validations(self) -> list[DataValidation]:
+        """The sheet's data validations: its ``dataValidation`` rules in document
+        order, then the x14 rules of its extension list."""
+        return iter_data_validations(self)
 
     def merge_cells(self, cell_range: str) -> None:
         """Merge cells in ``cell_range`` (e.g. ``A1:C1``)."""
