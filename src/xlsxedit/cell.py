@@ -87,6 +87,15 @@ def _refuse_range_formula_edit(address: str, f_elm: _Element) -> None:
         )
 
 
+def _shared_string_index(text: str | None, size: int) -> int | None:
+    """The index ``text`` names in a table of ``size`` shared strings; ``None`` if it names none."""
+    try:
+        index = int(text)
+    except (TypeError, ValueError):
+        return None
+    return index if 0 <= index < size else None
+
+
 def _inline_t_nodes(is_elm: _Element) -> list[_Element]:
     direct = list(is_elm.findall(_T))
     if direct:
@@ -384,7 +393,19 @@ class Cell:
     @value.setter
     @_marks_sheet
     def value(self, new_value: Any) -> None:
-        """Set cell content while preserving ``s`` (style index)."""
+        """Set cell content while preserving ``s`` (style index).
+
+        A value the cell cannot hold raises before anything changes.
+        """
+        from xlsxedit.row_shift import check_values_writable
+
+        check_values_writable(
+            "Cell.value",
+            ((new_value,),),
+            start_col_idx=0,
+            string_columns=None,
+            has_shared_strings=self._worksheet.shared_strings is not None,
+        )
         if self.has_formula:
             self._worksheet._workbook._on_formula_removed(self._worksheet, self._element)
 
@@ -435,9 +456,9 @@ class Cell:
 
         t = self.data_type
         if t == "s":
-            idx_text = self._v_text()
-            if idx_text is not None:
-                idx = int(idx_text)
+            # An index that names no shared string is replaced like any other value.
+            idx = _shared_string_index(self._v_text(), len(sst))
+            if idx is not None:
                 if self._worksheet._workbook._sst_index_ref_count(idx) <= 1:
                     from xlsxedit.shared_strings import _t_nodes_in_si
 
@@ -455,7 +476,7 @@ class Cell:
                         if etree.tostring(si, with_tail=False) != before:
                             sst.mark_dirty()
                         return
-                _clear_cell_content(self._element)
+            _clear_cell_content(self._element)
         else:
             _clear_cell_content(self._element)
             if "t" in self._element.attrib:

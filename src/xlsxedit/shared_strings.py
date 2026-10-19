@@ -93,13 +93,17 @@ class SharedStringTable:
         return sum(self._replace_in(si, old, new) for si in self._ensure_sis())
 
     def add(self, text: str) -> int:
-        """Append a plain string entry; return its 0-based index."""
-        sis = self._ensure_sis()  # before the append, which a deferred index would count
-        si = etree.SubElement(self._element, _SI)
+        """Append a plain string entry; return its 0-based index.
+
+        Text XML cannot hold raises ``ValueError`` before the table changes.
+        """
+        si = etree.Element(_SI)
         t_elm = etree.SubElement(si, _T)
         t_elm.text = text
         if " " in text or text.startswith(" ") or text.endswith(" "):
             t_elm.set(_XML_SPACE, "preserve")
+        sis = self._ensure_sis()  # before the append, which a deferred index would count
+        self._element.append(si)
         sis.append(si)
         index = len(sis) - 1
         self._element.set("count", str(int(self._element.get("count", "0")) + 1))
