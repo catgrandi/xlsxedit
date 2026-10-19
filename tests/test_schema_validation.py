@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import io
 import warnings
+import zipfile
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -12,23 +15,29 @@ from xlsxedit import Workbook
 from xlsxedit.drawing import Chart
 from xlsxedit.opc.constants import OFFICE_REL_NS, SML_NS
 from xlsxedit.oxml.parser import parse_template_xml
-from tests.conftest import ASSETS, FIXTURES
+from tests.conftest import ASSETS, FIXTURES, INSPECT_FIXTURES
 from tests.preservation import check_consistency
 from tests.schema_validate import (
     CHART_ALLOWLIST,
     SchemaWarning,
     apply_markup_compatibility,
     assert_valid_package,
+    extension_namespaces,
+    extension_payloads,
     schema_errors,
 )
 from tests.smoke_workbook import build_smoke_workbook
 
 FIXTURE_PATHS = sorted(FIXTURES.glob("*.xlsx"))
 TEMPLATES = Path(__file__).resolve().parents[1] / "src" / "xlsxedit" / "templates"
+CF_FIXTURE = INSPECT_FIXTURES["ConditionalFormatting"]
+CF_SHEET = "xl/worksheets/sheet1.xml"
 
 _MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 _X14AC = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac"
 _X14 = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"
+_XM = "http://schemas.microsoft.com/office/excel/2006/main"
+_XR = "http://schemas.microsoft.com/office/spreadsheetml/2014/revision"
 _C = "http://schemas.openxmlformats.org/drawingml/2006/chart"
 
 
@@ -147,6 +156,153 @@ def test_ignorable_extension_content_keeps_ext_valid():
         "</ext></extLst></styleSheet>"
     ).encode()
     assert schema_errors(styles) == []
+
+
+def test_alternate_content_takes_the_first_understood_choice():
+    root = etree.fromstring(
+        f'<r xmlns:mc="{_MC}" xmlns:x14="{_X14}" xmlns:u="urn:unknown">'
+        '<mc:AlternateContent><mc:Choice Requires="u"><c1/></mc:Choice>'
+        '<mc:Choice Requires="x14"><c2/></mc:Choice><mc:Choice Requires="x14"><c3/></mc:Choice>'
+        "<mc:Fallback><f1/></mc:Fallback></mc:AlternateContent></r>"
+    )
+    apply_markup_compatibility(root, frozenset({_X14}))
+    assert [child.tag for child in root] == ["c2"]
+
+
+def test_extension_namespaces_are_the_vendored_microsoft_ones():
+    namespaces = extension_namespaces()
+    assert {_X14, _XM, _X14AC, _XR} <= namespaces
+    assert all(ns.startswith("http://schemas.microsoft.com/office/") for ns in namespaces)
+
+
+def _with_member(path: Path, member: str, edit: Callable[[bytes], bytes]) -> bytes:
+    """Return a copy of the package at ``path`` with ``member`` rewritten by ``edit``."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(path) as source, zipfile.ZipFile(buffer, "w") as target:
+        for info in source.infolist():
+            data = source.read(info)
+            target.writestr(info, edit(data) if info.filename == member else data)
+    return buffer.getvalue()
+
+
+def test_x14_conditional_formatting_of_the_fixture_is_validated():
+    with zipfile.ZipFile(CF_FIXTURE) as package:
+        sheet = package.read(CF_SHEET)
+    assert f"{{{_X14}}}conditionalFormattings" in extension_payloads(sheet)
+    assert schema_errors(sheet) == []
+    assert assert_valid_package(CF_FIXTURE)[CF_SHEET] == "spreadsheetml"
+
+
+def test_corrupted_x14_conditional_formatting_fails():
+    def corrupt(xml: bytes) -> bytes:
+        assert xml.count(b"<x14:cfRule ") == 1
+        return xml.replace(b"<x14:cfRule ", b"<x14:unknown/><x14:cfRule ")
+
+    corrupted = _with_member(CF_FIXTURE, CF_SHEET, corrupt)
+    with pytest.raises(
+        AssertionError, match=r"xl/worksheets/sheet1\.xml line \d+: .*unknown': This element is not expected"
+    ):
+        assert_valid_package(corrupted)
+
+
+def _styles_with_payload(payload: str, namespaces: str = "") -> bytes:
+    return (
+        f'<styleSheet xmlns="{SML_NS}" xmlns:x14="{_X14}" {namespaces}>'
+        f'<extLst><ext uri="{{X}}">{payload}</ext></extLst></styleSheet>'
+    ).encode()
+
+
+def test_an_undeclared_element_in_a_vendored_namespace_fails():
+    errors = schema_errors(_styles_with_payload("<x14:slicerStylez/>"))
+    assert len(errors) == 1
+    assert "slicerStylez': No matching global declaration" in errors[0]
+
+
+def test_a_payload_inside_alternate_content_is_validated():
+    payload = (
+        '<mc:AlternateContent><mc:Choice Requires="x14"><x14:slicerStylez/></mc:Choice>'
+        "<mc:Fallback><u:other/></mc:Fallback></mc:AlternateContent>"
+    )
+    styles = _styles_with_payload(payload, f'xmlns:mc="{_MC}" xmlns:u="urn:unknown"')
+    assert extension_payloads(styles) == [f"{{{_X14}}}slicerStylez"]
+    errors = schema_errors(styles)
+    assert len(errors) == 1
+    assert "slicerStylez': No matching global declaration" in errors[0]
+
+
+def test_ignorable_content_inside_an_unknown_payload_is_kept():
+    """libxml2 still validates declared elements inside a payload it skips."""
+    styles = _styles_with_payload(
+        "<u:a><u:b><styleSheet><bogus/></styleSheet></u:b></u:a>",
+        f'xmlns:mc="{_MC}" xmlns:u="urn:unknown" mc:Ignorable="u"',
+    )
+    errors = schema_errors(styles)
+    assert len(errors) == 1
+    assert "bogus" in errors[0]
+
+
+def test_payloads_in_other_namespaces_are_skipped():
+    styles = _styles_with_payload("<u:any><u:thing/></u:any>", 'xmlns:u="urn:unknown"')
+    assert extension_payloads(styles) == []
+    assert schema_errors(styles) == []
+
+
+def test_a_nested_payload_is_validated_with_its_outer_payload():
+    rule = (
+        '<x14:cfRule type="expression" id="{00000000-0000-0000-0000-000000000001}">'
+        "<xm:f>A1&gt;0</xm:f>"
+        '<x14:extLst><ext uri="{Y}"><x14:id>{00000000-0000-0000-0000-000000000002}</x14:id>'
+        "</ext></x14:extLst></x14:cfRule>"
+    )
+    payload = (
+        "<x14:conditionalFormattings><x14:conditionalFormatting>"
+        f"{rule}<xm:sqref>A1</xm:sqref></x14:conditionalFormatting></x14:conditionalFormattings>"
+    )
+    styles = _styles_with_payload(payload, f'xmlns:xm="{_XM}"')
+    assert extension_payloads(styles) == [f"{{{_X14}}}conditionalFormattings"]
+    assert schema_errors(styles) == []
+    errors = schema_errors(styles.replace(b"-000000000002}", b"}"))
+    assert len(errors) == 1
+    assert f"{{{_X14}}}id'" in errors[0]
+
+
+def _sheet_with_x14_validation(uid: str) -> bytes:
+    return (
+        f'<worksheet xmlns="{SML_NS}" xmlns:mc="{_MC}" xmlns:x14ac="{_X14AC}" xmlns:xr="{_XR}"'
+        ' mc:Ignorable="x14ac xr" xr:uid="{00000000-0000-0000-0000-000000000003}">'
+        '<sheetData><row r="1" x14ac:dyDescent="0.25"/></sheetData>'
+        f'<extLst><ext uri="{{CCE6A557-97BC-4b89-ADB6-D9C93CAAB3DF}}" xmlns:x14="{_X14}">'
+        f'<x14:dataValidations count="1" xmlns:xm="{_XM}">'
+        f'<x14:dataValidation type="list" xr:uid="{uid}">'
+        "<x14:formula1><xm:f>Lists!$A$1:$A$5</xm:f></x14:formula1><xm:sqref>B1</xm:sqref>"
+        "</x14:dataValidation></x14:dataValidations></ext></extLst></worksheet>"
+    ).encode()
+
+
+def test_ignorable_attributes_are_validated_on_extension_elements_only():
+    """``xr:uid`` is part of the x14 type; on the base ``worksheet`` and
+    ``row`` elements, extension attributes are dropped as before."""
+    assert schema_errors(_sheet_with_x14_validation("{00000000-0000-0000-0000-000000000004}")) == []
+    errors = schema_errors(_sheet_with_x14_validation("not-a-guid"))
+    assert len(errors) == 1
+    assert "revision}uid" in errors[0]
+
+
+def test_sparkline_groups_are_validated():
+    group = (
+        '<x14:sparklineGroups><x14:sparklineGroup displayEmptyCellsAs="gap">'
+        '<x14:colorSeries rgb="FF376092"/>{}</x14:sparklineGroup></x14:sparklineGroups>'
+    )
+    sparklines = (
+        "<x14:sparklines><x14:sparkline><xm:f>Sheet1!A1:E1</xm:f><xm:sqref>F1</xm:sqref>"
+        "</x14:sparkline></x14:sparklines>"
+    )
+    styles = _styles_with_payload(group.format(sparklines), f'xmlns:xm="{_XM}"')
+    assert extension_payloads(styles) == [f"{{{_X14}}}sparklineGroups"]
+    assert schema_errors(styles) == []
+    errors = schema_errors(_styles_with_payload(group.format(""), f'xmlns:xm="{_XM}"'))
+    assert len(errors) == 1
+    assert "Missing child element(s)" in errors[0]
 
 
 def _workbook_with_chart() -> tuple[Workbook, Chart]:
