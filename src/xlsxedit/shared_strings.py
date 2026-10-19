@@ -102,11 +102,14 @@ class SharedStringTable:
         t_elm.text = text
         if " " in text or text.startswith(" ") or text.endswith(" "):
             t_elm.set(_XML_SPACE, "preserve")
-        sis = self._ensure_sis()  # before the append, which a deferred index would count
+        sis = self._ensure_sis()  # before the append, which a deferred index would also pick up
+        try:
+            count = int(self._element.get("count", "0"))
+        except ValueError:
+            count = len(sis)  # a count that is not a number counts the entries
         self._element.append(si)
         sis.append(si)
-        index = len(sis) - 1
-        self._element.set("count", str(int(self._element.get("count", "0")) + 1))
+        self._element.set("count", str(count + 1))
         self._element.set("uniqueCount", str(len(sis)))
         self.mark_dirty()
-        return index
+        return len(sis) - 1

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,11 +17,13 @@ from tests.test_formula_hygiene import RANGE_FORMULAS, _plant
 SIMPLE = INSPECT_FIXTURES["SimpleFormula"]
 CHARTS = INSPECT_FIXTURES["ChartsAndTables"]
 NUL = chr(0)
+_SML = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 
 BAD_VALUES = {
     "unsupported type": (object(), TypeError),
     "text XML cannot hold": ("a" + NUL, ValueError),
     "aware datetime": (datetime(2024, 1, 1, tzinfo=timezone.utc), TypeError),
+    "integer too long for str()": (10**5000, ValueError),
 }
 
 
@@ -90,6 +93,60 @@ def test_add_table_writes_a_header_over_a_corrupt_shared_string_index(index: str
     assert (ws["A1"].value, ws["B1"].value) == ("Name", "Qty")
 
 
+def test_strings_added_to_a_large_workbook_keep_their_indexes():
+    wb = Workbook.open(INSPECT_FIXTURES["TestBook"], large=True)
+    ws = wb.worksheets[0]
+    ws["Z50"].value = "first new"
+    ws["Z51"].value = "second new"
+    ws.write_rows([["third new", "fourth new"]], at_cell="Z60")
+
+    reopened = Workbook.open(io.BytesIO(_saved(wb))).worksheets[0]
+    assert [reopened[a].value for a in ("Z50", "Z51", "Z60", "AA60")] == [
+        "first new",
+        "second new",
+        "third new",
+        "fourth new",
+    ]
+
+
+@pytest.mark.parametrize("count", ["", "1e3", "-"])
+def test_a_shared_strings_count_that_is_no_number_is_rewritten(count: str):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A1"].value = "kept"
+    wb.shared_strings._element.set("count", count)
+
+    ws["A2"].value = "added"
+    assert (ws["A1"].value, ws["A2"].value) == ("kept", "added")
+    assert wb.shared_strings._element.get("count") == "2"
+
+
+@pytest.mark.parametrize("index", [" 0 ", "00", "+0"])
+def test_string_over_an_index_in_another_form_leaves_the_shared_string_alone(index: str):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A1"].value = "kept"
+    _plant(ws["B1"], {"t": "s"}, f"<v>{index}</v>")
+
+    ws["B1"].value = "new"
+    assert (ws["A1"].value, ws["B1"].value) == ("kept", "new")
+
+
+def test_numpy_scalars_are_written_as_numbers():
+    np = pytest.importorskip("numpy")
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A1"].value = np.float64(2.5)
+    ws.write_rows([[np.float64(1.5), np.float64(0.5)]], at_cell="A2")
+    assert [ws[a]._v_text() for a in ("A1", "A2", "B2")] == ["2.5", "1.5", "0.5"]
+
+
+def _saved(wb) -> bytes:
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 # --- Bulk overwrites ---------------------------------------------------------------------
 
 
@@ -131,6 +188,16 @@ BULK_REFUSALS = {
     "string without a shared strings part": (
         lambda ws: (setattr(ws._workbook, "_shared_strings", None), ws.write_rows([[1, "a"]], at_cell="H1")),
         ValueError,
+    ),
+    "integer too long for str() in a later row": (
+        lambda ws: ws.write_rows([[1, 2], [10**5000]], at_cell="H1"),
+        ValueError,
+    ),
+    "template_rows that are not rows, with clear_range": (
+        lambda ws: ws._workbook.write_dataframe(
+            [("a",)], at_cell="H1", header=False, clear_range="A3:B4", template_rows=2.0
+        ),
+        TypeError,
     ),
     "past the last row": (lambda ws: ws.write_rows([["a"], ["b"]], at_row=1048576), GridOverflowError),
     "past column XFD": (lambda ws: ws.write_rows([["a", "b"]], at_cell="XFD1"), GridOverflowError),
@@ -186,6 +253,42 @@ def test_refused_pandas_overwrite_with_clear_range_changes_nothing(tmp_path: Pat
         ) as writer:
             df.to_excel(writer, sheet_name="Sheet1", startrow=1, startcol=3, index=False)
     assert_preserved(before, path)
+
+
+def test_bulk_write_on_a_sheet_with_whole_column_and_row_merges():
+    from lxml import etree
+
+    from xlsxedit.opc.constants import SML_NS
+
+    wb, ws = _array_sheet()
+    block = ws._part.element.find(f"{{{SML_NS}}}mergeCells")
+    for ref in ("J:K", "20:20"):
+        etree.SubElement(block, f"{{{SML_NS}}}mergeCell").set("ref", ref)
+    ws._invalidate_merge_map()
+
+    assert ws.write_rows([[1, 2]], at_row=5) == 1
+    with pytest.raises(FormulaGroupError):
+        ws.write_rows([["x", "y"]], at_cell="F3")
+
+
+@pytest.mark.parametrize("extra_merges", [0, 5], ids=["merge by merge", "cell by cell"])
+def test_value_a_merge_sends_to_the_anchor_is_refused(extra_merges: int):
+    wb, ws = _array_sheet()
+    for row in range(10, 10 + extra_merges):
+        ws.merge_cells(f"A{row}:B{row}")
+    before = read_pkg(wb)
+    with pytest.raises(FormulaGroupError):
+        ws.write_rows([["x"]], at_cell="F3")
+    assert_preserved(before, read_pkg(wb))
+    assert ws.write_rows([[None, "y"]], at_cell="F3") == 1  # None is not sent on
+
+
+def test_rows_without_values_write_no_cells():
+    wb, ws = _array_sheet()
+    dimension = ws._part.element.find(f"{{{_SML}}}dimension").get("ref")
+    assert ws.write_rows([[]], at_row=5) == 1
+    assert ws.write_rows([[], []], at_cell="C5") == 2
+    assert ws._part.element.find(f"{{{_SML}}}dimension").get("ref") == dimension
 
 
 def test_bulk_write_beside_the_anchor_still_writes():

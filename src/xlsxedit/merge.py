@@ -64,9 +64,11 @@ class MergeMap:
         self._refs = refs
         self._anchor_for: dict[str, str] = {}
         self._large: list[tuple[CellRange, str]] = []
+        self._areas: list[tuple[CellRange, str]] = []
         for ref in refs:
             area = CellRange.parse(ref)
             anchor = join_address(index_to_col(area.min_col - 1), area.min_row)
+            self._areas.append((area, anchor))
             size = (area.max_col - area.min_col + 1) * (area.max_row - area.min_row + 1)
             if size > self._INDEXED_CELLS:
                 self._large.append((area, anchor))
@@ -78,6 +80,11 @@ class MergeMap:
     @property
     def refs(self) -> list[str]:
         return list(self._refs)
+
+    @property
+    def areas(self) -> list[tuple[CellRange, str]]:
+        """Each merge as ``(area, top-left address)``, in sheet order."""
+        return self._areas
 
     def anchor_for(self, address: str) -> str | None:
         if not address:

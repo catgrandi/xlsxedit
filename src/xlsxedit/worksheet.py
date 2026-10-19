@@ -17,7 +17,6 @@ from xlsxedit.bulk_styles import (
     validate_style_sources,
 )
 from xlsxedit.cell import (
-    _RANGE_FORMULAS,
     Cell,
     _clear_cell_content,
     _ref_contains,
@@ -638,7 +637,7 @@ class Worksheet:
 
         if not unchanged or (count and len(sheet_data) != rows_before):
             self._part.mark_dirty()
-        if count:
+        if count and max_width:
             end_row = start_row + count - 1
             end_col = start_col_idx + max_width - 1
             self._update_dimension_to(
@@ -704,23 +703,35 @@ class Worksheet:
                 if writes(col_idx, start_row + offset):
                     _refuse_range_formula_edit(address, f_elm)
 
-        last_row = start_row + len(row_list) - 1
-        for ref in self.merged_ranges:
-            c1, r1, c2, r2 = parse_range(ref)
-            first_col, last_col = col_to_index(c1), col_to_index(c2)
-            if r2 < start_row or r1 > last_row or writes(first_col, r1):
-                continue
-            covered = (
-                value
-                for row in range(max(r1, start_row), min(r2, last_row) + 1)
-                for col_idx, value in enumerate(
-                    _row_values(row_list[row - start_row]), start=start_col_idx
-                )
-                if first_col <= col_idx <= last_col
-            )
-            if all(value is None for value in covered):
-                continue
-            anchor = join_address(c1, r1)
+        merges = self._merge_index
+        if len(merges.areas) > sum(widths):
+            # Fewer cells than merges: look up the merge of each cell given a value.
+            reached = {
+                merges.anchor_for(join_address(index_to_col(col_idx), start_row + offset))
+                for offset, values in enumerate(row_list)
+                for col_idx, value in enumerate(_row_values(values), start=start_col_idx)
+                if value is not None
+            }
+        else:
+            last_row = start_row + len(row_list) - 1
+            reached = set()
+            for area, anchor in merges.areas:
+                if area.max_row < start_row or area.min_row > last_row:
+                    continue
+                first_col, last_col = area.min_col - 1, area.max_col - 1
+                if any(
+                    value is not None
+                    for row in range(max(area.min_row, start_row), min(area.max_row, last_row) + 1)
+                    for col_idx, value in enumerate(
+                        _row_values(row_list[row - start_row]), start=start_col_idx
+                    )
+                    if first_col <= col_idx <= last_col
+                ):
+                    reached.add(anchor)
+        for anchor in reached - {None}:
+            col, row = split_address(anchor)
+            if writes(col_to_index(col), row):
+                continue  # written directly, so checked above
             c_elm = self._find_cell_element(anchor)
             f_elm = None if c_elm is None else c_elm.find(_F)
             if f_elm is not None:
@@ -757,6 +768,10 @@ class Worksheet:
             column_styles=column_styles,
             string_columns=string_columns,
         )
+        # Clearing keeps styles, so the template styles read now are the ones to copy.
+        template_maps = self._resolve_template_style_maps(
+            template_rows=template_rows, start_col_idx=start_col_idx, row_list=row_list
+        )
         if clear_range is not None:
             self.clear_range(clear_range)
         return self._write_bulk_rows(
@@ -764,6 +779,7 @@ class Worksheet:
             start_row=start_row,
             start_col_idx=start_col_idx,
             template_rows=template_rows,
+            template_maps=template_maps,
             row_styles=row_styles,
             column_styles=column_styles,
             string_columns=string_columns,
@@ -1003,11 +1019,15 @@ class Worksheet:
         the anchor of a multi-cell array or data-table formula.
         """
         c1, r1, c2, r2 = parse_range(cell_range)
-        for f_elm in _RANGE_FORMULAS(self._part.element):
-            address = f_elm.getparent().get("r", "")
-            if _ref_contains(cell_range, address):
-                _refuse_range_formula_edit(address, f_elm)
         c1i, c2i = col_to_index(c1), col_to_index(c2)
+        for row_num in range(r1, r2 + 1):
+            row_elm = self._find_row_element(row_num)
+            if row_elm is None:
+                continue
+            for f_elm in row_elm.iterfind(_CELL_FORMULA):
+                address = f_elm.getparent().get("r", "")
+                if f_elm.get("t") in ("array", "dataTable") and _ref_contains(cell_range, address):
+                    _refuse_range_formula_edit(address, f_elm)
         cleared = 0
         changed = False
         for row_num in range(r1, r2 + 1):
