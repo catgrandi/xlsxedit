@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Written for xlsxedit; see schemas/README.md. Every SpreadsheetML name that
+     Microsoft's schemas import resolves to this file. It adds to the ECMA-376
+     SpreadsheetML schema the types those schemas use that the 5th edition
+     declares only in the shared-types namespace. -->
+<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+  xmlns:s="http://schemas.openxmlformats.org/officeDocument/2006/sharedTypes"
+  targetNamespace="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+  elementFormDefault="qualified">
+  <xsd:import namespace="http://schemas.openxmlformats.org/officeDocument/2006/sharedTypes"
+    schemaLocation="../transitional/shared-commonSimpleTypes.xsd"/>
+  <xsd:include schemaLocation="../transitional/sml.xsd"/>
+  <xsd:simpleType name="ST_Xstring">
+    <xsd:restriction base="s:ST_Xstring"/>
+  </xsd:simpleType>
+  <xsd:simpleType name="ST_Guid">
+    <xsd:restriction base="s:ST_Guid"/>
+  </xsd:simpleType>
+</xsd:schema>
