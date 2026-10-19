@@ -717,7 +717,7 @@ def test_removing_the_last_rule_removes_the_container():
     dv = ws.add_data_validation("B2", type="list", formula1='"a"')
     ws.remove_data_validation(dv)
     report = assert_preserved(before, read_pkg(wb))
-    assert SHEET not in report.reserialised
+    assert SHEET in report.reserialised  # an edited part is rewritten even when restored
 
 
 def test_remove_refuses_a_rule_that_is_not_on_the_sheet():

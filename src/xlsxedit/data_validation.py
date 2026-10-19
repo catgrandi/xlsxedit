@@ -139,7 +139,10 @@ class DataValidation:
         worksheet = self._editable()
         ranges = _check_sqref(value)
         _check_overlap(worksheet, ranges, self._element)
-        self._element.set("sqref", str(ranges))
+        text = str(ranges)
+        if self._element.get("sqref") != text:
+            self._element.set("sqref", text)
+            worksheet._part.mark_dirty()
 
     def _editable(self) -> Worksheet:
         if self.is_x14:
@@ -490,6 +493,7 @@ def new_data_validation(
         insert_worksheet_child(root, block)
     block.append(elm)
     block.set("count", str(len(block.findall(_DATA_VALIDATION))))
+    worksheet._part.mark_dirty()
     return DataValidation(elm, worksheet)
 
 
@@ -511,3 +515,4 @@ def delete_data_validation(worksheet: Worksheet, validation: DataValidation) -> 
         block.set("count", str(remaining))
     else:
         worksheet._part.element.remove(block)
+    worksheet._part.mark_dirty()
