@@ -75,12 +75,14 @@ def _edited_tables(*edits: tuple[bytes, bytes], member: str = TABLE) -> Workbook
     return _edited_package(*((member, old, new) for old, new in edits))
 
 
-def _edited_package(*edits: tuple[str, bytes, bytes]) -> Workbook:
-    """The ``ChartsAndTables`` fixture with each ``(member, old, new)`` replacement made."""
+def _edited_package(*edits: tuple[str, bytes, bytes], added: dict | None = None) -> Workbook:
+    """The ``ChartsAndTables`` fixture with each ``(member, old, new)`` replacement
+    made and the ``added`` members written."""
     pkg = dict(read_pkg(TABLES))
     for member, old, new in edits:
         assert pkg[member].count(old) == 1, old
         pkg[member] = pkg[member].replace(old, new)
+    pkg.update(added or {})
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         for member, blob in pkg.items():
@@ -113,6 +115,17 @@ _RICH = (
     ),
     ("xl/styles.xml", b'<dxfs count="0"/>', b'<dxfs count="1"><dxf><font><b/></font></dxf></dxfs>'),
 )
+
+
+def _with_workbook_part(member: str, content_type: str, reltype: str, xml: bytes) -> Workbook:
+    """The fixture with ``member`` added and related from the workbook part."""
+    override = f'<Override PartName="/{member}" ContentType="{content_type}"/>'
+    rel = f'<Relationship Id="rId99" Type="{reltype}" Target="{member[3:]}"/>'
+    return _edited_package(
+        ("[Content_Types].xml", b"</Types>", override.encode() + b"</Types>"),
+        ("xl/_rels/workbook.xml.rels", b"</Relationships>", rel.encode() + b"</Relationships>"),
+        added={member: xml},
+    )
 
 
 def _rich() -> Workbook:
@@ -869,6 +882,52 @@ def test_resize_refuses_a_range_that_misses_the_table_or_overlaps_another():
     assert_preserved(before, read_pkg(wb))
 
 
+@pytest.mark.parametrize(
+    ("ref", "columns"),
+    [("A1:D11", ["Item", "Price", "Quantity", "New"]), ("A1:B11", ["Item", "Price"])],
+    ids=["add", "drop"],
+)
+def test_resize_refuses_to_change_the_columns_of_a_table_bound_to_a_query(ref, columns):
+    wb = _edited_tables((b'name="Price"/>', b'name="Price" queryTableFieldId="2"/>'))
+    table = wb["Table"].tables[0]
+    before = read_pkg(wb)
+    with pytest.raises(TableError, match=r"would add or drop columns of a table bound to a query"):
+        table.resize(ref, columns=columns)
+    assert_preserved(before, read_pkg(wb))
+    table.resize("A1:C12")
+    assert table.ref == "A1:C12"
+
+
+_SLICER_CACHE = (
+    b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
+    b'<slicerCacheDefinition xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" '
+    b'xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main" '
+    b'name="Slicer_Quantity" sourceName="Quantity"><extLst>'
+    b'<ext uri="{2F2917AC-EB37-4324-AD4E-5DD8C200BD13}">'
+    b'<x15:tableSlicerCache tableId="2" column="3"/></ext></extLst></slicerCacheDefinition>'
+)
+
+
+def test_resize_refuses_to_drop_a_column_a_slicer_filters_on():
+    wb = _with_workbook_part(
+        "xl/slicerCaches/slicerCache1.xml",
+        "application/vnd.ms-excel.slicerCache+xml",
+        "http://schemas.microsoft.com/office/2007/relationships/slicerCache",
+        _SLICER_CACHE,
+    )
+    table = wb["Table"].tables[0]
+    before = read_pkg(wb)
+    with pytest.raises(
+        TableError,
+        match=r"would drop column 'Quantity', which the slicer cache "
+        r"/xl/slicerCaches/slicerCache1.xml filters on",
+    ):
+        table.resize("A1:B11", columns=["Item", "Price"])
+    assert_preserved(before, read_pkg(wb))
+    table.resize("B1:C11", columns=["Price", "Quantity"])
+    assert table.columns == ["Price", "Quantity"]
+
+
 def test_resize_refuses_to_drop_a_column_a_formula_names():
     wb = Workbook.open(TABLES)
     ws = wb["Table"]
@@ -930,6 +989,37 @@ def test_display_name_refuses_to_rename_a_table_a_formula_names():
         wb["Table"].tables[0].display_name = "Sales"
 
 
+_PIVOT_CACHE = (
+    b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
+    b'<pivotCacheDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+    b'recordCount="0"><cacheSource type="worksheet"><worksheetSource name="table2"/>'
+    b'</cacheSource><cacheFields count="0"/></pivotCacheDefinition>'
+)
+
+
+def test_display_name_refuses_to_rename_a_table_a_pivot_cache_names():
+    wb = _with_workbook_part(
+        "xl/pivotCache/pivotCacheDefinition1.xml",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheDefinition+xml",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheDefinition",
+        _PIVOT_CACHE,
+    )
+    before = read_pkg(wb)
+    with pytest.raises(
+        TableError, match=r"would break /xl/pivotCache/pivotCacheDefinition1.xml, which names it"
+    ):
+        wb["Table"].tables[0].display_name = "Sales"
+    assert_preserved(before, read_pkg(wb))
+
+
+def test_display_name_ignores_the_name_in_parts_that_cannot_name_a_table():
+    wb = Workbook.open(TABLES)  # its theme names the font "Calibri"
+    ws = wb.add_worksheet("New")
+    table = ws.add_table("A1:B2", ["x", "y"], name="Calibri", write_header=True)
+    table.display_name = "Renamed"
+    assert table.display_name == "Renamed"
+
+
 def test_display_name_reads_only_the_sheets_that_mention_the_name():
     wb = Workbook.open(TABLES, large=True)
     wb["Table"].tables[0].display_name = "Sales"
@@ -965,6 +1055,17 @@ def test_header_row_count_refuses_a_first_row_without_the_column_names():
     with pytest.raises(TypeError):
         ws.tables[0].header_row_count = True
     assert_preserved(before, read_pkg(wb))
+
+
+def test_header_row_count_moves_the_sort_state_with_the_first_data_row():
+    sort_state = b'<sortState ref="A1:C11"><sortCondition ref="B1:B11"/></sortState>'
+    wb = _edited_tables(
+        (b'totalsRowShown="0"', b'headerRowCount="0" totalsRowShown="0"'),
+        (_FIXTURE_FILTER, sort_state),
+    )
+    wb["Table"].tables[0].header_row_count = 1
+    saved = _saved_tables(wb)[TABLE].find(_sml("sortState"))
+    assert (saved.get("ref"), saved[0].get("ref")) == ("A2:C11", "B2:B11")
 
 
 def test_totals_row_count_turns_the_last_data_row_into_the_totals_row():
@@ -1052,7 +1153,7 @@ def test_dxf_ids_must_name_a_dxf_of_the_stylesheet():
 # --- tables under row and column inserts -----------------------------------------
 
 
-@pytest.mark.parametrize("at_row", [5, 11], ids=["inside", "at-the-totals-row"])
+@pytest.mark.parametrize("at_row", [2, 5, 11], ids=["first-data-row", "inside", "totals-row"])
 def test_insert_rows_grows_the_data_rows_above_the_totals_row(at_row):
     wb = _rich()
     wb["Table"].insert_rows([[None]], at_row=at_row)
@@ -1061,6 +1162,17 @@ def test_insert_rows_grows_the_data_rows_above_the_totals_row(at_row):
     sort_state = af.find(_sml("sortState"))
     assert (table.get("ref"), af.get("ref")) == ("A1:C12", "A1:C11")
     assert (sort_state.get("ref"), sort_state[0].get("ref")) == ("A2:C11", "B2:B11")
+
+
+def test_inserts_refuse_a_malformed_totals_row_count_before_anything_moves():
+    wb = _edited_tables((b'totalsRowShown="0"', b'totalsRowCount="one"'))
+    ws = wb["Table"]
+    before = read_pkg(wb)
+    with pytest.raises(TableError, match="malformed totalsRowCount 'one'"):
+        ws.insert_rows([[None]], at_row=5)
+    with pytest.raises(TableError, match="malformed totalsRowCount 'one'"):
+        ws.insert_columns([[None]], at_col="B")
+    assert_preserved(before, read_pkg(wb))
 
 
 def test_insert_columns_moves_the_sort_state_with_its_columns():
