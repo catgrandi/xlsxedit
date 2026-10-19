@@ -119,7 +119,7 @@ ws["A1"].value = "hello" # set cell value
 ws["A2"].value = 42 # set cell value
 ws["A3"].value = datetime(2025, 8, 7) # set cell value
 ws["A3"].apply_date_format() # apply date format
-ws["B1"].formula = "=A2*2" # set cell formula
+ws["B2"].formula = "=A2*2" # set cell formula
 
 # set column width and row height of worksheet
 ws.column_dimensions["C"].width = 20.0
