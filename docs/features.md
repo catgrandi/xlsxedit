@@ -79,6 +79,9 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | `ws.add_conditional_formatting(cell_range, *, operator, formula, …)` | Add `cellIs` rule | With optional dxf colors |
 | `ws.add_color_scale_formatting(cell_range)` | Add color-scale rule | |
 | `ws.expand_conditional_formatting(end_row)` | Extend CF ranges after bulk insert | Optional with `write_dataframe` |
+| `ws.data_validations` | List of `DataValidation` | `dataValidation` rules, then read-only x14 rules; see [Data validation](#data-validation) |
+| `ws.add_data_validation(sqref, *, type, formula1, formula2, operator, …)` | Add a validation | Dropdown lists and number, date, time, text-length and custom rules; checks every argument before changing anything |
+| `ws.remove_data_validation(dv)` | Remove a validation | Not an x14 rule |
 
 ### Inserting rows and columns
 
@@ -209,6 +212,59 @@ From `ws.tables` or `ws.add_table(...)`.
 
 ---
 
+## Data validation
+
+From `ws.data_validations` or `ws.add_data_validation(...)`. Each `DataValidation` is one rule and the cells it applies to.
+
+| API | Summary |
+|-----|---------|
+| `dv.sqref` | The cells, as a `SheetRangeSet`; settable |
+| `dv.type` | `none`, `whole`, `decimal`, `list`, `date`, `time`, `textLength` or `custom` |
+| `dv.operator` | `between`, `notBetween`, `equal`, `notEqual`, `lessThan`, `lessThanOrEqual`, `greaterThan` or `greaterThanOrEqual` |
+| `dv.formula1`, `dv.formula2` | Formula text without a leading `=`, or `None` |
+| `dv.allow_blank`, `dv.show_input_message`, `dv.show_error_message` | `bool` |
+| `dv.prompt_title`, `dv.prompt` | Input message, or `None` |
+| `dv.error_style` | `stop`, `warning` or `information` |
+| `dv.error_title`, `dv.error` | Error alert, or `None` |
+| `dv.is_x14` | Whether the rule is an `x14:dataValidation` from the sheet's extension list |
+
+An attribute the file leaves out reads as its schema default: `type` `none`, `operator` `between`, `error_style` `stop`, and `False` for the flags.
+
+`str(dv.sqref)` is the range text, such as `"B2:B10 D2"`. Iterating it gives one `CellRange` per area, with 1-based `min_col`, `min_row`, `max_col` and `max_row`, and `dv.sqref.intersects("C5")` tells whether the rule covers a cell or range. Range sets compare by identity, so compare their text.
+
+Excel 2010 and later store a validation whose formulas refer to another sheet in the worksheet's extension list. `ws.data_validations` lists those after the others, with `is_x14` true. They are read-only: setting their `sqref` or removing them raises `DataValidationError`.
+
+### Adding a validation
+
+```python
+ws.add_data_validation("B2:B100", type="list", formula1='"Open,Closed"', prompt="Pick a status")
+ws.add_data_validation("C2:C100", type="whole", operator="between", formula1=1, formula2=10)
+```
+
+- `sqref` is a range string, a `CellRange` or a `SheetRangeSet`. It is written as Excel writes it: in capitals, without `$`, `B:B` as `B1:B1048576`, `3:3` as `A3:XFD3`, and each area once.
+- Every type but `none` needs `formula1`. `whole`, `decimal`, `date`, `time` and `textLength` compare the cell with `operator`, which defaults to `between`; `between` and `notBetween` also need `formula2`. Other types take no `operator` and no `formula2`.
+- A formula is a `str`, written without a leading `=`, or an `int` or `float`, written as a number. A `list` formula is a quoted list such as `'"Yes,No"'`, a range on the same sheet, or a defined name.
+- `allow_blank`, `show_input_message` and `show_error_message` default to `True`, as in Excel's dialog. Attributes equal to their schema default are left out.
+- Excel allows titles of 32 characters, messages of 255, a quoted list of 255 between its quotes, and formulas of 8,192, counted in UTF-16 code units.
+
+A formula that refers to another sheet or workbook needs the x14 form, which xlsxedit does not write yet. Refer to a defined name that the workbook already holds instead.
+
+`add_data_validation` raises, changing nothing:
+
+- `InvalidRangeError` for a malformed or empty `sqref`, or when another validation on the sheet has a malformed range;
+- `TypeError` when `sqref` is not a range string, `CellRange` or `SheetRangeSet`, `type`, `operator`, `error_style` or a message is not a `str`, a flag is not a `bool`, or a formula is not a `str`, `int` or `float`;
+- `DataValidationError` for a `type`, `operator` or `error_style` the schema does not list, a missing or extra formula or `operator`, text that XML cannot store or that is longer than Excel allows, a number that is not finite, a formula that refers to another sheet or workbook, and a `sqref` that overlaps another validation on the sheet, because Excel keeps one validation per cell.
+
+### Changing and removing a validation
+
+`dv.sqref = "B2:B200"` rewrites the range by the same rules and raises the same errors. It may overlap the rule's own cells. It also raises `DataValidationError` for an x14 rule or one that is no longer on its sheet.
+
+`ws.remove_data_validation(dv)` removes the rule, and the sheet's `dataValidations` element with its last rule. It raises `DataValidationError`, changing nothing, for an x14 rule or one that is not on the sheet, and `TypeError` for anything but a `DataValidation`.
+
+`insert_rows` and `insert_columns` move validations with their cells, as [Inserting rows and columns](#inserting-rows-and-columns) describes.
+
+---
+
 ## Search-and-replace
 
 | `value_type` | Match | Write |
@@ -259,6 +315,7 @@ All library errors derive from `XlsxeditError`, so you can catch everything with
 | `InvalidColorError` | `ValueError` | Invalid color value |
 | `InvalidImageError` | `ValueError` | Unsupported or corrupt image data |
 | `MissingPartError` | `RuntimeError` | A required package part is absent |
+| `DataValidationError` | `ValueError` | A data-validation edit Excel would reject or cannot apply, or a change to a read-only x14 validation ([details](#data-validation)) |
 | `TableError` | `ValueError` | A table edit would leave an invalid or inconsistent table: `add_table` names, columns, range, overlap or header cells; a `write_dataframe` resize that does not fit the table; `insert_columns` inside a table bound to a query |
 | `FormulaGroupError` | `ValueError` | An edit would split a formula group: setting `cell.formula` on a shared-formula master that other cells still derive from, or on any cell of a multi-cell array or data-table formula; or overwriting, clearing, or removing the formula of such a multi-cell formula's anchor (`cell.value`, `cell.clear()`, `cell.formula = None`, `clear_range`, bulk writes). The refused cell keeps its content, though a styled bulk write may already have restyled it; `clear_range` and bulk writes keep the cells they wrote before it, while `insert_rows`, `insert_columns` and `add_table` raise it before changing anything |
 | `DTDForbiddenError` | `ValueError` | An XML part xlsxedit reads declares a DTD (`<!DOCTYPE>`), which Excel never writes. Raised when the part is first parsed: on open, or when a worksheet, table, drawing, or chart is first used, which can be partway through an edit. Parsing never expands entities or fetches external resources |
@@ -282,6 +339,7 @@ Round-trip tests in `tests/test_fidelity.py` on:
 | VBA / macros | `.xlsm` opens/saves; VBA is opaque round-trip only |
 | All chart types | Add: bar template; read: existing charts |
 | All CF rule types | Read most; write `cellIs` and color scale |
+| Data validation in x14 form | Read only; formulas that refer to another sheet cannot be written yet |
 | Byte-identical ZIP | The ZIP container is rewritten; parts an edit does not change keep their exact bytes ([how](how-xlsxedit-works.md)) |
 | Style authoring from scratch | Clone/apply xf; not full theme designer |
 

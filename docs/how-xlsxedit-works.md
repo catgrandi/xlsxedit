@@ -237,6 +237,7 @@ Neither approach produces a byte-identical ZIP: the container itself (member ord
 | `merge.py` | Merge range parsing and anchor map |
 | `hyperlinks.py` | Cell hyperlink get/set |
 | `conditional_formatting.py` | CF list and `cellIs` add |
+| `data_validation.py` | Data-validation list, add and remove; x14 rules read-only |
 | `drawing.py` | `Picture`, `Chart`, `Table` and `DrawingObject` proxies; walks a drawing's anchors, groups and `mc:AlternateContent` |
 | `shared_strings.py` | SST display text + in-place `<t>` replace |
 | `parts.py` | Registers the typed parts: workbook, worksheet, SST, styles, core properties, drawing, chart |
@@ -272,7 +273,7 @@ Until then, unknown = blob = kept (if it was in the relationship graph).
 | 3 — Sheets | done | `add_worksheet`, `rename_worksheet`, `remove_worksheet` |
 | 4 — Styles & layout | done | `cell.style` read, `apply_date_format`, `apply_number_format`, column/row dimensions, `merge_cells` |
 | 5 — Images | done | `add_image`, `Picture` geometry, `replace_image`, `insert_image_at_placeholder` |
-| 6 — Features | partial | Hyperlinks, CF read/add (`cellIs`), chart add/title, table add/resize; pivots/comments future |
+| 6 — Features | partial | Hyperlinks, CF read/add (`cellIs`), data validation read/add/remove, chart add/title, table add/resize; pivots/comments future |
 | SAR | done | `replace`, typed replace (delegates to cell APIs), image SAR |
 
 **Architecture rule:** new SAR helpers must call base methods first (e.g. `replace(..., value_type="date")` → `cell.value` + `apply_date_format()`).
