@@ -124,8 +124,6 @@ OPERATIONS: dict[str, Operation] = {
             "values",
         ),
         known={
-            "conditional_formatting": "#12: a cfRule formula is not rewritten when its range "
-            "moves (F3=\"Yes\" stays, Excel writes F5=\"Yes\")",
             "values": "#23: cell formula text is not rewritten on insert "
             "(SUM(B5:B9) stays, Excel writes SUM(B7:B11))",
         },
