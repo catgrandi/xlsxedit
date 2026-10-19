@@ -1123,7 +1123,8 @@ class InsertPlan:
 
     Building the plan reads the worksheet, its table parts, the workbook's
     defined names and charts and the other sheets' references to it, and raises
-    ``InvalidRangeError`` or ``GridOverflowError`` before anything changes.
+    ``InvalidRangeError``, ``GridOverflowError``, ``TableError`` or ``ValueError``
+    before anything changes.
     ``apply`` then only assigns precomputed values. ``merges`` lists the
     sheet's merge ranges as they will be after ``apply``; ``header_cells``
     the header cells of new table columns to write after it (see
@@ -1147,7 +1148,7 @@ class InsertPlan:
             other_root = _root_if_it_may_refer(other)
             if other_root is not None:
                 planner.foreign_sheet(other_root)
-        self._check_tables(cells)
+        self._check_tables(cells, planner.merges)
         if ins.rows:
             planner.after(partial(shift_table_parts, worksheet, ins.at, ins.delta))
         else:
@@ -1160,7 +1161,7 @@ class InsertPlan:
         self._planner = planner
         self.merges = planner.merges
 
-    def _check_tables(self, cells: tuple[list, int] | None) -> None:
+    def _check_tables(self, cells: tuple[list, int] | None, merges: list[CellRange]) -> None:
         """Refuse an insertion that would push any part of a table off the grid
         (its columns and rows cannot shrink with it), or that would add columns
         inside a table bound to a query; name the columns that join a table.
@@ -1171,7 +1172,9 @@ class InsertPlan:
         a non-empty string no other column of the table uses (ignoring case);
         where it writes nothing, the column gets the first unused ``ColumnN``,
         which ``header_cells`` lists for the caller to write into that cell;
-        anything else raises ``TableError``.
+        anything else raises ``TableError``. So does a value for a header cell
+        that one of ``merges`` (the sheet's merges after the insert) covers,
+        since the bulk write would send it to the merge's top-left cell.
         """
         ins = self._insert
         self._column_names: dict[object, list[str]] = {}
@@ -1196,10 +1199,20 @@ class InsertPlan:
             for offset, value in enumerate(supplied):
                 if value is None:
                     continue
+                address = join_address(index_to_col(ins.at - 1 + offset), header_row)
+                covering = next(
+                    (m for m in merges if m.contains(ins.at + offset, header_row)), None
+                )
+                if covering is not None:
+                    raise TableError(
+                        f"the header cell {address} of a column joining table "
+                        f"{table.display_name!r} lies inside the merge {covering}, so the "
+                        f"value {value!r} would go to its top-left cell and cannot name "
+                        "the column; write nothing there to get a generated ColumnN name"
+                    )
                 if isinstance(value, str) and value and value.casefold() not in used:
                     used.add(value.casefold())
                     continue
-                address = join_address(index_to_col(ins.at - 1 + offset), header_row)
                 raise TableError(
                     f"the header cell {address} of a column joining table "
                     f"{table.display_name!r} would hold {value!r}; a new table column's "

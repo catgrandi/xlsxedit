@@ -1222,6 +1222,35 @@ def test_insert_columns_refuses_a_header_value_that_cannot_name_the_column(cols)
     assert_preserved(before, read_pkg(wb))
 
 
+def _table_beside_a_title(merge: str | None):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["B1"].value = "Title"
+    ws.write_rows([["Ka", "Kb"], [1, 2], [3, 4]], at_cell="C1")
+    ws.add_table("C1:D3", ["Ka", "Kb"], name="Keys")
+    if merge:
+        ws.merge_cells(merge)
+    return wb, ws
+
+
+@pytest.mark.parametrize("merge", ["B1:D1", "C1:D1"])
+def test_insert_columns_refuses_a_header_value_a_merge_would_carry_elsewhere(merge):
+    wb, ws = _table_beside_a_title(merge)
+    before = read_pkg(wb)
+    with pytest.raises(TableError, match=r"lies inside the merge"):
+        ws.insert_columns([["Hnew", 5, 6]], at_col="D")
+    assert_preserved(before, read_pkg(wb))
+
+
+def test_insert_columns_names_a_covered_header_cell_itself():
+    wb, ws = _table_beside_a_title("B1:D1")
+    ws.insert_columns([[None, 5, 6]], at_col="D")
+    assert ws.tables[0].columns == ["Ka", "Column1", "Kb"]
+    assert ws.merged_ranges == ["B1:E1"]
+    assert ws["B1"].value == "Title"
+    check_consistency(wb)
+
+
 def test_insert_columns_into_a_table_without_a_header_row_writes_no_name():
     wb = _edited_tables(
         (b'totalsRowShown="0"', b'headerRowCount="0" totalsRowShown="0"'), (_FIXTURE_FILTER, b"")
