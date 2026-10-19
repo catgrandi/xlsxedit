@@ -154,7 +154,9 @@ Rough expectations for numeric data (post bulk-row-append fix):
 |----------|-------------------|
 | 50k–200k rows, 4 cols, overwrite | ~20k rows/s write; scales roughly linearly |
 | Zebra + column formats | ~1.3× slower than plain numeric |
-| Insert mode | Similar write speed, plus moving the content below `at_cell` |
+| Insert mode | Similar write speed, plus a fixed number of passes over the sheet: two to move the content below `at_cell`, one to rebuild the row index, one to recompute `<dimension>` |
+
+A bulk write keeps the new rows in the sheet's XML tree but leaves their cells out of the per-cell index until a single-cell access such as `ws["B7"]` or `clear_range` reaches the row, so writing 100,000 × 8 cells costs no index memory. Saving afterwards serializes the edited sheet once; it is not parsed again.
 
 Measure on your machine: `python tutorial/bench_large_export.py` (set `ROWS=200000` to stress-test).
 

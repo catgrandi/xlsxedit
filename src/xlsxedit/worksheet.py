@@ -183,13 +183,17 @@ class Worksheet:
         self._cell_indexed_rows.add(row_num)
 
     def _bulk_ensure_row(self, row_num: int) -> etree._Element:
-        return self._ensure_row(row_num)
+        """Like ``_ensure_row``, but a new row's cells are indexed only when a lookup needs them."""
+        return self._ensure_row(row_num, index_cells=False)
 
-    def _bulk_get_or_create_cell(self, address: str, row_elm: etree._Element) -> etree._Element:
+    def _bulk_get_or_create_cell(
+        self, address: str, row_elm: etree._Element, *, index: bool = True
+    ) -> etree._Element:
         """Cell at ``address`` in ``row_elm``, a row that ``_ensure_row`` returned.
 
         A new cell that sorts after the row's last one is appended without a
-        scan, so left-to-right bulk export stays O(1) per cell.
+        scan, so left-to-right bulk export stays O(1) per cell. ``index`` is
+        whether the row's cells are indexed, and so whether a new one is added.
         """
         address = address.upper()
         existing = self._cell_index.get(address)
@@ -206,7 +210,8 @@ class Worksheet:
                 return self._insert_cell_element(address, row_elm)
         c_elm = etree.SubElement(row_elm, _C)
         c_elm.set("r", address)
-        self._cell_index[address] = c_elm
+        if index:
+            self._cell_index[address] = c_elm
         return c_elm
 
     def _insert_cell_element(self, address: str, row_elm: etree._Element) -> etree._Element:
@@ -290,8 +295,11 @@ class Worksheet:
             return self._find_cell_element(address)
         return c_elm
 
-    def _ensure_row(self, row_num: int) -> etree._Element:
+    def _ensure_row(self, row_num: int, *, index_cells: bool = True) -> etree._Element:
         """Row ``row_num``, inserted in row order if absent, with its cells indexed.
+
+        Pass ``index_cells=False`` to leave a new row out of the cell index, as
+        bulk writes do to save its memory; the first lookup in the row indexes it.
 
         A new row goes after the indexed row that precedes it: row ``row_num - 1``
         when a write fills rows in order, the last row when it appends, and
@@ -317,7 +325,8 @@ class Worksheet:
         self._row_index[row_num] = row
         if self._row_numbers is not None:
             bisect.insort(self._row_numbers, row_num)
-        self._cell_indexed_rows.add(row_num)
+        if index_cells:
+            self._cell_indexed_rows.add(row_num)
         self._bulk_max_row_num = max(self._bulk_max_row_num, row_num)
         return row
 
@@ -546,6 +555,7 @@ class Worksheet:
         for offset, row_values in enumerate(row_list):
             row_num = start_row + offset
             row_elm = self._bulk_ensure_row(row_num)
+            indexed = row_num in self._cell_indexed_rows
             before = etree.tostring(row_elm, with_tail=False) if unchanged else None
             if not isinstance(row_values, (list, tuple)):
                 row_values = (row_values,)
@@ -553,7 +563,7 @@ class Worksheet:
             for col_offset, value in enumerate(row_values):
                 col_idx = start_col_idx + col_offset
                 address = join_address(index_to_col(col_idx), row_num)
-                c_elm = self._bulk_get_or_create_cell(address, row_elm)
+                c_elm = self._bulk_get_or_create_cell(address, row_elm, index=indexed)
 
                 col_spec = (
                     column_styles[col_offset]
@@ -587,8 +597,11 @@ class Worksheet:
                     # ws[address], unless it is None or this call writes the anchor too.
                     if value is None or writes_cell(anchor):
                         continue
+                    anchor_row = split_address(anchor)[1]
                     c_elm = self._bulk_get_or_create_cell(
-                        anchor, self._bulk_ensure_row(split_address(anchor)[1])
+                        anchor,
+                        self._bulk_ensure_row(anchor_row),
+                        index=anchor_row in self._cell_indexed_rows,
                     )
                     place_cell_in_order(c_elm)
 

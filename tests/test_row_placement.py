@@ -111,3 +111,16 @@ def test_rows_added_through_another_worksheet_object_are_respected(monkeypatch):
     assert walks.counts["scan"] == 2
     assert _row_numbers(old) == [1, 3, 4, 5, 6, 9]
     assert [new[a].value for a in ("A3", "B4", "A6", "B6")] == [3, "old 4", 6, "old 6"]
+
+
+def test_rows_a_bulk_write_appends_are_indexed_on_first_lookup():
+    ws = _sheet(0)
+    ws.write_rows([[n, n * 2, f"s{n}"] for n in range(1, 501)], at_row=1)
+    assert ws._cell_index == {}
+    assert ws["B250"].value == 500
+    assert set(ws._cell_index) == {"A250", "B250", "C250"}
+    ws["D250"].value = "new"
+    assert ws.clear_range("A10:C10") == 3
+    ws.write_rows([["again"]], at_cell="C250")
+    assert [ws[a].value for a in ("A10", "C250", "D250", "C251")] == [None, "again", "new", "s251"]
+    assert _row_numbers(ws) == list(range(1, 501))
