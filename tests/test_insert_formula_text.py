@@ -17,7 +17,8 @@ from lxml import etree
 from xlsxedit import Workbook
 from xlsxedit.exceptions import GridOverflowError
 from xlsxedit.opc.constants import SML_NS
-from xlsxedit.row_shift import _Planner, _Shift
+from xlsxedit.range_set import SheetRangeSet
+from xlsxedit.row_shift import _Planner, _Shift, rewrite_anchored_refs
 from xlsxedit.worksheet_order import insert_worksheet_child
 from tests.preservation import assert_preserved
 from tests.schema_validate import assert_valid_package
@@ -166,6 +167,24 @@ def test_formats_at_the_edge_of_the_grid_move_as_excel_moves_them(sqref, formula
     planner.worksheet(ws._part.element)
     planner.apply()
     assert _texts(ws, ".//m:cfRule/m:formula") == [expected]
+
+
+@pytest.mark.parametrize(
+    ("sqref", "formula", "shift", "expected"),
+    [
+        ("A:A", "COUNTIF($A$1:A1,A1)>1", _Shift(True, 1, 1), "COUNTIF($A1:A$2,A1)>1"),
+        ("A:A", "COUNTIF(A$1:A1,A1)>1", _Shift(True, 1, 1), "COUNTIF(A1:A$2,A1)>1"),
+        ("K:K", "SUM(K$5:K5)>0", _Shift(True, 1, 2), "SUM(K5:K$7)>0"),
+        ("1:1", "COUNTIF($A$1:A1,A1)>1", _Shift(False, 1, 1), "COUNTIF(A$1:$B1,A1)>1"),
+    ],
+)
+def test_a_range_mixing_dollar_and_relative_bounds_keeps_both(sqref, formula, shift, expected):
+    """Only the absolute bound moves, and bounds that cross swap. Excel is not
+    consistent here: it writes ``$A$2:A2`` for the first case, a range that
+    reaches one row further than before, and leaves the third unchanged."""
+    before = SheetRangeSet.parse(sqref)
+    after = before.shift(shift.rows, shift.at, shift.delta)
+    assert rewrite_anchored_refs(formula, "Sheet1", shift, before, after) == expected
 
 
 def test_inserting_at_the_top_keeps_a_whole_column_comparison_with_another_sheet():
