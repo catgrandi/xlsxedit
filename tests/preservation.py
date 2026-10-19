@@ -629,6 +629,10 @@ INVARIANTS: dict[str, str] = {
     "table-autofilter": "table autoFilter/@ref == table ref minus totalsRowCount trailing rows",
     "cell-metadata": "every cell cm/vm index resolves to a bk of the workbook's metadata part",
     "x14-cf": "every cfRule x14:id has an x14:cfRule twin whose xm:sqref equals the base sqref",
+    "data-validation": (
+        "a worksheet has at most one dataValidations; its count and every x14:dataValidations "
+        "count equal their dataValidation children; every validation names a non-empty sqref"
+    ),
 }
 
 
@@ -680,6 +684,7 @@ def consistency_violations(pkg: Package) -> list[Violation]:
         _check_tables,
         _check_cell_metadata,
         _check_x14_cf,
+        _check_data_validations,
     ):
         check(book)
     return book.violations
@@ -1109,6 +1114,40 @@ def _check_x14_cf(book: _Book) -> None:
                             f"{cf.get('sqref')!r}",
                         )
 
+
+
+def _check_data_validations(book: _Book) -> None:
+    x14_validations = f"{{{_X14_NS}}}dataValidations"
+    x14_validation = f"{{{_X14_NS}}}dataValidation"
+    for sheet in book.worksheets():
+        root = book.tree(sheet.member)
+        bad: list[str] = []
+        blocks = root.findall(_sml("dataValidations"))
+        if len(blocks) > 1:
+            bad.append(f"{len(blocks)} dataValidations elements")
+        for block in blocks:
+            rules = block.findall(_sml("dataValidation"))
+            count = block.get("count")
+            if count is not None and count != str(len(rules)):
+                bad.append(
+                    f"dataValidations/@count={count} but {len(rules)} dataValidation children"
+                )
+            bad += [
+                f"dataValidation {i} has no sqref"
+                for i, rule in enumerate(rules, 1)
+                if not (rule.get("sqref") or "").strip()
+            ]
+        for block in root.iter(x14_validations):
+            rules = block.findall(x14_validation)
+            count = block.get("count")
+            if count is not None and count != str(len(rules)):
+                bad.append(f"x14:dataValidations/@count={count} but {len(rules)} children")
+            for i, rule in enumerate(rules, 1):
+                sqref = rule.find(f"{{{_XM_NS}}}sqref")
+                if sqref is None or not (sqref.text or "").strip():
+                    bad.append(f"x14:dataValidation {i} has no xm:sqref")
+        if bad:
+            book.flag("data-validation", sheet.member, _summarise(bad))
 
 def waives(issue: str, *codes: str):
     """Mark a test whose workbooks still break the invariants ``codes`` until ``issue`` lands.
