@@ -302,7 +302,7 @@ def test_add_writes_sqref_as_excel_does(given, written):
         (
             {
                 "type": "list",
-                "formula1": "=Sheet1!$H$1:$H$3",
+                "formula1": "=$H$1:$H$3",
                 "allow_blank": False,
                 "show_input_message": False,
                 "show_error_message": False,
@@ -312,7 +312,7 @@ def test_add_writes_sqref_as_excel_does(given, written):
                 "prompt_title": "Pick",
             },
             'type="list" errorTitle="Error" error="Bad value" promptTitle="Pick"',
-            ("Sheet1!$H$1:$H$3", None),
+            ("$H$1:$H$3", None),
         ),
     ],
 )
@@ -333,22 +333,62 @@ def test_add_writes_only_attributes_that_differ_from_the_schema(options, attribu
 
 
 @pytest.mark.parametrize(
-    "formula1",
+    ("formula1", "written"),
     [
-        '"' + "x" * 255 + '"',
-        '"Hi!,Bye"',
-        '"say ""hi!"""',
-        "MyList",
-        "$H$1:$H$3",
-        "'Sheet1'!$H$1:$H$3",
-        "sheet1!H1:H3",
-        "OFFSET(Sheet1!$H$1,0,0,COUNTA(Sheet1!$H:$H),1)",
+        ('"' + "x" * 255 + '"', None),
+        ('"Hi!,Bye"', None),
+        ('"say ""hi!"""', None),
+        ("MyList", None),
+        ("$H$1:$H$3", None),
+        ("Sheet1!$H$1:$H$3", "$H$1:$H$3"),
+        ("'Sheet1'!$H$1:$H$3", "$H$1:$H$3"),
+        ("sheet1!H1:H3", "H1:H3"),
+        ("Sheet1!H1:Sheet1!H3", "H1:H3"),
+        ("Sheet1!H:Sheet1!H", "H:H"),
+        ("OFFSET(Sheet1!$H$1,0,0,COUNTA('Sheet1'!$H:$H),1)", "OFFSET($H$1,0,0,COUNTA($H:$H),1)"),
+        ('INDIRECT("Lists!A1:A3")', None),
     ],
 )
-def test_add_accepts_list_sources_on_the_same_sheet(formula1):
+def test_add_accepts_list_sources_on_the_same_sheet(formula1, written):
     wb, ws = _book()
     dv = ws.add_data_validation("B2", type="list", formula1=formula1)
-    assert dv.formula1 == formula1
+    assert dv.formula1 == (written or formula1)
+
+
+@pytest.mark.parametrize(
+    "formula1", ["A1<>#REF!", "ISERROR(A1)=#DIV/0!", "AND(A1<>#NULL!,#N/A=A1)"]
+)
+def test_error_values_are_not_sheet_references(formula1):
+    wb, ws = _book()
+    assert ws.add_data_validation("B2", type="custom", formula1=formula1).formula1 == formula1
+
+
+def test_formulas_name_the_sheet_as_it_is_called_now():
+    wb, ws = _book()
+    wb.rename_worksheet("Sheet1", "Data")
+    stale = ws
+    _refused(
+        wb,
+        DataValidationError,
+        "another sheet",
+        lambda: stale.add_data_validation("B2", type="list", formula1="Sheet1!$H$1:$H$3"),
+    )
+    dv = stale.add_data_validation("B2", type="list", formula1="Data!$H$1:$H$3")
+    assert dv.formula1 == "$H$1:$H$3"
+    assert [str(v.sqref) for v in wb["Data"].data_validations] == ["B2"]
+
+
+def test_a_removed_sheet_refuses_every_edit():
+    wb, ws = _book()
+    lists = wb["Lists"]
+    dv = lists.add_data_validation("A1", type="list", formula1='"a"')
+    wb.remove_worksheet("Lists")
+    for call in (
+        lambda: lists.add_data_validation("B1", type="list", formula1='"a"'),
+        lambda: setattr(dv, "sqref", "B1"),
+        lambda: lists.remove_data_validation(dv),
+    ):
+        _refused(wb, DataValidationError, "no longer", call)
 
 
 class _Level(enum.IntEnum):
@@ -466,6 +506,9 @@ _LIST = {"sqref": "B2", "type": "list", "formula1": '"a,b"'}
         ({"formula1": "[1]Sheet1!$A$1:$A$5"}, DataValidationError, "another sheet"),
         ({"formula1": "'[Book.xlsx]Sheet1'!$A$1"}, DataValidationError, "another sheet"),
         ({"formula1": "Sheet1:Lists!$A$1"}, DataValidationError, "another sheet"),
+        ({"formula1": "Lists:Sheet1!$A$1"}, DataValidationError, "another sheet"),
+        ({"formula1": "Sheet1!A1:Lists!A2"}, DataValidationError, "another sheet"),
+        ({"type": "custom", "formula1": "A1=#REF!+Lists!A1"}, DataValidationError, "another sheet"),
         (
             {"type": "custom", "formula1": 'COUNTIF(Lists!A:A,"x!")>0'},
             DataValidationError,

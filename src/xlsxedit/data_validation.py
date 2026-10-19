@@ -61,13 +61,17 @@ _FORMULA_LIMIT = 8192
 
 _XML_SPACE = " \t\r\n"
 _STRING_LITERAL = re.compile(r'"((?:[^"]|"")*)"')
-# Read left to right: a string literal, a quoted or plain sheet name before "!", or a lone "!".
+# Read left to right: a string literal, an error value such as #REF!, a quoted or
+# plain sheet name before "!", or a lone "!".
 _FORMULA_TOKENS = re.compile(
     r'"(?:[^"]|"")*"'
+    r"|#[A-Za-z0-9/_]+!"
     r"|'((?:[^']|'')*)'!"
     r"|(?<![\w.\[\]:])([\w.\[\]:]+)!"
     r"|!"
 )
+# The first end of a range (A1, A or 1) before the sheet name in A1:Sheet1!B2.
+_RANGE_START = re.compile(r"\$?[A-Za-z]{1,3}\$?[0-9]+|\$?[A-Za-z]{1,3}|\$?[0-9]+")
 
 
 def _utf16_len(text: str) -> int:
@@ -204,6 +208,14 @@ class DataValidation:
         return None if elm is None else elm.text or ""
 
 
+def _sheet_name(worksheet: Worksheet) -> str | None:
+    """The sheet's name in its workbook now; ``None`` once the sheet was removed."""
+    for name, part in worksheet._workbook._workbook_part.worksheet_parts():
+        if part is worksheet._part:
+            return name
+    return None
+
+
 def _is_listed(worksheet: Worksheet, element: etree._Element) -> bool:
     block = element.getparent()
     return (
@@ -211,6 +223,7 @@ def _is_listed(worksheet: Worksheet, element: etree._Element) -> bool:
         and block is not None
         and block.tag == _DATA_VALIDATIONS
         and block.getparent() is worksheet._part.element
+        and _sheet_name(worksheet) is not None
     )
 
 
@@ -309,6 +322,7 @@ def _check_formula(value: object, name: str, sheet_name: str) -> str | None:
         if (isinstance(number, float) and math.isnan(number)) or abs(number) > sys.float_info.max:
             raise DataValidationError(f"{name} {value!r} is not a number Excel can store")
         text = repr(number) if isinstance(number, float) else str(number)
+    text = _own_sheet_formula(text, name, sheet_name)
     if not text:
         raise DataValidationError(f"{name} is empty")
     if _XML_ILLEGAL.search(text):
@@ -317,25 +331,47 @@ def _check_formula(value: object, name: str, sheet_name: str) -> str | None:
         raise DataValidationError(
             f"{name} is longer than the {_FORMULA_LIMIT} characters Excel allows"
         )
-    _check_same_sheet(text, name, sheet_name)
     return text
 
 
-def _check_same_sheet(formula: str, name: str, sheet_name: str) -> None:
-    """Refuse a reference to another sheet or workbook, which needs the x14 form."""
+def _sheet_prefix(token: re.Match) -> tuple[str, int] | None:
+    """The sheet a ``!`` token names and where its prefix starts; ``None`` when the
+    token is a lone ``!`` or a 3-D reference such as ``Sheet1:Sheet3!A1``."""
+    quoted, plain = token.groups()
+    if quoted is not None:
+        return quoted.replace("''", "'"), token.start()
+    if plain is None:
+        return None
+    first, colon, sheet = plain.rpartition(":")
+    if not colon:
+        return plain, token.start()
+    if _RANGE_START.fullmatch(first) is None:
+        return None
+    return sheet, token.start() + len(first) + 1
+
+
+def _own_sheet_formula(formula: str, name: str, sheet_name: str) -> str:
+    """``formula`` without the prefixes that name its own sheet.
+
+    Refuses a reference to another sheet or workbook: Excel writes such a
+    validation in its x14 form, which xlsxedit does not write yet.
+    """
     if "!" not in formula:
-        return
+        return formula
+    kept: list[str] = []
+    end = 0
     for token in _FORMULA_TOKENS.finditer(formula):
-        if token.group(0).startswith('"'):
+        if token.group(0)[0] in '"#':
             continue
-        quoted, plain = token.groups()
-        sheet = plain if quoted is None else quoted.replace("''", "'")
-        if sheet is None or sheet.casefold() != sheet_name.casefold():
+        prefix = _sheet_prefix(token)
+        if prefix is None or prefix[0].casefold() != sheet_name.casefold():
             raise DataValidationError(
-                f"{name} {formula!r} refers to another sheet or workbook; such a validation "
-                "needs the x14 form, which xlsxedit cannot write yet, so refer to a defined "
-                "name instead"
+                f"{name} {formula!r} refers to another sheet or workbook, which xlsxedit "
+                "cannot write yet; refer to a defined name instead"
             )
+        kept.append(formula[end : prefix[1]])
+        end = token.end()
+    return "".join(kept) + formula[end:]
 
 
 def _check_list_literal(formula: str) -> None:
@@ -389,13 +425,16 @@ def new_data_validation(
     prompt: str | None = None,
 ) -> DataValidation:
     """Append a ``dataValidation`` to the worksheet after checking every argument."""
+    sheet_name = _sheet_name(worksheet)
+    if sheet_name is None:
+        raise DataValidationError(f"worksheet {worksheet.name!r} is no longer in its workbook")
     ranges = _check_sqref(sqref)
     kind = _check_choice(type, "type", TYPES)
     if operator is not None:
         _check_choice(operator, "operator", OPERATORS)
     formulas = [
-        _check_formula(formula1, "formula1", worksheet.name),
-        _check_formula(formula2, "formula2", worksheet.name),
+        _check_formula(formula1, "formula1", sheet_name),
+        _check_formula(formula2, "formula2", sheet_name),
     ]
     _check_formulas(kind, operator, *formulas)
     values: dict[str, str | bool | None] = {
@@ -444,6 +483,8 @@ def delete_data_validation(worksheet: Worksheet, validation: DataValidation) -> 
     if validation.is_x14:
         raise DataValidationError("an x14 data validation is read-only")
     elm = validation._element
+    if _sheet_name(worksheet) is None:
+        raise DataValidationError(f"worksheet {worksheet.name!r} is no longer in its workbook")
     if not _is_listed(worksheet, elm):
         raise DataValidationError(f"the data validation is not on worksheet {worksheet.name!r}")
     block = elm.getparent()
