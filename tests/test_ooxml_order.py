@@ -10,7 +10,13 @@ import pytest
 from lxml import etree
 
 from xlsxedit import _ooxml_order
-from xlsxedit._ooxml_order import ATTRIBUTE_DEFAULTS, ENUMS, EXTENSION_ORDER, ORDER
+from xlsxedit._ooxml_order import (
+    ATTRIBUTE_DEFAULTS,
+    ATTRIBUTE_ORDER,
+    ENUMS,
+    EXTENSION_ORDER,
+    ORDER,
+)
 from xlsxedit.worksheet_order import _WS_CHILD_ORDER
 
 GENERATOR = Path(__file__).resolve().parents[1] / "scripts" / "gen_ooxml_order.py"
@@ -69,8 +75,15 @@ def test_tables_cover_the_requested_types():
             "CT_Sparkline",
         )
     }
-    assert set(ATTRIBUTE_DEFAULTS) == {"CT_Table", "CT_TableColumn"}
-    assert set(ENUMS) == {"ST_TableType", "ST_TotalsRowFunction"}
+    assert set(ATTRIBUTE_ORDER) == {"CT_DataValidation"}
+    assert set(ATTRIBUTE_DEFAULTS) == {"CT_Table", "CT_TableColumn", "CT_DataValidation"}
+    assert set(ENUMS) == {
+        "ST_TableType",
+        "ST_TotalsRowFunction",
+        "ST_DataValidationType",
+        "ST_DataValidationOperator",
+        "ST_DataValidationErrorStyle",
+    }
 
 
 def test_module_reads_no_file():
@@ -133,6 +146,28 @@ def test_table_attribute_defaults_and_enums():
     assert ENUMS["ST_TableType"] == ("worksheet", "xml", "queryTable")
     assert ENUMS["ST_TotalsRowFunction"][0] == "none"
     assert "countNums" in ENUMS["ST_TotalsRowFunction"]
+
+
+def test_data_validation_attributes_and_enums():
+    order = ATTRIBUTE_ORDER["CT_DataValidation"]
+    assert order[:4] == ("type", "errorStyle", "imeMode", "operator")
+    assert order[-1] == "sqref"
+    assert ATTRIBUTE_DEFAULTS["CT_DataValidation"]["type"] == "none"
+    assert ATTRIBUTE_DEFAULTS["CT_DataValidation"]["showErrorMessage"] == "false"
+    assert "sqref" not in ATTRIBUTE_DEFAULTS["CT_DataValidation"]
+    assert ENUMS["ST_DataValidationType"][-1] == "custom"
+    assert ENUMS["ST_DataValidationOperator"][0] == "between"
+    assert ENUMS["ST_DataValidationErrorStyle"] == ("stop", "warning", "information")
+
+
+def test_generator_refuses_an_attribute_group(generator, monkeypatch):
+    complex_type = etree.fromstring(
+        '<xsd:complexType name="CT_X" xmlns:xsd="http://www.w3.org/2001/XMLSchema">'
+        '<xsd:attribute name="a"/><xsd:attributeGroup ref="AG_B"/></xsd:complexType>'
+    )
+    monkeypatch.setattr(generator, "_definition", lambda *args: complex_type)
+    with pytest.raises(ValueError, match="attributeGroup"):
+        generator.attribute_order("sml.xsd", "CT_X")
 
 
 def test_generator_refuses_a_repeating_choice(generator):
