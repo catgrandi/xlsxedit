@@ -180,8 +180,9 @@ def extension_child_order(filename: str, type_name: str) -> tuple[str, tuple[str
 
 def attribute_order(filename: str, type_name: str) -> tuple[str, ...]:
     complex_type = _definition(filename, "complexType", type_name)
-    if complex_type.find(_xsd("attributeGroup")) is not None:
-        raise ValueError(f"{type_name} declares attributes through an xsd:attributeGroup")
+    for indirect in ("attributeGroup", "complexContent", "simpleContent"):
+        if complex_type.find(_xsd(indirect)) is not None:
+            raise ValueError(f"{type_name} declares attributes through an xsd:{indirect}")
     return tuple(
         attribute.get("name") or _local(attribute.get("ref"))
         for attribute in complex_type.iterchildren(_xsd("attribute"))

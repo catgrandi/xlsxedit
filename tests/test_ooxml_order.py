@@ -160,13 +160,29 @@ def test_data_validation_attributes_and_enums():
     assert ENUMS["ST_DataValidationErrorStyle"] == ("stop", "warning", "information")
 
 
-def test_generator_refuses_an_attribute_group(generator, monkeypatch):
+@pytest.mark.parametrize(
+    ("content", "indirect"),
+    [
+        ('<xsd:attribute name="a"/><xsd:attributeGroup ref="AG_B"/>', "attributeGroup"),
+        (
+            '<xsd:complexContent><xsd:extension base="CT_B"><xsd:attribute name="a"/>'
+            "</xsd:extension></xsd:complexContent>",
+            "complexContent",
+        ),
+        (
+            '<xsd:simpleContent><xsd:extension base="xsd:string"><xsd:attribute name="a"/>'
+            "</xsd:extension></xsd:simpleContent>",
+            "simpleContent",
+        ),
+    ],
+)
+def test_generator_refuses_attributes_it_cannot_order(generator, monkeypatch, content, indirect):
     complex_type = etree.fromstring(
         '<xsd:complexType name="CT_X" xmlns:xsd="http://www.w3.org/2001/XMLSchema">'
-        '<xsd:attribute name="a"/><xsd:attributeGroup ref="AG_B"/></xsd:complexType>'
+        f"{content}</xsd:complexType>"
     )
     monkeypatch.setattr(generator, "_definition", lambda *args: complex_type)
-    with pytest.raises(ValueError, match="attributeGroup"):
+    with pytest.raises(ValueError, match=f"xsd:{indirect}"):
         generator.attribute_order("sml.xsd", "CT_X")
 
 
