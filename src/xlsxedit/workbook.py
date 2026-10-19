@@ -871,26 +871,24 @@ class Workbook:
             if problem is not None:
                 raise TableError(f"table {label} {value!r} {problem}")
 
-        cells = _row_cells(ws, header_row)
         if write_header:
+            addresses = [
+                join_address(index_to_col(first_col + offset), header_row)
+                for offset in range(len(columns))
+            ]
             # What the cell setter below would refuse, checked before the first write.
             if ws.shared_strings is None:
                 raise ValueError("workbook has no shared strings part")
-            for offset in range(len(columns)):
-                address = join_address(index_to_col(first_col + offset), header_row)
-                f_elm = cells[address].find(_F) if address in cells else None
+            for address in addresses:
+                c_elm = ws._find_cell_element(address)
+                f_elm = None if c_elm is None else c_elm.find(_F)
                 if f_elm is not None:
                     _refuse_range_formula_edit(address, f_elm)
             row_elm = ws._ensure_row(header_row)
-            for offset, col_name in enumerate(columns):
-                address = join_address(index_to_col(first_col + offset), header_row)
-                c_elm = cells.get(address)
-                if c_elm is None:
-                    c_elm = _insert_cell(row_elm, address)
-                Cell(c_elm, ws).value = col_name
-            ws._invalidate_bulk_indexes()
+            for address, col_name in zip(addresses, columns):
+                Cell(ws._bulk_get_or_create_cell(address, row_elm), ws).value = col_name
         else:
-            problems = _header_mismatches(ws, cells, header_row, first_col, columns)
+            problems = _header_mismatches(ws, header_row, first_col, columns)
             if problems:
                 raise TableError(
                     f"the header cells of table range {ref} do not match the column names: "
@@ -948,8 +946,6 @@ class Workbook:
 _MAX_ROW = 1048576
 _MAX_COL = 16384  # columns A..XFD
 
-_CELL = f"{{{SML_NS}}}c"
-_EXT_LST = f"{{{SML_NS}}}extLst"
 _DEFINED_NAMES = f"{{{SML_NS}}}definedNames"
 _DEFINED_NAME = f"{{{SML_NS}}}definedName"
 _TABLE_COLUMNS = f"{{{SML_NS}}}tableColumns"
@@ -1087,26 +1083,12 @@ def _table_box(table: Table) -> tuple[int, int, int, int] | None:
         return None
 
 
-def _row_cells(ws: Worksheet, row: int) -> dict[str, etree._Element]:
-    """``{address: <c>}`` of the cells stored in ``row``, without resolving merges."""
-    row_elm = ws._find_row_element(row)
-    if row_elm is None:
-        return {}
-    return {c.get("r", "").upper(): c for c in row_elm.iterchildren(_CELL)}
-
-
-def _header_mismatches(
-    ws: Worksheet,
-    cells: dict[str, etree._Element],
-    row: int,
-    first_col: int,
-    names: list[str],
-) -> list[str]:
+def _header_mismatches(ws: Worksheet, row: int, first_col: int, names: list[str]) -> list[str]:
     """Describe each header cell that does not hold its column name as plain text."""
     problems = []
     for offset, name in enumerate(names):
         address = join_address(index_to_col(first_col + offset), row)
-        c_elm = cells.get(address)
+        c_elm = ws._find_cell_element(address)
         cell = None if c_elm is None else Cell(c_elm, ws)
         if cell is not None and cell.has_formula:
             problems.append(f"{address} holds a formula, expected {name!r}")
@@ -1119,20 +1101,6 @@ def _header_mismatches(
 
 def _holds(value) -> str:
     return "is empty" if value is None else f"holds {value!r}"
-
-
-def _insert_cell(row_elm: etree._Element, address: str) -> etree._Element:
-    """A new ``<c r=address>`` in ``row_elm``, before the first cell to its right."""
-    col = col_to_index(split_address(address)[0])
-    c_elm = etree.Element(_CELL)
-    c_elm.set("r", address)
-    for child in row_elm.iterchildren(_CELL, _EXT_LST):
-        r = child.get("r")
-        if child.tag == _EXT_LST or (r and col_to_index(split_address(r)[0]) > col):
-            child.addprevious(c_elm)
-            return c_elm
-    row_elm.append(c_elm)
-    return c_elm
 
 
 def _find_table(ws: Worksheet, table) -> Table:
