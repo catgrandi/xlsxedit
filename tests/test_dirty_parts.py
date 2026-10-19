@@ -5,10 +5,11 @@ from __future__ import annotations
 import io
 
 import pytest
+from lxml import etree
 
 from xlsxedit import Workbook
 from xlsxedit.opc import part as part_module
-from xlsxedit.opc.constants import CT
+from xlsxedit.opc.constants import CT, SML_NS
 from xlsxedit.opc.part import XmlPart
 from tests.conftest import BOOK1, INSPECT_FIXTURES
 from tests.preservation import assert_preserved, content_types, read_pkg, worksheet_members
@@ -111,3 +112,16 @@ def test_writing_what_a_sheet_already_holds_keeps_its_bytes(rewrite):
     report = assert_preserved(read_pkg(source), read_pkg(_saved_bytes(wb)))
     assert not report.reserialised
     assert read_pkg(_saved_bytes(wb)) == read_pkg(source)
+
+
+def test_replacing_in_an_inline_string_marks_the_sheet_only_on_a_match():
+    wb = Workbook.open(BOOK1)
+    ws = wb[SHEET]
+    c_elm = ws["Z99"]._element
+    c_elm.set("t", "inlineStr")
+    c_elm.append(etree.fromstring(f'<is xmlns="{SML_NS}"><t>hello name</t></is>'))
+    assert ws["Z99"].replace("absent", "x") == 0
+    assert not ws._part.is_dirty
+    assert ws["Z99"].replace("name", "world") == 1
+    assert ws._part.is_dirty
+    assert Workbook.open(io.BytesIO(_saved_bytes(wb)))[SHEET]["Z99"].value == "hello world"

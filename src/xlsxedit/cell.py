@@ -97,12 +97,9 @@ def _inline_t_nodes(is_elm: _Element) -> list[_Element]:
     return nodes
 
 
-_CONTENT_TAGS = (_V, _F, _IS)
-
-
 def _clear_cell_content(c_elm: _Element) -> None:
     for child in list(c_elm):
-        if child.tag in _CONTENT_TAGS:
+        if child.tag in (_V, _F, _IS):
             c_elm.remove(child)
 
 
@@ -468,6 +465,7 @@ class Cell:
         self._element.set("t", "s")
         _ensure_v(self._element).text = str(idx)
 
+    @_marks_sheet
     def replace(self, old: str, new: str) -> int:
         """Replace substring in this cell's string content. Returns replacement count."""
         if not old or self.has_formula:
