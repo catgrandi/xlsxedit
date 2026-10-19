@@ -226,6 +226,13 @@ def test_table_columns_match_the_ref_width():
     assert _only(pkg, "table-columns") == "3 tableColumn children but ref A1:D11 is 4 wide"
 
 
+_HEADER_ROW_END = b'<c r="C1" t="s"><v>2</v></c></row>'
+# The second table's header, E1:G1, as shared strings 14, 1 and 2: Item, Price, Quantity.
+_SECOND_HEADER = (
+    b'<c r="E1" t="s"><v>14</v></c><c r="F1" t="s"><v>1</v></c><c r="G1" t="s"><v>2</v></c>'
+)
+
+
 def _second_table(display_name: bytes) -> dict[str, bytes]:
     pkg = _pkg("ChartsAndTables")
     pkg["xl/tables/table2.xml"] = (
@@ -243,6 +250,7 @@ def _second_table(display_name: bytes) -> dict[str, bytes]:
         b'<tableParts count="2"><tablePart r:id="rId1"/><tablePart r:id="rId2"/></tableParts>',
     )
     _add_rel(pkg, "xl/worksheets/_rels/sheet3.xml.rels", "rId2", "table", "../tables/table2.xml")
+    _edit(pkg, TABLE_SHEET, _HEADER_ROW_END, _HEADER_ROW_END[:-6] + _SECOND_HEADER + b"</row>")
     return pkg
 
 
@@ -268,6 +276,52 @@ def test_table_auto_filter_excludes_the_totals_rows(totals: bytes, auto_filter: 
         assert _codes(pkg) == []
     else:
         assert "but table ref A1:C11 minus" in _only(pkg, "table-autofilter")
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "detail"),
+    [
+        (
+            b'<c r="B1" t="s"><v>1</v></c>',
+            b'<c r="B1" t="s"><v>3</v></c>',
+            "B1 holds 'Chocolate', column 'Price'",
+        ),
+        (b'<c r="B1" t="s"><v>1</v></c>', b"", "B1 has no text, column 'Price'"),
+        (
+            b'<c r="B1" t="s"><v>1</v></c>',
+            b'<c r="B1" t="str"><f>"Price"</f><v>Price</v></c>',
+            "B1 has no text",
+        ),
+        (b'<c r="B1" t="s"><v>1</v></c>', b'<c r="B1"><v>1</v></c>', "B1 has no text"),
+    ],
+    ids=["other-text", "missing", "formula", "number"],
+)
+def test_table_header_cells_hold_the_column_names(old: bytes, new: bytes, detail: str):
+    pkg = _edit(_pkg("ChartsAndTables"), TABLE_SHEET, old, new)
+    assert detail in _only(pkg, "table-header")
+
+
+def test_table_header_cells_may_be_inline_strings_and_names_escaped():
+    pkg = _edit(
+        _pkg("ChartsAndTables"),
+        TABLE_SHEET,
+        b'<c r="B1" t="s"><v>1</v></c>',
+        b'<c r="B1" t="inlineStr"><is><r><t>Pri</t></r><r><t>ce\n</t></r></is></c>',
+    )
+    _edit(pkg, TABLE, b'name="Price"', b'name="Price_x000a_"')
+    assert _codes(pkg) == []
+
+
+def test_a_table_without_a_header_row_has_no_header_cells_to_check():
+    pkg = _edit(_pkg("ChartsAndTables"), TABLE_SHEET, b'<c r="B1" t="s"><v>1</v></c>', b"")
+    _edit(pkg, TABLE, b'totalsRowShown="0"', b'headerRowCount="0" totalsRowShown="0"')
+    _edit(
+        pkg,
+        TABLE,
+        b'<autoFilter ref="A1:C11" xr:uid="{ADEF1FC0-C6FE-3447-9A1E-67E59ED4BB8C}"/>',
+        b"",
+    )
+    assert _codes(pkg) == []
 
 
 _METADATA = (

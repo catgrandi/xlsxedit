@@ -45,6 +45,7 @@ _RT_WORKSHEET = f"{_R_NS}/worksheet"
 _RT_CALC_CHAIN = f"{_R_NS}/calcChain"
 _RT_TABLE = f"{_R_NS}/table"
 _RT_SHEET_METADATA = f"{_R_NS}/sheetMetadata"
+_RT_SHARED_STRINGS = f"{_R_NS}/sharedStrings"
 _CT_WORKSHEET = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"
 
 _R_ID = f"{{{_R_NS}}}id"
@@ -627,6 +628,9 @@ INVARIANTS: dict[str, str] = {
     "table-columns": "tableColumns/@count == number of tableColumn children == ref column width",
     "table-name": "table displayNames are unique workbook-wide (case-insensitively)",
     "table-autofilter": "table autoFilter/@ref == table ref minus totalsRowCount trailing rows",
+    "table-header": (
+        "in a table with a header row, each header cell holds its tableColumn name as text"
+    ),
     "cell-metadata": "every cell cm/vm index resolves to a bk of the workbook's metadata part",
     "x14-cf": "every cfRule x14:id has an x14:cfRule twin whose xm:sqref equals the base sqref",
     "data-validation": (
@@ -716,6 +720,7 @@ class _Book:
         self._trees: dict[str, etree._Element] = {}
         self._cells: dict[str, list[tuple[str, etree._Element]]] = {}
         self._tables: dict[str, list[str]] = {}
+        self._sst: list[str] | None = None
         package_rels = self.relationships("")
         self.workbook = next(
             (t for typ, t in package_rels.values() if typ == _RT_OFFICE_DOCUMENT and t), None
@@ -745,6 +750,32 @@ class _Book:
         if member not in self._trees:
             self._trees[member] = _parse(self.pkg[member])
         return self._trees[member]
+
+    def shared_strings(self) -> list[str]:
+        """The text of each shared string, computed once."""
+        if self._sst is None:
+            member = self.workbook_part(_RT_SHARED_STRINGS)
+            self._sst = (
+                []
+                if member is None
+                else [_rich_text(si) for si in self.tree(member).iterchildren(_sml("si"))]
+            )
+        return self._sst
+
+    def cell_text(self, c: etree._Element) -> str | None:
+        """The text a ``<c>`` without a formula holds, or None for any other cell."""
+        if c.find(_F) is not None:
+            return None
+        kind = c.get("t")
+        if kind == "inlineStr":
+            inline = c.find(_sml("is"))
+            return None if inline is None else _rich_text(inline)
+        v = c.find(_sml("v"))
+        if kind == "s" and v is not None and (v.text or "").isdigit():
+            strings = self.shared_strings()
+            index = int(v.text)
+            return strings[index] if index < len(strings) else None
+        return None
 
     def cells(self, member: str) -> list[tuple[str, etree._Element]]:
         """``(address, <c>)`` of a worksheet part, computed once."""
@@ -1012,6 +1043,7 @@ def _check_cell_order(book: _Book) -> None:
 def _check_tables(book: _Book) -> None:
     owners: dict[str, list[str]] = defaultdict(list)
     for sheet in book.worksheets():
+        cells: dict[str, etree._Element] | None = None
         for member in book.tables(sheet):
             table = book.tree(member)
             display_name = table.get("displayName")
@@ -1052,6 +1084,21 @@ def _check_tables(book: _Book) -> None:
                         f"autoFilter ref {auto_filter.get('ref')!r} but table ref {ref} minus "
                         f"{totals} totals row(s) is {_format_ref(expected)}",
                     )
+            if table.get("headerRowCount", "1") == "0" or columns is None:
+                continue
+            if cells is None:
+                cells = dict(book.cells(sheet.member))
+            bad = []
+            for offset, column in enumerate(columns.iterchildren(_sml("tableColumn"))):
+                addr = f"{_col_letters(box[0] + offset)}{box[1]}"
+                c = cells.get(addr)
+                text = None if c is None else book.cell_text(c)
+                name = column.get("name")
+                if text is None or name is None or _unescape(text) != _unescape(name):
+                    held = "has no text" if text is None else f"holds {text!r}"
+                    bad.append(f"{addr} {held}, column {name!r}")
+            if bad:
+                book.flag("table-header", member, f"header cells: {_summarise(bad)}")
     for tables in owners.values():
         if len(tables) > 1:
             book.flag(
@@ -1059,6 +1106,21 @@ def _check_tables(book: _Book) -> None:
                 book.workbook,
                 f"displayName used by {len(tables)} tables: {', '.join(tables)}",
             )
+
+
+_ESCAPED_CHAR = re.compile(r"_x([0-9A-Fa-f]{4})_")
+
+
+def _unescape(text: str) -> str:
+    """``text`` with the ``_xHHHH_`` escapes of ``ST_Xstring`` decoded."""
+    return _ESCAPED_CHAR.sub(lambda m: chr(int(m.group(1), 16)), text)
+
+
+def _rich_text(elm: etree._Element) -> str:
+    """The text of an ``si`` or ``is``: its ``t``, or its runs' ``t``, without phonetic runs."""
+    parts = [t.text or "" for t in elm.iterchildren(_sml("t"))]
+    parts += [t.text or "" for r in elm.iterchildren(_sml("r")) for t in r.iterchildren(_sml("t"))]
+    return "".join(parts)
 
 
 def _check_cell_metadata(book: _Book) -> None:
