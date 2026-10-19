@@ -284,7 +284,9 @@ class _Shift:
         leaves in place; ``None`` for a span, which moves no whole rows (columns)."""
         if self.span is not None:
             return None
-        return replace(self, at=self.at + 1) if self.inserting else self
+        if not self.inserting or self.at > self.limit:
+            return self
+        return replace(self, at=self.at + 1)
 
     def describe(self) -> str:
         noun = "row" if self.rows else "column"
