@@ -34,6 +34,7 @@ XDR_NS = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 CHART_NS = "http://schemas.openxmlformats.org/drawingml/2006/chart"
 CHART_EX_NS = "http://schemas.microsoft.com/office/drawing/2014/chartex"
+C15_NS = "http://schemas.microsoft.com/office/drawing/2012/chart"
 A16_NS = "http://schemas.microsoft.com/office/drawing/2014/main"
 MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 
@@ -1075,6 +1076,23 @@ class Table:
             af.set("ref", ref)
         if self._part is not None:
             self._part._blob = serialize_part_xml(self._element)
+
+
+# Elements whose text is a reference formula: c:f wherever it sits (series
+# names, categories and values, titles, data labels, error bars, filtered
+# series), and the c15 copies Excel keeps in extensions (fullRef, levelRef,
+# formulaRef, category filter exceptions and datalabelsRange).
+_CHART_REFERENCES = (_C_F, f"{{{C15_NS}}}f", f"{{{C15_NS}}}sqref")
+
+
+def chart_parts(package) -> list[ChartPart]:
+    """Every chart part of ``package``, whichever drawing or chartsheet shows it."""
+    return [part for part in package.iter_parts() if isinstance(part, ChartPart)]
+
+
+def chart_references(chart_root: _Element) -> list[_Element]:
+    """The elements of a chart whose text is a reference formula."""
+    return [elm for elm in chart_root.iter(*_CHART_REFERENCES) if elm.text]
 
 
 def _chart_part_for(frame: _Element, drawing_part: DrawingPart) -> Part | None:
