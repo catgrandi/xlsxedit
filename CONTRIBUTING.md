@@ -42,6 +42,27 @@ pytest
 Please make sure the full test suite passes before opening a pull request, and
 add tests for any new behavior.
 
+## Test fixtures
+
+The workbooks in `fixtures/` should be written by Excel, so their XML is what
+real files contain. To add one:
+
+- Build it with a script in
+  [`scripts/excel_fixtures/`](scripts/excel_fixtures/README.md), or save it
+  from Excel by hand.
+- Register it in `INSPECT_FIXTURES` in `tests/conftest.py`, so
+  `tests/test_fidelity.py` checks it. The suite fails while a workbook in
+  `fixtures/` is not registered.
+- Run `python scripts/describe_fixtures.py` and commit the updated
+  `fixtures/MANIFEST.md`. The suite fails while the manifest is stale.
+- If the new workbook makes a test fail because of a library bug, add the test
+  to `KNOWN_FIXTURE_FAILURES` in `tests/conftest.py` with the roadmap issue
+  that fixes it.
+
+An Excel operation that xlsxedit should reproduce gets a folder in
+`fixtures/excel-reference/` and an entry in `OPERATIONS` in
+`tests/test_excel_reference.py`.
+
 ## Commit messages
 
 Write every commit message in the Conventional Commits format defined by the

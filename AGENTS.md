@@ -22,6 +22,8 @@ only points to where each fact lives.
 - [docs/large-data-export.md](docs/large-data-export.md) and
   [docs/pandas.md](docs/pandas.md): bulk export and the pandas engine.
 - [docs/design/](docs/design/README.md): specs and design documents.
+- [fixtures/MANIFEST.md](fixtures/MANIFEST.md): what each test workbook
+  contains.
 - [.github/workflows/](.github/workflows/): CI and release automation.
 - [Roadmap tracking issue](https://github.com/catgrandi/xlsxedit/issues/26):
   planned work.
