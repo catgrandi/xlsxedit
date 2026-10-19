@@ -1,4 +1,4 @@
-"""A refused cell or bulk write changes no package member."""
+"""A refused cell write, bulk write or sheet copy changes no package member."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from tests.preservation import assert_preserved, read_pkg
 from tests.test_formula_hygiene import RANGE_FORMULAS, _plant
 
 SIMPLE = INSPECT_FIXTURES["SimpleFormula"]
+CHARTS = INSPECT_FIXTURES["ChartsAndTables"]
 NUL = chr(0)
 
 BAD_VALUES = {
@@ -192,3 +193,65 @@ def test_bulk_write_beside_the_anchor_still_writes():
     assert ws.write_rows([["x", None, None, "y"]], at_cell="D2") == 1
     assert (ws["D2"].value, ws["G2"].value) == ("x", "y")
     assert ws["E3"].formula_type == "array"
+
+
+# --- copy_worksheet ----------------------------------------------------------------------
+
+
+def test_copy_worksheet_that_fails_while_cloning_changes_nothing(monkeypatch):
+    import xlsxedit.sheet_clone as sheet_clone
+
+    wb = Workbook.open(CHARTS)
+    before = read_pkg(wb)
+    clone_part = sheet_clone._clone_part
+    cloned = []
+
+    def fail_on_the_second_part(package, source, *args):
+        if cloned:
+            raise RuntimeError("injected")
+        cloned.append(source)
+        return clone_part(package, source, *args)
+
+    monkeypatch.setattr(sheet_clone, "_clone_part", fail_on_the_second_part)
+    with pytest.raises(RuntimeError, match="injected"):
+        wb.copy_worksheet("bar chart", "Copy")
+    assert_preserved(before, read_pkg(wb))
+
+    monkeypatch.setattr(sheet_clone, "_clone_part", clone_part)
+    copy = wb.copy_worksheet("bar chart", "Copy")
+    assert copy._part.partname == "/xl/worksheets/sheet4.xml"
+    assert len(copy.charts) == 1
+
+
+@pytest.mark.parametrize(
+    "corrupt",
+    [
+        lambda wb: wb._workbook_part.sheet_elements[0].set("sheetId", "x"),
+        lambda wb: _add_defined_name(wb, "x"),
+    ],
+    ids=["sheetId", "localSheetId"],
+)
+def test_copy_worksheet_refused_by_workbook_xml_changes_nothing(corrupt):
+    wb = Workbook.open(CHARTS)
+    corrupt(wb)
+    before = read_pkg(wb)
+    with pytest.raises(ValueError):
+        wb.copy_worksheet("bar chart", "Copy")
+    assert_preserved(before, read_pkg(wb))
+
+
+def _add_defined_name(wb, local_sheet_id: str) -> None:
+    from lxml import etree
+
+    from xlsxedit.opc.constants import SML_NS
+
+    wb_elm = wb._workbook_part.element
+    block = wb_elm.find(f"{{{SML_NS}}}definedNames")
+    if block is None:
+        block = etree.Element(f"{{{SML_NS}}}definedNames")
+        wb_elm.find(f"{{{SML_NS}}}sheets").addnext(block)
+    for local in ("0", local_sheet_id):
+        name = etree.SubElement(block, f"{{{SML_NS}}}definedName")
+        name.set("name", f"Local{local}")
+        name.set("localSheetId", local)
+        name.text = "'bar chart'!$A$1"
