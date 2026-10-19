@@ -16,7 +16,7 @@ from xlsxedit.bulk_styles import (
     normalize_template_rows,
     validate_style_sources,
 )
-from xlsxedit.cell import _CONTENT_TAGS, Cell, _clear_cell_content
+from xlsxedit.cell import Cell, _clear_cell_content
 from xlsxedit.conditional_formatting import (
     ConditionalFormatting,
     add_cell_is_rule,
@@ -72,6 +72,7 @@ _SHEET_DATA = f"{{{SML_NS}}}sheetData"
 _MERGE_CELLS = f"{{{SML_NS}}}mergeCells"
 _MERGE_CELL = f"{{{SML_NS}}}mergeCell"
 _DIMENSION = f"{{{SML_NS}}}dimension"
+_CELL_CONTENT = (f"{{{SML_NS}}}v", _F, f"{{{SML_NS}}}is")
 _CELL_REFS = etree.XPath("m:row/m:c/@r", namespaces={"m": SML_NS}, smart_strings=False)
 _DIGIT_LETTER = re.compile(r"\d[A-Za-z]")
 _DIGITS = re.compile(r"\d+")
@@ -79,7 +80,7 @@ _LETTERS = re.compile(r"[A-Za-z]+")
 
 
 def _holds_content(c_elm: etree._Element) -> bool:
-    return any(child.tag in _CONTENT_TAGS for child in c_elm)
+    return any(child.tag in _CELL_CONTENT for child in c_elm)
 
 
 def _column_key(address: str) -> tuple[int, str]:
