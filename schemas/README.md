@@ -14,7 +14,8 @@ reads and writes:
 Three tools use them:
 
 - [`scripts/gen_ooxml_order.py`](../scripts/gen_ooxml_order.py) generates
-  the child-element order tables in `src/xlsxedit/_ooxml_order.py`. Run it
+  the child-element order tables in `src/xlsxedit/_ooxml_order.py`: `ORDER`
+  from `transitional/`, `EXTENSION_ORDER` from `microsoft/ms-xlsx/`. Run it
   again after changing a schema; `tests/test_ooxml_order.py` fails until the
   generated module matches.
 - [`tests/schema_validate.py`](../tests/schema_validate.py) validates the
