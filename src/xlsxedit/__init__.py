@@ -7,6 +7,7 @@ from xlsxedit.data_validation import DataValidation
 from xlsxedit.dimensions import ColumnDimension, RowDimension
 from xlsxedit.drawing import Chart, DrawingObject, Picture, Table
 from xlsxedit.exceptions import (
+    DataValidationError,
     DTDForbiddenError,
     DuplicateWorksheetError,
     FormulaGroupError,
@@ -58,5 +59,6 @@ __all__ = [
     "FormulaGroupError",
     "DTDForbiddenError",
     "TableError",
+    "DataValidationError",
 ]
 __version__ = "1.0.1"

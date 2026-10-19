@@ -46,6 +46,10 @@ class TableError(XlsxeditError, ValueError):
     """Raised when a table edit would leave an invalid or inconsistent table part."""
 
 
+class DataValidationError(XlsxeditError, ValueError):
+    """Raised when a data-validation edit would leave a validation Excel rejects or cannot apply."""
+
+
 class FormulaGroupError(XlsxeditError, ValueError):
     """Raised when an edit would split a shared, array, or data-table formula."""
 

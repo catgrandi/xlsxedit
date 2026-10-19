@@ -22,7 +22,12 @@ from xlsxedit.conditional_formatting import (
     expand_conditional_formatting_to_row,
     iter_conditional_formatting,
 )
-from xlsxedit.data_validation import DataValidation, iter_data_validations
+from xlsxedit.data_validation import (
+    DataValidation,
+    delete_data_validation,
+    iter_data_validations,
+    new_data_validation,
+)
 from xlsxedit.dimensions import ColumnDimensions, RowDimensions
 from xlsxedit.drawing import (
     DrawingObject,
@@ -35,7 +40,7 @@ from xlsxedit.drawing import (
     iter_pictures,
     table_parts_for_worksheet,
 )
-from xlsxedit.range_set import column_number
+from xlsxedit.range_set import CellRange, SheetRangeSet, column_number
 from xlsxedit.row_shift import (
     append_merges,
     check_block_in_grid,
@@ -894,7 +899,7 @@ class Worksheet:
     @property
     def data_validations(self) -> list[DataValidation]:
         """The sheet's data validations: its ``dataValidation`` rules in document
-        order, then the x14 rules of its extension list."""
+        order, then the read-only x14 rules of its extension list."""
         return iter_data_validations(self)
 
     def merge_cells(self, cell_range: str) -> None:
@@ -970,6 +975,66 @@ class Worksheet:
     def add_color_scale_formatting(self, cell_range: str) -> ConditionalFormatting:
         """Add a ``colorScale`` conditional formatting rule to ``cell_range``."""
         return clone_color_scale_rule(self, cell_range)
+
+    def add_data_validation(
+        self,
+        sqref: str | CellRange | SheetRangeSet,
+        *,
+        type: str,
+        formula1: str | int | float | None = None,
+        formula2: str | int | float | None = None,
+        operator: str | None = None,
+        allow_blank: bool = True,
+        show_input_message: bool = True,
+        show_error_message: bool = True,
+        error_style: str = "stop",
+        error_title: str | None = None,
+        error: str | None = None,
+        prompt_title: str | None = None,
+        prompt: str | None = None,
+    ) -> DataValidation:
+        """Add a data validation over the cells ``sqref`` names, such as ``"B2:B10 D2"``.
+
+        ``type`` is one of ``none``, ``whole``, ``decimal``, ``list``, ``date``,
+        ``time``, ``textLength`` or ``custom``. Every type but ``none`` needs
+        ``formula1``; a leading ``=`` is dropped and numbers are written as
+        they are. ``whole`` to ``textLength`` compare with ``operator``
+        (default ``between``), and ``between`` and ``notBetween`` also need
+        ``formula2``. A ``list`` formula is a quoted list such as ``'"Yes,No"'``,
+        a range or a defined name. ``allow_blank``, ``show_input_message`` and
+        ``show_error_message`` default to ``True``, as in Excel.
+
+        Raises, changing nothing, ``InvalidRangeError`` for a malformed or
+        empty ``sqref`` or a malformed range of another validation on the
+        sheet, ``TypeError`` for an argument of the wrong type, and
+        :class:`~xlsxedit.exceptions.DataValidationError` for a value the
+        schema or Excel rejects, a formula that refers to another sheet or
+        workbook, and a range that overlaps another validation on the sheet.
+        """
+        return new_data_validation(
+            self,
+            sqref,
+            type=type,
+            formula1=formula1,
+            formula2=formula2,
+            operator=operator,
+            allow_blank=allow_blank,
+            show_input_message=show_input_message,
+            show_error_message=show_error_message,
+            error_style=error_style,
+            error_title=error_title,
+            error=error,
+            prompt_title=prompt_title,
+            prompt=prompt,
+        )
+
+    def remove_data_validation(self, validation: DataValidation) -> None:
+        """Remove ``validation`` from this sheet.
+
+        Raises :class:`~xlsxedit.exceptions.DataValidationError`, changing
+        nothing, for an x14 validation or one that is not on this sheet.
+        """
+        delete_data_validation(self, validation)
 
     def add_image(
         self,
