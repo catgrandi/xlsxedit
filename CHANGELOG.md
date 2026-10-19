@@ -45,6 +45,7 @@ Several changes below are breaking, so the next release is a major one.
 - **Styles** — `apply_style` changes only the properties passed and builds on the cell's current style. Identical styles reuse existing `cellXfs`, font, fill and dxf entries. An empty cell without its own style takes its row's or column's style.
 - **Drawings** — `ws.charts` lists only chart frames. Geometry setters that cannot apply, such as moving a grouped object, raise `ValueError`.
 - **Saving** — parts, `.rels` items and `[Content_Types].xml` that an edit does not change keep their exact bytes, so saving an unedited workbook changes no member. Rewritten parts use Excel's XML declaration. The source's `Default` content types are kept.
+- **Saving** — cell, bulk-write, merge, `clear_range`, row-height, column-width and shared-string edits mark the parts they change, so saving them no longer parses their source a second time, and a changed part releases its source bytes. A part an edit changed is rewritten even if a later edit restores it.
 - **Search and replace** — `replace` sets `fullCalcOnLoad` when it changes a cell.
 - **Performance** — repeated `ws[...]` access no longer rescans the sheet.
 

@@ -48,11 +48,28 @@ def replace_in_si(si: _Element, old: str, new: str) -> int:
 
 
 class SharedStringTable:
-    """Proxy over the sharedStrings part element."""
+    """Proxy over the sharedStrings part element.
 
-    def __init__(self, element: _Element, *, defer_index: bool = False):
+    ``part`` is the part that holds ``element``; edits through this table mark
+    it dirty, so saving it does not compare the tree with the source bytes.
+    """
+
+    def __init__(self, element: _Element, *, defer_index: bool = False, part=None):
         self._element = element
+        self._part = part
         self._sis: list[_Element] | None = None if defer_index else list(element.findall(_SI))
+
+    def mark_dirty(self) -> None:
+        """Mark the shared strings part changed; call only after a change."""
+        if self._part is not None:
+            self._part.mark_dirty()
+
+    def _replace_in(self, si: _Element, old: str, new: str) -> int:
+        before = etree.tostring(si, with_tail=False)
+        count = replace_in_si(si, old, new)
+        if count and etree.tostring(si, with_tail=False) != before:
+            self.mark_dirty()
+        return count
 
     def _ensure_sis(self) -> list[_Element]:
         if self._sis is None:
@@ -69,11 +86,11 @@ class SharedStringTable:
         return si_display_text(self._ensure_sis()[index])
 
     def replace_in_index(self, index: int, old: str, new: str) -> int:
-        return replace_in_si(self._ensure_sis()[index], old, new)
+        return self._replace_in(self._ensure_sis()[index], old, new)
 
     def replace_all(self, old: str, new: str) -> int:
         """Replace in every SST entry. Prefer cell-driven replace for worksheets."""
-        return sum(replace_in_si(si, old, new) for si in self._ensure_sis())
+        return sum(self._replace_in(si, old, new) for si in self._ensure_sis())
 
     def add(self, text: str) -> int:
         """Append a plain string entry; return its 0-based index."""
@@ -87,4 +104,5 @@ class SharedStringTable:
         index = len(sis) - 1
         self._element.set("count", str(int(self._element.get("count", "0")) + 1))
         self._element.set("uniqueCount", str(len(sis)))
+        self.mark_dirty()
         return index

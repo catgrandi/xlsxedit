@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import functools
+from typing import TYPE_CHECKING, Any, Callable, TypeVar
 from datetime import date, datetime
 
 from lxml import etree
@@ -26,12 +27,35 @@ _R = f"{{{SML_NS}}}r"
 _XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
 _RANGE_FORMULA_TYPES = ("array", "dataTable")
+_Method = TypeVar("_Method", bound=Callable[..., Any])
 _RANGE_FORMULAS = etree.XPath(
     "m:sheetData/m:row/m:c/m:f[@t='array' or @t='dataTable']", namespaces={"m": SML_NS}
 )
 _SHARED_FORMULAS = etree.XPath(
     "m:sheetData/m:row/m:c/m:f[@t='shared' and @si=$si]", namespaces={"m": SML_NS}
 )
+
+
+def _marks_sheet(method: _Method) -> _Method:
+    """Mark the worksheet's part dirty when ``method`` changes the cell's element.
+
+    A call that leaves the element as it was, such as setting the value the
+    cell already holds, marks nothing, so the sheet keeps its source bytes.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self: Cell, *args: Any, **kwargs: Any) -> Any:
+        part = self._worksheet._part
+        if part.is_dirty:
+            return method(self, *args, **kwargs)
+        before = etree.tostring(self._element, with_tail=False)
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            if etree.tostring(self._element, with_tail=False) != before:
+                part.mark_dirty()
+
+    return wrapper  # type: ignore[return-value]
 
 
 def _ref_contains(ref: str | None, address: str) -> bool:
@@ -73,9 +97,12 @@ def _inline_t_nodes(is_elm: _Element) -> list[_Element]:
     return nodes
 
 
+_CONTENT_TAGS = (_V, _F, _IS)
+
+
 def _clear_cell_content(c_elm: _Element) -> None:
     for child in list(c_elm):
-        if child.tag in (_V, _F, _IS):
+        if child.tag in _CONTENT_TAGS:
             c_elm.remove(child)
 
 
@@ -181,6 +208,7 @@ class Cell:
         return f.text
 
     @formula.setter
+    @_marks_sheet
     def formula(self, expr: str | None) -> None:
         if expr is None:
             f = self._element.find(_F)
@@ -260,16 +288,19 @@ class Cell:
         """Clear cell content while preserving style index."""
         self.value = None
 
+    @_marks_sheet
     def apply_date_format(self) -> None:
         """Apply a built-in date number format to this cell."""
         styles = self._worksheet._workbook.styles
         styles.apply_date_format(self._element)
 
+    @_marks_sheet
     def apply_number_format(self, format_code: str) -> None:
         """Apply a custom number format string to this cell."""
         styles = self._worksheet._workbook.styles
         styles.apply_num_format(self._element, format_code)
 
+    @_marks_sheet
     def apply_style(
         self,
         *,
@@ -354,6 +385,7 @@ class Cell:
         return numeric
 
     @value.setter
+    @_marks_sheet
     def value(self, new_value: Any) -> None:
         """Set cell content while preserving ``s`` (style index)."""
         if self.has_formula:
@@ -415,6 +447,7 @@ class Cell:
                     si = sst.get(idx)
                     nodes = _t_nodes_in_si(si)
                     if len(nodes) == 1:
+                        before = etree.tostring(si, with_tail=False)
                         nodes[0].text = new_value
                         if " " in new_value or new_value.startswith(" ") or new_value.endswith(
                             " "
@@ -422,6 +455,8 @@ class Cell:
                             nodes[0].set(_XML_SPACE, "preserve")
                         else:
                             nodes[0].attrib.pop(_XML_SPACE, None)
+                        if etree.tostring(si, with_tail=False) != before:
+                            sst.mark_dirty()
                         return
                 _clear_cell_content(self._element)
         else:

@@ -14,7 +14,7 @@ from xlsxedit.bulk_styles import (
     normalize_template_rows,
     validate_style_sources,
 )
-from xlsxedit.cell import Cell, _clear_cell_content
+from xlsxedit.cell import _CONTENT_TAGS, Cell, _clear_cell_content
 from xlsxedit.conditional_formatting import (
     ConditionalFormatting,
     add_cell_is_rule,
@@ -70,6 +70,10 @@ _SHEET_DATA = f"{{{SML_NS}}}sheetData"
 _MERGE_CELLS = f"{{{SML_NS}}}mergeCells"
 _MERGE_CELL = f"{{{SML_NS}}}mergeCell"
 _DIMENSION = f"{{{SML_NS}}}dimension"
+
+
+def _holds_content(c_elm: etree._Element) -> bool:
+    return any(child.tag in _CONTENT_TAGS for child in c_elm)
 
 
 def _column_key(address: str) -> tuple[int, str]:
@@ -470,6 +474,11 @@ class Worksheet:
         count = 0
         max_width = 0
         has_merges = bool(self.merged_ranges)
+        # Until a change is seen, compare each row before and after its write, so
+        # that rewriting the values a sheet already holds leaves it unmarked.
+        sheet_data = self._sheet_data()
+        unchanged = not self._part.is_dirty
+        rows_before = len(sheet_data) if unchanged else 0
 
         def writes_cell(address: str) -> bool:
             """Whether this call also writes ``address`` itself."""
@@ -483,6 +492,7 @@ class Worksheet:
         for offset, row_values in enumerate(row_list):
             row_num = start_row + offset
             row_elm = self._bulk_ensure_row(row_num)
+            before = etree.tostring(row_elm, with_tail=False) if unchanged else None
             if not isinstance(row_values, (list, tuple)):
                 row_values = (row_values,)
             max_width = max(max_width, len(row_values))
@@ -536,8 +546,12 @@ class Worksheet:
                     force_string=col_idx in string_columns,
                     worksheet=self,
                 )
+            if before is not None and etree.tostring(row_elm, with_tail=False) != before:
+                unchanged = False
             count += 1
 
+        if not unchanged or (count and len(sheet_data) != rows_before):
+            self._part.mark_dirty()
         if count:
             end_row = start_row + count - 1
             end_col = start_col_idx + max_width - 1
@@ -663,6 +677,8 @@ class Worksheet:
         plan.apply()
         # Merge first, so the write treats the cells the new merges cover like any other.
         append_merges(self._part.element, new_merges)
+        if new_merges:
+            self._part.mark_dirty()
         self._invalidate_merge_map()
         self._invalidate_bulk_indexes()
 
@@ -791,6 +807,8 @@ class Worksheet:
                 continue
             c_elm.remove(f_elm)
             removed += 1
+        if removed:
+            self._part.mark_dirty()
         return removed
 
     def clear_range(self, cell_range: str) -> int:
@@ -798,6 +816,7 @@ class Worksheet:
         c1, r1, c2, r2 = parse_range(cell_range)
         c1i, c2i = col_to_index(c1), col_to_index(c2)
         cleared = 0
+        changed = False
         for row_num in range(r1, r2 + 1):
             for col_idx in range(c1i, c2i + 1):
                 address = join_address(index_to_col(col_idx), row_num)
@@ -806,9 +825,12 @@ class Worksheet:
                     continue
                 if c_elm.find(_F) is not None:
                     self._workbook._on_formula_removed(self, c_elm)
+                changed = changed or "t" in c_elm.attrib or _holds_content(c_elm)
                 _clear_cell_content(c_elm)
                 c_elm.attrib.pop("t", None)
                 cleared += 1
+        if changed:
+            self._part.mark_dirty()
         if cleared:
             self._invalidate_bulk_indexes()
         return cleared
@@ -857,11 +879,15 @@ class Worksheet:
         root = self._part.element
         dim = root.find(_DIMENSION)
         if dim is None:
-            dim = etree.Element(_DIMENSION)
+            dim, old = etree.Element(_DIMENSION), None
         else:
+            old = (dim.get("ref"), root.index(dim))
             root.remove(dim)
         dim.set("ref", ref)
-        root.insert(self._dimension_insert_index(), dim)
+        at = self._dimension_insert_index()
+        root.insert(at, dim)
+        if old != (ref, at):
+            self._part.mark_dirty()
 
     def expand_conditional_formatting(self, end_row: int) -> int:
         """Extend single-column CF ranges down to ``end_row``. Returns blocks updated."""
@@ -920,6 +946,7 @@ class Worksheet:
         merge_elm = etree.SubElement(block, _MERGE_CELL)
         merge_elm.set("ref", ref)
         block.set("count", str(len(block.findall(_MERGE_CELL))))
+        self._part.mark_dirty()
         self._invalidate_merge_map()
         self._invalidate_bulk_indexes()
 
@@ -940,6 +967,7 @@ class Worksheet:
                 self._part.element.remove(block)
             else:
                 block.set("count", str(count))
+            self._part.mark_dirty()
             self._invalidate_merge_map()
             self._invalidate_bulk_indexes()
 

@@ -80,6 +80,10 @@ class XmlPart(Part):
     bytes does. An untouched part therefore round-trips byte-identically. A
     part whose tree changed, or that was marked with :meth:`mark_dirty`, is
     serialized from the tree.
+
+    Learning whether a handed-out tree changed costs a second parse of the
+    source bytes at save, so the API's write paths mark the parts they change
+    and only a part changed by other means pays for the comparison.
     """
 
     _orig_blob: bytes | None = None
@@ -108,9 +112,22 @@ class XmlPart(Part):
         self._handed_out = True
         return self._element
 
+    @property
+    def is_dirty(self) -> bool:
+        """Whether :meth:`mark_dirty` was called; reading this hands nothing out."""
+        return self._dirty
+
     def mark_dirty(self) -> None:
-        """Serialize the tree on save without comparing it to the source bytes."""
+        """Serialize the tree on save without comparing it to the source bytes.
+
+        Call it only after a change to the tree: an unchanged tree marked dirty
+        is rewritten, and may lose the source's exact bytes. Once the tree is
+        loaded the source bytes are released, as save no longer needs them.
+        """
         self._dirty = True
+        if self._element is not None:
+            self._orig_blob = None
+            self._orig_digest = None
 
     @property
     def blob(self) -> bytes:
