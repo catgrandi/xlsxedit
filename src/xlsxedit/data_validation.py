@@ -59,6 +59,7 @@ _MESSAGE_LIMIT = 255
 _LIST_LIMIT = 255
 _FORMULA_LIMIT = 8192
 
+_XML_SPACE = " \t\r\n"
 _STRING_LITERAL = re.compile(r'"((?:[^"]|"")*)"')
 # Read left to right: a string literal, a quoted or plain sheet name before "!", or a lone "!".
 _FORMULA_TOKENS = re.compile(
@@ -237,6 +238,8 @@ def iter_data_validations(worksheet: Worksheet) -> list[DataValidation]:
 def _check_sqref(value: object) -> SheetRangeSet:
     if isinstance(value, SheetRangeSet):
         ranges = value
+        if not all(isinstance(area, CellRange) for area in ranges):
+            raise TypeError("a SheetRangeSet sqref must hold CellRange areas")
     elif isinstance(value, CellRange):
         ranges = SheetRangeSet((value,))
     elif isinstance(value, str):
@@ -294,12 +297,19 @@ def _check_formula(value: object, name: str, sheet_name: str) -> str | None:
     if isinstance(value, bool) or not isinstance(value, (str, int, float)):
         raise TypeError(f"{name} must be a str, int or float, got {type(value).__name__}")
     if isinstance(value, str):
-        text = value[1:] if value.startswith("=") else value
-    elif abs(value) > sys.float_info.max or (isinstance(value, float) and math.isnan(value)):
-        raise DataValidationError(f"{name} {value!r} is not a number Excel can store")
+        text = value.strip(_XML_SPACE)
+        if text.startswith("="):
+            text = text[1:].strip(_XML_SPACE)
+            if text.startswith("="):
+                raise DataValidationError(f"{name} {value!r} starts with more than one '='")
     else:
-        text = repr(value) if isinstance(value, float) else str(value)
-    if not text.strip():
+        # float() and int() drop subclasses such as numpy floats and IntEnum,
+        # whose repr() and str() are not numbers.
+        number = float(value) if isinstance(value, float) else int(value)
+        if (isinstance(number, float) and math.isnan(number)) or abs(number) > sys.float_info.max:
+            raise DataValidationError(f"{name} {value!r} is not a number Excel can store")
+        text = repr(number) if isinstance(number, float) else str(number)
+    if not text:
         raise DataValidationError(f"{name} is empty")
     if _XML_ILLEGAL.search(text):
         raise DataValidationError(f"{name} {text!r} holds characters XML cannot store")

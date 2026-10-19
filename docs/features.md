@@ -243,7 +243,7 @@ ws.add_data_validation("C2:C100", type="whole", operator="between", formula1=1, 
 
 - `sqref` is a range string, a `CellRange` or a `SheetRangeSet`. It is written as Excel writes it: in capitals, without `$`, `B:B` as `B1:B1048576`, `3:3` as `A3:XFD3`, and each area once.
 - Every type but `none` needs `formula1`. `whole`, `decimal`, `date`, `time` and `textLength` compare the cell with `operator`, which defaults to `between`; `between` and `notBetween` also need `formula2`. Other types take no `operator` and no `formula2`.
-- A formula is a `str`, written without a leading `=`, or an `int` or `float`, written as a number. A `list` formula is a quoted list such as `'"Yes,No"'`, a range on the same sheet, or a defined name.
+- A formula is a `str`, written without surrounding whitespace or a leading `=`, or an `int` or `float`, written as a number. A `list` formula is a quoted list such as `'"Yes,No"'`, a range on the same sheet, or a defined name.
 - `allow_blank`, `show_input_message` and `show_error_message` default to `True`, as in Excel's dialog. Attributes equal to their schema default are left out.
 - Excel allows titles of 32 characters, messages of 255, a quoted list of 255 between its quotes, and formulas of 8,192, counted in UTF-16 code units.
 
