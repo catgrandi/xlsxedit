@@ -11,7 +11,8 @@ and one that straddles it grows; results are clamped to the grid, and an area
 pushed entirely past the last row or column is dropped. On deletion, an area
 before the deleted band stays, one after it moves back, one that straddles it
 shrinks, and one wholly inside it is dropped (a reference to it becomes
-``#REF!``); an area that reaches the last row (column) still reaches it. An
+``#REF!``); a range that reaches the last row (column) still reaches it,
+while a single cell there moves back. An
 area that spans every row, written ``A:A`` or as Excel's ``A1:A1048576``,
 ignores row insertion and deletion, and likewise for columns.
 
