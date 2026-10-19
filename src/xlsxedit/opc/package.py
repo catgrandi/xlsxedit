@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from xlsxedit.opc.constants import CT
+from xlsxedit.opc.constants import PARSED_ON_DEMAND_SUFFIXES
 from xlsxedit.opc.packuri import PACKAGE_URI, PackURI
 from xlsxedit.opc.part import Part, PartFactory, XmlPart
 from xlsxedit.opc.pkgreader import ContentTypeMap, PackageReader
@@ -118,9 +118,9 @@ class Unmarshaller:
         parts = {}
         for partname, content_type, reltype, blob, _srels in pkg_reader.iter_sparts():
             part = part_factory(partname, content_type, reltype, blob, package)
-            if isinstance(part, XmlPart) or content_type == CT.TABLE:
-                # Parts kept as bytes are parsed on first use, which can be partway
-                # through an edit; their DTDs are refused now, before anything changes.
+            if isinstance(part, XmlPart) or content_type.endswith(PARSED_ON_DEMAND_SUFFIXES):
+                # Lazy parts and the byte parts table edits parse on demand are parsed
+                # partway through an edit; their DTDs are refused now, before anything changes.
                 refuse_dtd_in_prolog(blob, partname)
             parts[partname] = part
             package._add_part(part)

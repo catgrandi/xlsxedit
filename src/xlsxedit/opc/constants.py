@@ -83,3 +83,10 @@ SML_NS = NSMAP["main"]
 REL_NS = NSMAP["pr"]
 CT_NS = NSMAP["ct"]
 OFFICE_REL_NS = NSMAP["r"]
+
+# Content-type suffixes of parts kept as bytes that a table edit parses on demand
+# (renames read pivot caches and connections, column drops read slicer caches).
+# Their DTDs are refused at open, like those of every part the library parses.
+TABLE_NAMING_PART_SUFFIXES = (".pivotCacheDefinition+xml", ".connections+xml")
+SLICER_CACHE_PART_SUFFIX = "slicerCache+xml"
+PARSED_ON_DEMAND_SUFFIXES = TABLE_NAMING_PART_SUFFIXES + (SLICER_CACHE_PART_SUFFIX,)

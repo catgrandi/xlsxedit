@@ -14,6 +14,7 @@ from lxml import etree
 from xlsxedit import DTDForbiddenError, Workbook, XlsxeditError
 from xlsxedit.oxml import parse_template_xml, parse_xml
 from xlsxedit.oxml.parser import _PARSER, _TEMPLATE_PARSER, refuse_dtd_in_prolog
+from tests.conftest import INSPECT_FIXTURES
 
 SST = "xl/sharedStrings.xml"
 SHEET = "xl/worksheets/sheet1.xml"
@@ -266,3 +267,15 @@ def test_dtd_in_a_part_xlsxedit_never_parses_is_kept():
     wb.save(saved)
     with zipfile.ZipFile(saved) as z:
         assert z.read("customXml/item1.xml") == item
+
+
+@pytest.mark.parametrize(
+    "member",
+    ["xl/pivotCache/pivotCacheDefinition1.xml", "xl/slicerCaches/slicerCache1.xml"],
+)
+def test_dtd_in_a_part_a_table_edit_reads_is_refused_at_open(member: str):
+    """Table renames read pivot caches and connections, and column drops read slicer
+    caches, so those parts are checked at open like every part the library parses."""
+    hostile = _with_member(INSPECT_FIXTURES["Preservation"], member, _add_doctype("<!DOCTYPE root>"))
+    with pytest.raises(DTDForbiddenError, match=member):
+        Workbook.open(hostile)
