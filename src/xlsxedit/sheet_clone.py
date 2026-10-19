@@ -8,8 +8,6 @@ from copy import deepcopy
 from xlsxedit.opc.constants import CT, RT, SML_NS
 from xlsxedit.opc.packuri import PackURI
 from xlsxedit.opc.part import Part, XmlPart
-from xlsxedit.opc.serialize import serialize_part_xml
-from xlsxedit.oxml.parser import parse_xml
 from xlsxedit.parts import WorksheetPart
 
 _DEFINED_NAMES = f"{{{SML_NS}}}definedNames"
@@ -75,11 +73,11 @@ def _copy_relationships(source: Part, dest: Part, package, cloned: dict[int, Par
         dest.rels.add_relationship(rel.reltype, target, rel.rId)
 
 
-def _uniquify_table(part: Part, workbook) -> None:
+def _uniquify_table(part: XmlPart, workbook) -> None:
     """Give a cloned table part an unused id and name, and fresh revision uids."""
     from xlsxedit.workbook import _next_table_name, _refresh_revision_uids, _table_names_and_ids
 
-    elm = parse_xml(part.blob)
+    elm = part.element
     used_names, used_ids = _table_names_and_ids(workbook, exclude=part)
     new_id = max(used_ids, default=0) + 1
     name = _next_table_name(used_names, new_id)
@@ -87,7 +85,6 @@ def _uniquify_table(part: Part, workbook) -> None:
     elm.set("name", name)
     elm.set("displayName", name)
     _refresh_revision_uids(elm)
-    part._blob = serialize_part_xml(elm)
 
 
 def clone_sheet_relationships(source_part: WorksheetPart, dest_part: WorksheetPart, workbook) -> None:

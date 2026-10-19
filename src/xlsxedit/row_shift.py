@@ -43,8 +43,6 @@ from xlsxedit.exceptions import (
 from xlsxedit.hyperlinks import _release_rel
 from xlsxedit.opc.constants import OFFICE_REL_NS, SML_NS
 from xlsxedit.oxml.address import MAX_COL, MAX_ROW, col_to_index, index_to_col
-from xlsxedit.opc.serialize import serialize_part_xml
-from xlsxedit.oxml.parser import parse_xml
 from xlsxedit.parts import WorksheetPart
 from xlsxedit.range_set import CellRange, SheetRangeSet, shift_bounds
 from xlsxedit.styles import _XML_ILLEGAL, check_style_text, datetime_to_serial, normalize_rgb
@@ -1162,23 +1160,16 @@ class InsertPlan:
         """Refuse an insertion that would push any part of a table off the grid
         (its columns and rows cannot shrink with it), or that would add columns
         inside a table bound to a query."""
-        part = self._worksheet._part
-        block = part.element.find(_TABLE_PARTS)
-        if block is None:
-            return
-        for table_part in block.iterchildren(_TABLE_PART):
-            try:
-                target = part.rels[table_part.get(f"{{{OFFICE_REL_NS}}}id")].target_part
-            except KeyError:
-                continue
-            table = parse_xml(target.blob)
-            name = table.get("displayName") or table.get("name") or str(target.partname)
-            for elm in (table, table.find(_AUTO_FILTER)):
-                ref = None if elm is None else elm.get("ref")
-                if ref and self._insert.clamps(_area(ref, f"table {name!r}")):
-                    raise self._insert.overflow(f"table {name!r} ({ref})")
-            if not self._insert.rows:
-                _check_table_accepts_columns(table, self._insert.at - 1)
+        ins = self._insert
+
+        def check(ref: str, what: str) -> None:
+            if ins.clamps(_area(ref, what)):
+                raise ins.overflow(f"{what} ({ref})")
+
+        for table in self._worksheet.tables:
+            table._check_move(check)
+            if not ins.rows:
+                _check_table_accepts_columns(table._element, ins.at - 1)
 
     def apply(self) -> None:
         _walk_sheet_data(self._worksheet._part.element.find(_SHEET_DATA), self._insert, apply=True)
@@ -1428,26 +1419,10 @@ def shift_range_ref_cols(ref: str, at_col: int, delta: int) -> str:
 
 
 def shift_table_parts(worksheet, at_row: int, delta: int) -> None:
-    """Shift table ``ref`` / ``autoFilter`` for tables linked from the worksheet."""
-    tp = worksheet._part.element.find(_TABLE_PARTS)
-    if tp is None:
-        return
-    for rel_elm in tp.findall(_TABLE_PART):
-        r_id = rel_elm.get(f"{{{OFFICE_REL_NS}}}id")
-        if r_id is None:
-            continue
-        try:
-            part = worksheet._part.rels[r_id].target_part
-        except KeyError:
-            continue
-        table_elm = parse_xml(part.blob)
-        ref = table_elm.get("ref")
-        if ref:
-            table_elm.set("ref", shift_range_ref(ref, at_row, delta))
-        af = table_elm.find(_AUTO_FILTER)
-        if af is not None and af.get("ref"):
-            af.set("ref", shift_range_ref(af.get("ref"), at_row, delta))
-        part._blob = serialize_part_xml(table_elm)
+    """Shift each table of the worksheet, with its ``autoFilter`` and sort state,
+    after row insertion (see ``Table._move``)."""
+    for table in worksheet.tables:
+        table._move(lambda ref: shift_range_ref(ref, at_row, delta))
 
 
 _TABLE_COLUMNS = f"{{{SML_NS}}}tableColumns"
@@ -1517,7 +1492,8 @@ def _insert_table_columns(table_elm: etree._Element, offset: int, delta: int) ->
 
 
 def shift_table_parts_cols(worksheet, at_col: int, delta: int) -> None:
-    """Shift table ``ref`` / ``autoFilter`` columns after column insertion.
+    """Shift each table of the worksheet, with its ``autoFilter`` and sort state,
+    after column insertion (see ``Table._move``).
 
     Columns inserted strictly inside a table join it as new ``tableColumn``s
     (see ``_insert_table_columns``). Raises ``TableError``, before changing
@@ -1525,32 +1501,14 @@ def shift_table_parts_cols(worksheet, at_col: int, delta: int) -> None:
     part would not know the new columns. ``plan_insert_columns`` makes the
     same check before anything on the sheet moves.
     """
-    tp = worksheet._part.element.find(_TABLE_PARTS)
-    if tp is None:
-        return
-    tables = []
-    for rel_elm in tp.findall(_TABLE_PART):
-        r_id = rel_elm.get(f"{{{OFFICE_REL_NS}}}id")
-        if r_id is None:
-            continue
-        try:
-            part = worksheet._part.rels[r_id].target_part
-        except KeyError:
-            continue
-        table_elm = parse_xml(part.blob)
-        tables.append((part, table_elm, _inner_column_offset(table_elm.get("ref"), at_col)))
-    for _part, table_elm, _offset in tables:
-        _check_table_accepts_columns(table_elm, at_col)
-    for part, table_elm, offset in tables:
+    tables = [(t, _inner_column_offset(t.ref, at_col)) for t in worksheet.tables]
+    for table, _offset in tables:
+        _check_table_accepts_columns(table._element, at_col)
+    for table, offset in tables:
         if offset is not None:
-            _insert_table_columns(table_elm, offset, delta)
-        ref = table_elm.get("ref")
-        if ref:
-            table_elm.set("ref", shift_range_ref_cols(ref, at_col, delta))
-        af = table_elm.find(_AUTO_FILTER)
-        if af is not None and af.get("ref"):
-            af.set("ref", shift_range_ref_cols(af.get("ref"), at_col, delta))
-        part._blob = serialize_part_xml(table_elm)
+            _insert_table_columns(table._element, offset, delta)
+            table._part.mark_dirty()
+        table._move(lambda ref: shift_range_ref_cols(ref, at_col, delta))
 
 
 def shift_dollar_ref(ref: str, at_row: int, delta: int) -> str:

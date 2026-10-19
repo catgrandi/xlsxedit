@@ -20,10 +20,9 @@ from xlsxedit.opc.constants import CT, OFFICE_REL_NS, RT, SML_NS
 from xlsxedit.opc.packuri import PackURI
 from xlsxedit.opc.part import Part
 from xlsxedit.oxml.address import col_to_index, index_to_col, join_address, split_address
-from xlsxedit.opc.serialize import serialize_part_xml
-from xlsxedit.oxml.parser import parse_xml
 from xlsxedit.parts import ChartPart, DrawingPart
 from xlsxedit.styles import _XML_ILLEGAL
+from xlsxedit.table import Table, table_parts_for_worksheet  # noqa: F401 (re-exported)
 from xlsxedit.worksheet_order import insert_ordered, insert_worksheet_child
 
 if TYPE_CHECKING:
@@ -81,12 +80,7 @@ _A_R_PR = f"{{{A_NS}}}rPr"
 _A_T = f"{{{A_NS}}}t"
 _A_END_PARA_R_PR = f"{{{A_NS}}}endParaRPr"
 _C_TX_PR = f"{{{CHART_NS}}}txPr"
-_AUTO_FILTER = f"{{{SML_NS}}}autoFilter"
-_TABLE_COLUMNS = f"{{{SML_NS}}}tableColumns"
-_TABLE_COLUMN = f"{{{SML_NS}}}tableColumn"
 _WS_DRAWING = f"{{{SML_NS}}}drawing"
-_TABLE_PARTS = f"{{{SML_NS}}}tableParts"
-_TABLE_PART = f"{{{SML_NS}}}tablePart"
 _XDR_ABSOLUTE = f"{{{XDR_NS}}}absoluteAnchor"
 _XDR_SP = f"{{{XDR_NS}}}sp"
 _XDR_CXN_SP = f"{{{XDR_NS}}}cxnSp"
@@ -1039,45 +1033,6 @@ class Chart(_AnchoredObject):
         self._save_chart_root(root)
 
 
-class Table:
-    """Excel table metadata with resize support."""
-
-    def __init__(self, element: _Element, part: Part | None = None):
-        self._element = element
-        self._part = part
-
-    def __repr__(self) -> str:
-        return f"<Table name={self.name!r} ref={self.ref!r}>"
-
-    @property
-    def name(self) -> str | None:
-        return self._element.get("name")
-
-    @property
-    def ref(self) -> str | None:
-        return self._element.get("ref")
-
-    @property
-    def columns(self) -> list[str]:
-        cols = self._element.find(_TABLE_COLUMNS)
-        if cols is None:
-            return []
-        return [
-            c.get("name", "")
-            for c in cols.findall(_TABLE_COLUMN)
-            if c.get("name")
-        ]
-
-    def resize(self, ref: str) -> None:
-        """Update table ``ref`` and ``autoFilter`` range."""
-        self._element.set("ref", ref)
-        af = self._element.find(_AUTO_FILTER)
-        if af is not None:
-            af.set("ref", ref)
-        if self._part is not None:
-            self._part._blob = serialize_part_xml(self._element)
-
-
 # Elements whose text is a reference formula: c:f wherever it sits (series
 # names, categories and values, titles, data labels, error bars, filtered
 # series), and the c15 copies Excel keeps in extensions (fullRef, levelRef,
@@ -1194,21 +1149,3 @@ def assign_new_object_ids(element: _Element, drawing_root: _Element) -> None:
         next_id += 1
         for creation_id in cnv.iter(_A16_CREATION_ID):
             creation_id.set("id", f"{{{str(uuid.uuid4()).upper()}}}")
-
-
-def table_parts_for_worksheet(worksheet: Worksheet) -> list[Table]:
-    tables: list[Table] = []
-    tp = worksheet._part.element.find(_TABLE_PARTS)
-    if tp is None:
-        return tables
-    for rel_elm in tp.findall(_TABLE_PART):
-        r_id = rel_elm.get(f"{{{OFFICE_REL_NS}}}id")
-        if r_id is None:
-            continue
-        try:
-            part = worksheet._part.rels[r_id].target_part
-            element = parse_xml(part.blob)
-            tables.append(Table(element, part))
-        except KeyError:
-            continue
-    return tables

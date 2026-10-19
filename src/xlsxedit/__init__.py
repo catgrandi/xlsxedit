@@ -5,7 +5,7 @@ from xlsxedit.conditional_formatting import ConditionalFormatRule, ConditionalFo
 from xlsxedit.coreprops import CoreProperties
 from xlsxedit.data_validation import DataValidation
 from xlsxedit.dimensions import ColumnDimension, RowDimension
-from xlsxedit.drawing import Chart, DrawingObject, Picture, Table
+from xlsxedit.drawing import Chart, DrawingObject, Picture
 from xlsxedit.exceptions import (
     DataValidationError,
     DTDForbiddenError,
@@ -23,6 +23,7 @@ from xlsxedit.exceptions import (
 from xlsxedit.hyperlinks import Hyperlink
 from xlsxedit.range_set import CellRange, SheetRangeSet
 from xlsxedit.styles import CellStyle, Color
+from xlsxedit.table import Table, TableColumn, TableStyle
 from xlsxedit.workbook import Workbook
 from xlsxedit.worksheet import Worksheet
 
@@ -35,6 +36,8 @@ __all__ = [
     "Chart",
     "Table",
     # Return types
+    "TableColumn",
+    "TableStyle",
     "ConditionalFormatting",
     "ConditionalFormatRule",
     "DataValidation",

@@ -3,19 +3,16 @@
 from __future__ import annotations
 
 import mimetypes
-import re
-import uuid
 from copy import deepcopy
 from datetime import date, datetime
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Callable
 
 from lxml import etree
 
 from xlsxedit.api import _default_xlsx_path
 from xlsxedit.exceptions import (
     DuplicateWorksheetError,
-    InvalidRangeError,
     TableError,
     WorksheetNotFoundError,
 )
@@ -23,7 +20,6 @@ from xlsxedit.drawing import (
     EMU_PER_PIXEL,
     Picture,
     Chart,
-    Table,
     assign_new_object_ids,
     ensure_drawing_part,
     _px_to_emu,
@@ -36,13 +32,27 @@ from xlsxedit.opc.constants import CT, OFFICE_REL_NS, RT, SML_NS
 from xlsxedit.opc.package import OpcPackage
 from xlsxedit.opc.part import Part
 from xlsxedit.opc.packuri import PackURI
-from xlsxedit.opc.serialize import serialize_part_xml
 from xlsxedit.oxml.address import col_to_index, index_to_col, join_address, split_address
-from xlsxedit.oxml.parser import parse_template_xml, parse_xml
-from xlsxedit.parts import ChartPart, WorkbookPart, WorksheetPart, register_part_types
+from xlsxedit.oxml.parser import parse_template_xml
+from xlsxedit.parts import ChartPart, TablePart, WorkbookPart, WorksheetPart, register_part_types
 from xlsxedit.shared_strings import SharedStringTable
-from xlsxedit.styles import _XML_ILLEGAL, Styles, datetime_to_serial
+from xlsxedit.styles import Styles, datetime_to_serial
 from xlsxedit.cell import Cell, _F, _refuse_range_formula_edit
+from xlsxedit.table import (
+    Table,
+    _box_ref,
+    _boxes_overlap,
+    _check_column_names,
+    _describe,
+    _next_table_name,
+    _range_box,
+    _refresh_revision_uids,
+    _table_box,
+    _table_name_problem,
+    _table_names_and_ids,
+    header_mismatches,
+    table_parts_for_worksheet,
+)
 from xlsxedit.worksheet import Worksheet
 
 register_part_types()
@@ -371,8 +381,7 @@ class Workbook:
         if data_rows_written > 0 and mode == "overwrite":
             end_row = data_start_row + data_rows_written - 1
             if resize is not None:
-                resized, new_ref = resize
-                resized.resize(new_ref)
+                resize()
             if expand_conditional_formatting:
                 ws.expand_conditional_formatting(end_row)
         elif data_rows_written > 0 and mode == "insert" and expand_conditional_formatting:
@@ -829,21 +838,8 @@ class Workbook:
         name: str | None,
         display_name: str | None,
         write_header: bool = False,
-    ) -> "Table":
-        from xlsxedit.drawing import Table
-
-        columns = list(columns)
-        if not columns:
-            raise TableError("columns must not be empty")
-        seen: set[str] = set()
-        for col_name in columns:
-            if not isinstance(col_name, str) or not col_name:
-                raise TableError(f"column names must be non-empty strings, got {col_name!r}")
-            if _XML_ILLEGAL.search(col_name):
-                raise TableError(f"column name {col_name!r} holds characters XML cannot store")
-            if col_name.casefold() in seen:
-                raise TableError(f"duplicate column name {col_name!r} (names ignore case)")
-            seen.add(col_name.casefold())
+    ) -> Table:
+        columns = _check_column_names(columns)
 
         box = _range_box(ref)
         ref = _box_ref(box)
@@ -888,7 +884,7 @@ class Workbook:
             for address, col_name in zip(addresses, columns):
                 Cell(ws._bulk_get_or_create_cell(address, row_elm), ws).value = col_name
         else:
-            problems = _header_mismatches(ws, header_row, first_col, columns)
+            problems = header_mismatches(ws, header_row, first_col, columns)
             if problems:
                 raise TableError(
                     f"the header cells of table range {ref} do not match the column names: "
@@ -921,7 +917,7 @@ class Workbook:
         table_elm.set("id", str(table_id))
 
         table_partname = self._package.next_partname("/xl/tables/table%d.xml")
-        table_part = Part(table_partname, CT.TABLE, serialize_part_xml(table_elm), self._package)
+        table_part = TablePart(table_partname, CT.TABLE, table_elm, self._package)
         self._package._add_part(table_part)
 
         from xlsxedit.worksheet_order import insert_worksheet_child, reposition_worksheet_child
@@ -938,169 +934,10 @@ class Workbook:
         r_id = ws._part.relate_to(table_part, RT.TABLE)
         rel_elm.set(f"{{{OFFICE_REL_NS}}}id", r_id)
 
-        return Table(table_elm, table_part)
+        return next(t for t in table_parts_for_worksheet(ws) if t._part is table_part)
 
 
-# --- Table part helpers ------------------------------------------------------
-
-_MAX_ROW = 1048576
-_MAX_COL = 16384  # columns A..XFD
-
-_DEFINED_NAMES = f"{{{SML_NS}}}definedNames"
-_DEFINED_NAME = f"{{{SML_NS}}}definedName"
-_TABLE_COLUMNS = f"{{{SML_NS}}}tableColumns"
-_TABLE_COLUMN = f"{{{SML_NS}}}tableColumn"
-
-# xr, xr2 and xr3: Excel's revision uids, which must not repeat across parts.
-_REVISION_NAMESPACES = frozenset(
-    {
-        "http://schemas.microsoft.com/office/spreadsheetml/2014/revision",
-        "http://schemas.microsoft.com/office/spreadsheetml/2015/revision2",
-        "http://schemas.microsoft.com/office/spreadsheetml/2016/revision3",
-    }
-)
-
-# Table names follow the defined-name rules: a letter, underscore or
-# backslash, then letters, digits, underscores and periods, and never
-# something Excel would read as an A1 or R1C1 reference inside the grid.
-_TABLE_NAME_RE = re.compile(r"(?:[^\W\d]|\\)[\w.]*")
-_A1_NAME_RE = re.compile(r"([A-Za-z]{1,3})(\d+)")
-_R1C1_NAME_RE = re.compile(r"[Rr](\d*)(?:[Cc](\d*))?|[Cc](\d*)")
-
-
-def _new_revision_uid() -> str:
-    """A fresh revision uid in Excel's ``{GUID}`` form."""
-    return "{" + str(uuid.uuid4()).upper() + "}"
-
-
-def _refresh_revision_uids(root: etree._Element) -> None:
-    """Give every revision ``uid`` attribute in ``root`` a fresh GUID.
-
-    Elements that shared a uid still share one: Excel writes the same uid on
-    a ``<table>`` and its ``<autoFilter>``.
-    """
-    fresh: dict[str, str] = {}
-    for elm in root.iter(etree.Element):
-        for attr, value in list(elm.attrib.items()):
-            qname = etree.QName(attr)
-            if qname.localname == "uid" and qname.namespace in _REVISION_NAMESPACES:
-                elm.set(attr, fresh.setdefault(value.upper(), _new_revision_uid()))
-
-
-def _table_name_problem(name) -> str | None:
-    """Why ``name`` cannot name a table, or ``None`` when it can."""
-    if not isinstance(name, str) or not name:
-        return "must be a non-empty string"
-    if len(name) > 255:
-        return "is longer than 255 characters"
-    if not _TABLE_NAME_RE.fullmatch(name):
-        return (
-            "must start with a letter, underscore or backslash and continue with "
-            "letters, digits, underscores or periods"
-        )
-    if _is_cell_reference(name):
-        return "looks like a cell reference"
-    return None
-
-
-def _is_cell_reference(name: str) -> bool:
-    """Whether Excel reads ``name`` as an A1 or R1C1 reference inside the grid."""
-    a1 = _A1_NAME_RE.fullmatch(name)
-    if a1:
-        return col_to_index(a1[1]) < _MAX_COL and 1 <= int(a1[2]) <= _MAX_ROW
-    r1c1 = _R1C1_NAME_RE.fullmatch(name)
-    if r1c1 is None:
-        return False
-    row, col, lone_col = r1c1.groups()
-    if row is None:
-        col = lone_col
-    return (not row or 1 <= int(row) <= _MAX_ROW) and (not col or 1 <= int(col) <= _MAX_COL)
-
-
-def _table_names_and_ids(
-    workbook: Workbook, *, exclude: Part | None = None
-) -> tuple[set[str], set[int]]:
-    """Names in use (casefolded) and table ids across the workbook.
-
-    Names are every table's ``name`` and ``displayName`` plus the defined
-    names, which share their namespace. Every table part in the package is
-    read, so the tables of a sheet still being copied count too.
-    """
-    names: set[str] = set()
-    ids: set[int] = set()
-    for part in workbook._package.get_parts_of_type(CT.TABLE):
-        if part is exclude:
-            continue
-        elm = parse_xml(part.blob)
-        names.update(v.casefold() for v in (elm.get("name"), elm.get("displayName")) if v)
-        table_id = elm.get("id", "")
-        if table_id.isdigit():
-            ids.add(int(table_id))
-    defined = workbook._workbook_part.element.find(_DEFINED_NAMES)
-    if defined is not None:
-        names.update(
-            elm.get("name").casefold()
-            for elm in defined.iterchildren(_DEFINED_NAME)
-            if elm.get("name")
-        )
-    return names, ids
-
-
-def _next_table_name(used: set[str], start: int) -> str:
-    """The first ``TableN`` with ``N >= start`` not in ``used`` (casefolded names)."""
-    n = max(start, 1)
-    while f"table{n}" in used:
-        n += 1
-    return f"Table{n}"
-
-
-def _range_box(ref: str) -> tuple[int, int, int, int]:
-    """``(first column index, first row, last column index, last row)`` of an A1 range.
-
-    Raises ``InvalidRangeError`` unless the range is ordered and inside the grid.
-    """
-    c1, r1, c2, r2 = parse_range(ref)
-    box = (col_to_index(c1), r1, col_to_index(c2), r2)
-    if not (0 <= box[0] <= box[2] < _MAX_COL and 1 <= box[1] <= box[3] <= _MAX_ROW):
-        raise InvalidRangeError(f"range {ref!r} is reversed or outside A1:XFD1048576")
-    return box
-
-
-def _box_ref(box: tuple[int, int, int, int]) -> str:
-    c1, r1, c2, r2 = box
-    return f"{join_address(index_to_col(c1), r1)}:{join_address(index_to_col(c2), r2)}"
-
-
-def _boxes_overlap(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> bool:
-    return a[0] <= b[2] and b[0] <= a[2] and a[1] <= b[3] and b[1] <= a[3]
-
-
-def _table_box(table: Table) -> tuple[int, int, int, int] | None:
-    """The box of ``table.ref``, or ``None`` when the ref is missing or malformed."""
-    try:
-        return _range_box(table.ref or "")
-    except InvalidRangeError:
-        return None
-
-
-def _header_mismatches(ws: Worksheet, row: int, first_col: int, names: list[str]) -> list[str]:
-    """Describe each header cell that does not hold its column name as plain text."""
-    problems = []
-    for offset, name in enumerate(names):
-        address = join_address(index_to_col(first_col + offset), row)
-        c_elm = ws._find_cell_element(address)
-        cell = None if c_elm is None else Cell(c_elm, ws)
-        if cell is not None and cell.has_formula:
-            problems.append(f"{address} holds a formula, expected {name!r}")
-            continue
-        value = None if cell is None else cell.value
-        if not (isinstance(value, str) and value == name):
-            problems.append(f"{address} {_holds(value)}, expected {name!r}")
-    return problems
-
-
-def _holds(value) -> str:
-    return "is empty" if value is None else f"holds {value!r}"
+# --- write_dataframe table targeting -----------------------------------------
 
 
 def _find_table(ws: Worksheet, table) -> Table:
@@ -1114,7 +951,7 @@ def _find_table(ws: Worksheet, table) -> Table:
         raise TypeError(f"table must be a table name or a Table, got {type(table)!r}")
 
     def is_named(candidate: Table) -> bool:
-        names = (candidate._element.get("name"), candidate._element.get("displayName"))
+        names = (candidate.name, candidate.display_name)
         return table.casefold() in {n.casefold() for n in names if n}
 
     for candidate in ws.tables:
@@ -1134,8 +971,8 @@ def _plan_table_resize(
     start_row: int,
     start_col: int,
     header_row: bool,
-) -> tuple[Table, str] | None:
-    """The table that writing ``rows`` from ``start_row``/``start_col`` resizes, and its ref.
+) -> Callable[[], None] | None:
+    """What resizes the table that writing ``rows`` from ``start_row``/``start_col`` overlaps.
 
     Without a ``target`` this is the one table on ``ws`` that the written
     range overlaps, if any. ``header_row`` says whether the first row holds
@@ -1143,7 +980,8 @@ def _plan_table_resize(
     the rows start at or above it. Raises ``TableError`` when the resize
     would desync the table part: the rows overlap several tables, do not
     span exactly the table's columns, or would put anything but the column
-    names in its header row, or the resized table would overlap another.
+    names in its header row, or the table has a totals row, or when
+    :meth:`Table.resize` refuses the new range. ``None`` when no table is resized.
     """
     width = max(len(row) if isinstance(row, (list, tuple)) else 1 for row in rows)
     if not width:
@@ -1176,13 +1014,13 @@ def _plan_table_resize(
             f"table {target.name!r} ({target.ref}); write those columns, or pass "
             "resize_table=False"
         )
-    cols_elm = target._element.find(_TABLE_COLUMNS)
-    names = _column_names(target)
-    count = None if cols_elm is None else cols_elm.get("count")
-    if len(names) != width or (count is not None and count != str(len(names))):
+    target._check_columns_fit(box)
+    names = target._column_names()
+    if target.totals_row_count:
         raise TableError(
-            f"table {target.name!r} has {len(names)} tableColumn elements (count={count}) "
-            f"but its ref {target.ref} is {width} columns wide"
+            f"table {target.name!r} has a totals row, and resizing the table to end at the last "
+            "written row would make that row its totals row; pass resize_table=False and "
+            "resize the table with Table.resize"
         )
 
     # Body-only writes keep the table's header row: dropping it from the ref
@@ -1190,19 +1028,8 @@ def _plan_table_resize(
     top = written[1] if header_row else min(table_top, written[1])
     bottom = written[3]
     new_box = (first_col, top, last_col, bottom)
-    new_ref = _box_ref(new_box)
-    for other in tables:
-        other_box = _table_box(other)
-        if other._part is not target._part and other_box and _boxes_overlap(other_box, new_box):
-            raise TableError(
-                f"resizing table {target.name!r} to {new_ref} would overlap table "
-                f"{other.name!r} ({other.ref})"
-            )
-    if _has_header_row(target) and top == written[1]:
-        if bottom == top:
-            raise TableError(
-                f"resizing table {target.name!r} to {new_ref} would leave it without a data row"
-            )
+    apply = target._plan_resize(_box_ref(new_box), move_header=True)
+    if target.header_row_count and top == written[1]:
         first = rows[0] if isinstance(rows[0], (list, tuple)) else (rows[0],)
         labels = [*first, *[None] * (width - len(first))]
         problems = _label_mismatches(labels, names, first_col, top)
@@ -1212,7 +1039,7 @@ def _plan_table_resize(
                 f"{target.name!r} but does not hold its column names: {'; '.join(problems)}; "
                 "write the column names there, or start below the header row with header=False"
             )
-    return target, new_ref
+    return apply
 
 
 def _check_header_row_write(
@@ -1225,12 +1052,12 @@ def _check_header_row_write(
     written = (start_col, start_row, start_col + len(labels) - 1, start_row)
     for table in ws.tables:
         box = _table_box(table)
-        if box is None or box[1] != start_row or not _has_header_row(table):
+        if box is None or box[1] != start_row or not table.header_row_count:
             continue
         if not _boxes_overlap(box, written):
             continue
         first, last = max(box[0], written[0]), min(box[2], written[2])
-        names = _column_names(table)[first - box[0] : last - box[0] + 1]
+        names = table._column_names()[first - box[0] : last - box[0] + 1]
         heads = labels[first - start_col : last - start_col + 1]
         problems = _label_mismatches(heads, names, first, start_row)
         if problems:
@@ -1241,22 +1068,10 @@ def _check_header_row_write(
             )
 
 
-def _column_names(table: Table) -> list[str | None]:
-    cols_elm = table._element.find(_TABLE_COLUMNS)
-    return [] if cols_elm is None else [c.get("name") for c in cols_elm.findall(_TABLE_COLUMN)]
-
-
-def _has_header_row(table: Table) -> bool:
-    from xlsxedit._ooxml_order import ATTRIBUTE_DEFAULTS
-
-    default = ATTRIBUTE_DEFAULTS["CT_Table"]["headerRowCount"]
-    return table._element.get("headerRowCount", default) != "0"
-
-
 def _label_mismatches(labels: list, names: list, first_col: int, row: int) -> list[str]:
     """Describe each label, heading the columns from ``first_col`` on, that is not its name."""
     return [
-        f"{join_address(index_to_col(first_col + i), row)} {_holds(label)}, expected {name!r}"
+        f"{join_address(index_to_col(first_col + i), row)} {_describe(label)}, expected {name!r}"
         for i, (label, name) in enumerate(zip(labels, names))
         if not (isinstance(label, str) and label == name)
     ]

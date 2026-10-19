@@ -1,5 +1,6 @@
-"""Table part integrity: ``write_dataframe`` resizing, ``add_table`` naming and
-validation, ``copy_worksheet`` clones, and ``tableColumns`` on column insert.
+"""Tables: the ``Table`` model over the live table part, ``Table.resize`` and the
+setters, ``write_dataframe`` resizing, ``add_table`` naming and validation,
+``copy_worksheet`` clones, and tables under row and column inserts.
 
 Every test reads the table parts back from the saved package; the suite guard
 in ``tests/conftest.py`` also runs ``check_consistency`` on every workbook
@@ -8,17 +9,20 @@ built here.
 
 from __future__ import annotations
 
+import io
 import re
 import typing
+import zipfile
 
 import pytest
 from lxml import etree
 
-from xlsxedit import Table, Workbook
+from xlsxedit import Table, TableColumn, TableStyle, Workbook
 from xlsxedit.exceptions import FormulaGroupError, InvalidRangeError, TableError
 from xlsxedit.opc.constants import SML_NS
+from xlsxedit.parts import TablePart
 from tests.conftest import INSPECT_FIXTURES
-from tests.preservation import assert_preserved, check_consistency, read_pkg
+from tests.preservation import assert_preserved, canon, check_consistency, read_pkg
 from tests.schema_validate import assert_valid_package
 
 # Sheet "Table" holds Table2 (id 2) over A1:C11: Item, Price, Quantity.
@@ -64,6 +68,62 @@ def _summary(table: etree._Element) -> dict:
         "count": cols.get("count"),
         "columns": [(c.get("id"), c.get("name")) for c in cols.iterchildren(_sml("tableColumn"))],
     }
+
+
+def _edited_tables(*edits: tuple[bytes, bytes], member: str = TABLE) -> Workbook:
+    """The ``ChartsAndTables`` fixture with each ``(old, new)`` replaced in ``member``."""
+    return _edited_package(*((member, old, new) for old, new in edits))
+
+
+def _edited_package(*edits: tuple[str, bytes, bytes]) -> Workbook:
+    """The ``ChartsAndTables`` fixture with each ``(member, old, new)`` replacement made."""
+    pkg = dict(read_pkg(TABLES))
+    for member, old, new in edits:
+        assert pkg[member].count(old) == 1, old
+        pkg[member] = pkg[member].replace(old, new)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for member, blob in pkg.items():
+            z.writestr(member, blob)
+    buf.seek(0)
+    return Workbook.open(buf)
+
+
+_FIXTURE_FILTER = f'<autoFilter ref="A1:C11" xr:uid="{FIXTURE_UID}"/>'.encode()
+
+# Table2 with a totals row on row 11, a descending sort on Price, a dxf and
+# cell style, and a label, a totals function and a calculated column.
+_RICH = (
+    (TABLE, b'totalsRowShown="0"', b'totalsRowCount="1" headerRowDxfId="0" dataCellStyle="Normal"'),
+    (
+        TABLE,
+        _FIXTURE_FILTER,
+        f'<autoFilter ref="A1:C10" xr:uid="{FIXTURE_UID}">'.encode()
+        + b'<sortState ref="A2:C10"><sortCondition descending="1" ref="B2:B10"/></sortState>'
+        + b"</autoFilter>",
+    ),
+    (TABLE, b'name="Item"/>', b'name="Item" uniqueName="Item" totalsRowLabel="Total"/>'),
+    (TABLE, b'name="Price"/>', b'name="Price" totalsRowFunction="sum" dataDxfId="0"/>'),
+    (
+        TABLE,
+        b'name="Quantity"/>',
+        b'name="Quantity" totalsRowFunction="custom">'
+        b"<calculatedColumnFormula>Table2[[#This Row],[Price]]*2</calculatedColumnFormula>"
+        b"<totalsRowFormula>SUM(Table2[Quantity])</totalsRowFormula></tableColumn>",
+    ),
+    ("xl/styles.xml", b'<dxfs count="0"/>', b'<dxfs count="1"><dxf><font><b/></font></dxf></dxfs>'),
+)
+
+
+def _rich() -> Workbook:
+    return _edited_package(*_RICH)
+
+
+def _replaced(blob: bytes, *edits: tuple[bytes, bytes]) -> bytes:
+    for old, new in edits:
+        assert blob.count(old) == 1, old
+        blob = blob.replace(old, new)
+    return blob
 
 
 def _identity(table: etree._Element) -> tuple[str | None, str | None, str | None]:
@@ -148,7 +208,8 @@ def test_write_dataframe_header_without_rows_must_hold_the_column_names():
     wb = Workbook.open(TABLES)
     before = read_pkg(wb)
     with pytest.raises(
-        TableError, match="overwrite the header of table 'Table2' .*A1 holds 'item', expected 'Item'"
+        TableError,
+        match="overwrite the header of table 'Table2' .*A1 holds 'item', expected 'Item'",
     ):
         wb.write_dataframe(Frame(["item", "Price", "Quantity"], []), sheet="Table")
     assert_preserved(before, read_pkg(wb))
@@ -264,9 +325,7 @@ def test_write_dataframe_type_hints_resolve():
 
 
 def test_write_dataframe_refuses_a_table_whose_columns_already_disagree(unchecked_workbooks):
-    wb = Workbook.open(TABLES)
-    part = wb["Table"].tables[0]._part
-    part._blob = part.blob.replace(b'<tableColumns count="3">', b'<tableColumns count="4">')
+    wb = _edited_tables((b'<tableColumns count="3">', b'<tableColumns count="4">'))
     with pytest.raises(TableError, match=r"has 3 tableColumn elements \(count=4\)"):
         wb.write_dataframe([("Pen", 1.5, 4)], sheet="Table", at_cell="A2", header=False)
     violations = check_consistency(wb, waive={"table-columns"})
@@ -564,14 +623,12 @@ def test_insert_columns_at_a_table_edge_moves_or_misses_it(at_col, ref):
 
 
 def test_insert_columns_moves_filter_columns_with_their_columns():
-    wb = Workbook.open(TABLES)
-    part = wb["Table"].tables[0]._part
     filters = (
         b'<filterColumn colId="0"><filters><filter val="Pen"/></filters></filterColumn>'
         b'<filterColumn colId="2"><filters><filter val="3"/></filters></filterColumn>'
     )
-    part._blob = part.blob.replace(
-        b'4BB8C}"/><tableColumns', b'4BB8C}">' + filters + b"</autoFilter><tableColumns"
+    wb = _edited_tables(
+        (b'4BB8C}"/><tableColumns', b'4BB8C}">' + filters + b"</autoFilter><tableColumns")
     )
     wb["Table"].insert_columns([[None]], at_col="B")
     table = _saved_tables(wb)[TABLE]
@@ -579,22 +636,447 @@ def test_insert_columns_moves_filter_columns_with_their_columns():
 
 
 def test_insert_columns_refuses_a_table_bound_to_a_query():
-    wb = Workbook.open(TABLES)
-    part = wb["Table"].tables[0]._part
-    part._blob = part.blob.replace(b'name="Price"/>', b'name="Price" queryTableFieldId="2"/>')
-    bound = part.blob
-    sheet = wb["Table"]
-    cells_before = [(c.address, c.value) for c in sheet.cells]
-    with pytest.raises(
-        TableError, match=r"cannot insert columns inside table 'Table2' \(A1:C11\)"
-    ):
-        sheet.insert_columns([[None]], at_col="B")
-    assert part.blob == bound
+    bind = (b'name="Price"/>', b'name="Price" queryTableFieldId="2"/>')
+    wb = _edited_tables(bind)
+    before = read_pkg(wb)
+    with pytest.raises(TableError, match=r"cannot insert columns inside table 'Table2' \(A1:C11\)"):
+        wb["Table"].insert_columns([[None]], at_col="B")
     # The refusal comes from the plan, before any cell on the sheet moves.
-    assert [(c.address, c.value) for c in sheet.cells] == cells_before
+    assert_preserved(before, read_pkg(wb))
 
-    wb = Workbook.open(TABLES)
-    part = wb["Table"].tables[0]._part
-    part._blob = part.blob.replace(b'name="Price"/>', b'name="Price" queryTableFieldId="2"/>')
+    wb = _edited_tables(bind)
     wb["Table"].insert_columns([[None]], at_col="A")
     assert _summary(_saved_tables(wb)[TABLE])["ref"] == "B1:D11"
+
+
+# --- the Table model ------------------------------------------------------------
+
+
+def test_tables_are_live_proxies_over_their_table_parts():
+    wb = Workbook.open(TABLES)
+    ws = wb["Table"]
+    table = ws.tables[0]
+    assert ws.tables[0] is table
+    assert type(table._part) is TablePart
+    ws.insert_rows([["Pen", 1.5, 4]], at_row=5)
+    assert table.ref == "A1:C12"
+    assert _summary(_saved_tables(wb)[TABLE]) == _fixture_table("A1:C12")
+
+
+def test_add_table_returns_the_proxy_ws_tables_hands_out():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    table = ws.add_table("A1:B2", ["x", "y"], write_header=True)
+    assert ws.tables == [table] and ws.tables[0] is table
+    assert type(table._part) is TablePart
+
+
+def test_reading_a_table_and_writing_what_it_holds_leaves_its_part_byte_for_byte():
+    before = read_pkg(TABLES)
+    wb = Workbook.open(TABLES)
+    table = wb["Table"].tables[0]
+    for attr in ("name", "display_name", "ref", "columns", "column_objects", "style", "data_range"):
+        getattr(table, attr)
+    table.resize("A1:C11")
+    table.resize("a1:c11", columns=["Item", "Price", "Quantity"])
+    table.display_name = "Table2"
+    table.header_row_count = 1
+    table.totals_row_count = 0
+    table.totals_row_shown = False
+    table.style = table.style
+    table.data_dxf_id = None
+    after = read_pkg(wb)
+    assert after[TABLE] == before[TABLE]
+    assert_preserved(before, after)
+
+
+def test_table_reads_the_fixture_and_the_schema_defaults():
+    table = Workbook.open(TABLES)["Table"].tables[0]
+    assert (table.id, table.name, table.display_name, table.ref) == (
+        2,
+        "Table2",
+        "Table2",
+        "A1:C11",
+    )
+    assert table.columns == ["Item", "Price", "Quantity"]
+    assert (table.header_row_count, table.totals_row_count, table.totals_row_shown) == (1, 0, False)
+    assert table.style == TableStyle("TableStyleMedium2", False, False, True, False)
+    assert table.data_dxf_id is table.header_row_dxf_id is table.table_border_dxf_id is None
+    assert table.data_cell_style is None
+    assert (table.header_range, table.data_range, table.totals_range) == ("A1:C1", "A2:C11", None)
+    assert (table.first_data_row, table.last_data_row) == (2, 11)
+    item = table.column_objects[0]
+    assert isinstance(item, TableColumn)
+    assert (item.id, item.name, item.totals_row_function) == (1, "Item", "none")
+    assert item.calculated_column_formula is item.totals_row_formula is item.unique_name is None
+
+
+def test_table_reads_every_formatting_and_column_attribute():
+    table = _rich()["Table"].tables[0]
+    assert (table.totals_row_count, table.totals_row_shown) == (1, True)
+    assert (table.header_row_dxf_id, table.data_dxf_id, table.data_cell_style) == (
+        0,
+        None,
+        "Normal",
+    )
+    assert (table.data_range, table.totals_range, table.last_data_row) == ("A2:C10", "A11:C11", 10)
+    item, price, quantity = table.column_objects
+    assert (item.unique_name, item.totals_row_label) == ("Item", "Total")
+    assert (price.totals_row_function, price.data_dxf_id) == ("sum", 0)
+    assert quantity.totals_row_function == "custom"
+    assert quantity.calculated_column_formula == "Table2[[#This Row],[Price]]*2"
+    assert quantity.totals_row_formula == "SUM(Table2[Quantity])"
+    assert item.query_table_field_id is None
+
+
+def test_a_table_without_a_header_row_has_no_header_range():
+    wb = _edited_tables(
+        (b'totalsRowShown="0"', b'headerRowCount="0" totalsRowShown="0"'), (_FIXTURE_FILTER, b"")
+    )
+    table = wb["Table"].tables[0]
+    assert (table.header_range, table.data_range, table.first_data_row) == (None, "A1:C11", 1)
+
+
+def test_table_reports_a_malformed_attribute():
+    table = _edited_tables((b'totalsRowShown="0"', b'totalsRowShown="0" totalsRowCount="x"'))
+    with pytest.raises(TableError, match="table 'Table2' has a malformed totalsRowCount 'x'"):
+        table["Table"].tables[0].totals_row_count
+
+
+# --- Table.resize ---------------------------------------------------------------
+
+
+def test_resize_keeps_the_totals_row_out_of_the_filter_and_everything_else_as_it_was():
+    wb = _rich()
+    before = read_pkg(wb)
+    wb["Table"].tables[0].resize("A1:C12")
+    after = read_pkg(wb)
+    assert_preserved(before, after, expected_changed={TABLE})
+    expected = _replaced(
+        before[TABLE],
+        (b'ref="A1:C11"', b'ref="A1:C12"'),
+        (b'<autoFilter ref="A1:C10"', b'<autoFilter ref="A1:C11"'),
+        (b'<sortState ref="A2:C10"', b'<sortState ref="A2:C11"'),
+        (b'ref="B2:B10"', b'ref="B2:B11"'),
+    )
+    # xr:uid, xr3:uid, mc:Ignorable, dxf ids, styles and column formulas are untouched.
+    assert canon(TABLE, after[TABLE]) == canon(TABLE, expected)
+    assert after[TABLE].startswith(b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n')
+    assert_valid_package(wb)
+
+
+def test_resize_clamps_the_sort_state_into_the_new_data_rows():
+    wb = _rich()
+    wb["Table"].tables[0].resize("A1:C5")
+    table = _saved_tables(wb)[TABLE]
+    af = table.find(_sml("autoFilter"))
+    assert af.get("ref") == "A1:C4"
+    assert af.find(_sml("sortState")).get("ref") == "A2:C4"
+    assert af.find(f"{_sml('sortState')}/{_sml('sortCondition')}").get("ref") == "B2:B4"
+
+
+def test_resize_drops_a_sort_condition_whose_column_leaves_the_table():
+    wb = _rich()
+    wb["Table"].tables[0].resize("A1:A12", columns=["Item"])
+    af = _saved_tables(wb)[TABLE].find(_sml("autoFilter"))
+    assert af.get("ref") == "A1:A11"
+    assert af.find(_sml("sortState")) is None
+
+
+def test_resize_without_a_header_row_removes_the_auto_filter():
+    wb = _edited_tables((b'totalsRowShown="0"', b'headerRowCount="0" totalsRowShown="0"'))
+    wb["Table"].tables[0].resize("A1:C12")
+    table = _saved_tables(wb)[TABLE]
+    assert table.get("ref") == "A1:C12"
+    assert table.find(_sml("autoFilter")) is None
+
+
+def test_resize_adds_columns_named_by_columns_and_writes_empty_headers():
+    wb = Workbook.open(TABLES)
+    ws = wb["Table"]
+    ws["E1"].value = "Note"
+    ws.tables[0].resize("A1:E11", columns=["Item", "Price", "Quantity", "Total", "Note"])
+    summary = _summary(_saved_tables(wb)[TABLE])
+    assert summary == _fixture_table("A1:E11", [*FIXTURE_COLUMNS, ("4", "Total"), ("5", "Note")])
+    assert [ws[a].value for a in ("D1", "E1")] == ["Total", "Note"]
+
+
+def test_resize_drops_columns_and_moves_their_filters():
+    filters = (
+        b'<filterColumn colId="0"><filters><filter val="Pen"/></filters></filterColumn>'
+        b'<filterColumn colId="2"><filters><filter val="3"/></filters></filterColumn>'
+    )
+    wb = _edited_tables((_FIXTURE_FILTER, _FIXTURE_FILTER[:-2] + b">" + filters + b"</autoFilter>"))
+    wb["Table"].tables[0].resize("B1:C11", columns=["Price", "Quantity"])
+    table = _saved_tables(wb)[TABLE]
+    assert _summary(table) == _fixture_table("B1:C11", FIXTURE_COLUMNS[1:])
+    assert [fc.get("colId") for fc in table.iter(_sml("filterColumn"))] == ["1"]
+
+
+@pytest.mark.parametrize(
+    ("ref", "columns", "message"),
+    [
+        ("A2:C12", None, r"would move its header row from row 1 to row 2"),
+        ("A1:C1", None, r"resizing table 'Table2' to A1:C1 would leave it without a data row"),
+        ("A1:D11", None, r"would change its columns \(A1:C11\); pass columns="),
+        (
+            "A1:C11",
+            ["Item", "Cost", "Quantity"],
+            r"named 'Price', not 'Cost'; resize does not rename",
+        ),
+        ("A1:D11", ["Item", "Price", "Quantity", "price"], r"duplicate column name 'price'"),
+        ("A1:D11", ["Item", "Price"], r"2 column names were given for a range 4 columns wide"),
+        (
+            "A1:D11",
+            ["Item", "Price", "Quantity", "Unit"],
+            r"header cell D1 of new column 'Unit' holds 'x'",
+        ),
+    ],
+    ids=[
+        "header-moves",
+        "no-data-row",
+        "no-columns",
+        "rename",
+        "duplicate",
+        "width",
+        "header-cell",
+    ],
+)
+def test_resize_refuses_without_changing_anything(ref, columns, message):
+    wb = Workbook.open(TABLES)
+    ws = wb["Table"]
+    ws["D1"].value = "x"
+    before = read_pkg(wb)
+    with pytest.raises(TableError, match=message):
+        ws.tables[0].resize(ref, columns=columns)
+    assert_preserved(before, read_pkg(wb))
+
+
+def test_resize_refuses_a_range_that_misses_the_table_or_overlaps_another():
+    wb = _side_by_side()
+    left = wb["Sheet1"].tables[0]
+    before = read_pkg(wb)
+    with pytest.raises(TableError, match=r"to G1:H3 would not overlap its current range A1:B3"):
+        left.resize("G1:H3", columns=["Item", "Qty"])
+    with pytest.raises(
+        TableError, match=r"resizing table 'Left' to A1:D3 would overlap table 'Right' \(D1:E3\)"
+    ):
+        left.resize("A1:D3", columns=["Item", "Qty", "x", "Day"])
+    with pytest.raises(InvalidRangeError):
+        left.resize("B3:A1")
+    with pytest.raises(TypeError):
+        left.resize(None)
+    assert_preserved(before, read_pkg(wb))
+
+
+def test_resize_refuses_to_drop_a_column_a_formula_names():
+    wb = Workbook.open(TABLES)
+    ws = wb["Table"]
+    ws["E1"].formula = "SUM(Table2[Quantity])"
+    before = read_pkg(wb)
+    with pytest.raises(
+        TableError, match=r"would drop column 'Quantity', which cell E1 of sheet 'Table'"
+    ):
+        ws.tables[0].resize("A1:B11", columns=["Item", "Price"])
+    assert_preserved(before, read_pkg(wb))
+    ws.tables[0].resize("B1:C11", columns=["Price", "Quantity"])
+    assert ws.tables[0].columns == ["Price", "Quantity"]
+
+
+# --- Table setters ----------------------------------------------------------------
+
+
+def test_display_name_renames_a_table_no_formula_names():
+    wb = Workbook.open(TABLES)
+    table = wb["Table"].tables[0]
+    table.display_name = "Sales"
+    assert _identity(_saved_tables(wb)[TABLE]) == ("2", "Table2", "Sales")
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("A1", "looks like a cell reference"),
+        ("1st", "must start with a letter"),
+        ("Chart", "is already used by a table or defined name"),
+        ("", "must be a non-empty string"),
+    ],
+)
+def test_display_name_refuses_an_invalid_or_used_name(value, message):
+    wb = Workbook.open(TABLES)
+    _add_defined_name(wb, "chart")
+    before = read_pkg(wb)
+    with pytest.raises(TableError, match=message):
+        wb["Table"].tables[0].display_name = value
+    assert_preserved(before, read_pkg(wb))
+
+
+def test_display_name_refuses_to_rename_a_table_a_formula_names():
+    wb = Workbook.open(TABLES)
+    wb["Table"]["E1"].formula = "ROWS(table2)"
+    before = read_pkg(wb)
+    with pytest.raises(
+        TableError, match=r"would break cell E1 of sheet 'Table', whose formula 'ROWS\(table2\)'"
+    ):
+        wb["Table"].tables[0].display_name = "Sales"
+    assert_preserved(before, read_pkg(wb))
+    wb["Table"].tables[0].display_name = "TABLE2"  # only the case changes
+
+    wb = Workbook.open(TABLES)
+    _add_defined_name(wb, "Total")
+    names = wb._workbook_part.element.find(_sml("definedNames"))
+    names.find(f"{_sml('definedName')}[@name='Total']").text = "SUM(Table2[Price])"
+    with pytest.raises(TableError, match="would break defined name 'Total'"):
+        wb["Table"].tables[0].display_name = "Sales"
+
+
+def test_display_name_reads_only_the_sheets_that_mention_the_name():
+    wb = Workbook.open(TABLES, large=True)
+    wb["Table"].tables[0].display_name = "Sales"
+    assert wb["bar chart"]._part.unparsed_blob is not None
+    assert _identity(_saved_tables(wb)[TABLE])[2] == "Sales"
+
+
+def test_header_row_count_turns_the_header_into_data_and_back():
+    wb = Workbook.open(TABLES)
+    table = wb["Table"].tables[0]
+    table.header_row_count = 0
+    saved = _saved_tables(wb)[TABLE]
+    assert saved.get("headerRowCount") == "0" and saved.find(_sml("autoFilter")) is None
+    assert (table.ref, table.data_range, table.header_range) == ("A1:C11", "A1:C11", None)
+    table.header_row_count = 1
+    saved = _saved_tables(wb)[TABLE]
+    assert saved.get("headerRowCount") is None and table.header_range == "A1:C1"
+
+
+def test_header_row_count_refuses_a_first_row_without_the_column_names():
+    wb = _edited_tables(
+        (b'totalsRowShown="0"', b'headerRowCount="0" totalsRowShown="0"'), (_FIXTURE_FILTER, b"")
+    )
+    ws = wb["Table"]
+    ws["B1"].value = "Cost"
+    before = read_pkg(wb)
+    with pytest.raises(
+        TableError, match="B1 holds 'Cost', expected 'Price'; write them there first"
+    ):
+        ws.tables[0].header_row_count = 1
+    with pytest.raises(TableError, match="must be 0 or 1, got 2"):
+        ws.tables[0].header_row_count = 2
+    with pytest.raises(TypeError):
+        ws.tables[0].header_row_count = True
+    assert_preserved(before, read_pkg(wb))
+
+
+def test_totals_row_count_turns_the_last_data_row_into_the_totals_row():
+    wb = Workbook.open(TABLES)
+    table = wb["Table"].tables[0]
+    table.totals_row_count = 1
+    saved = _saved_tables(wb)[TABLE]
+    assert (saved.get("totalsRowCount"), saved.get("totalsRowShown")) == ("1", None)
+    assert saved.find(_sml("autoFilter")).get("ref") == "A1:C10"
+    assert (table.totals_range, table.totals_row_shown) == ("A11:C11", True)
+    with pytest.raises(TableError, match="shows its totals row; set totals_row_count to 0 first"):
+        table.totals_row_shown = False
+    table.totals_row_count = 0
+    table.totals_row_shown = False
+    assert _summary(_saved_tables(wb)[TABLE]) == _fixture_table()
+
+
+def test_totals_row_count_moves_the_sort_state_with_the_last_data_row():
+    wb = _rich()
+    wb["Table"].tables[0].totals_row_count = 0
+    af = _saved_tables(wb)[TABLE].find(_sml("autoFilter"))
+    assert (af.get("ref"), af.find(_sml("sortState")).get("ref")) == ("A1:C11", "A2:C11")
+
+
+def test_totals_row_count_refuses_to_leave_no_data_row():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    table = ws.add_table("A1:B2", ["x", "y"], write_header=True)
+    before = read_pkg(wb)
+    with pytest.raises(
+        TableError,
+        match="setting totals_row_count of table 'Table1' to 1 would leave it without a data row",
+    ):
+        table.totals_row_count = 1
+    assert_preserved(before, read_pkg(wb))
+
+
+def test_style_writes_table_style_info():
+    wb = Workbook.open(TABLES)
+    table = wb["Table"].tables[0]
+    table.style = TableStyle("TableStyleLight9", show_first_column=True, show_row_stripes=False)
+    info = _saved_tables(wb)[TABLE].find(_sml("tableStyleInfo"))
+    assert dict(info.attrib) == {
+        "name": "TableStyleLight9",
+        "showFirstColumn": "1",
+        "showLastColumn": "0",
+        "showRowStripes": "0",
+        "showColumnStripes": "0",
+    }
+    table.style = None
+    assert _saved_tables(wb)[TABLE].find(_sml("tableStyleInfo")) is None
+    table.style = TableStyle(name=None)
+    assert table.style == TableStyle(name=None)
+    assert_valid_package(wb)
+
+
+def test_style_refuses_an_unknown_style_name():
+    wb = Workbook.open(TABLES)
+    before = read_pkg(wb)
+    with pytest.raises(TableError, match="'TableStyleMedium29' is neither a built-in table style"):
+        wb["Table"].tables[0].style = TableStyle("TableStyleMedium29")
+    with pytest.raises(TypeError):
+        wb["Table"].tables[0].style = "TableStyleMedium2"
+    assert_preserved(before, read_pkg(wb))
+
+
+def test_dxf_ids_must_name_a_dxf_of_the_stylesheet():
+    wb = Workbook.open(TABLES)
+    table = wb["Table"].tables[0]
+    before = read_pkg(wb)
+    with pytest.raises(TableError, match="dxf id 0 is not in styles.xml, which has 0 dxf entries"):
+        table.header_row_dxf_id = 0
+    with pytest.raises(TypeError):
+        table.header_row_dxf_id = True
+    assert_preserved(before, read_pkg(wb))
+    dxf = wb.styles.ensure_dxf(bold=True)
+    table.header_row_dxf_id = dxf
+    table.table_border_dxf_id = dxf
+    saved = _saved_tables(wb)[TABLE]
+    assert (saved.get("headerRowDxfId"), saved.get("tableBorderDxfId")) == ("0", "0")
+    table.table_border_dxf_id = None
+    assert _saved_tables(wb)[TABLE].get("tableBorderDxfId") is None
+
+
+# --- tables under row and column inserts -----------------------------------------
+
+
+@pytest.mark.parametrize("at_row", [5, 11], ids=["inside", "at-the-totals-row"])
+def test_insert_rows_grows_the_data_rows_above_the_totals_row(at_row):
+    wb = _rich()
+    wb["Table"].insert_rows([[None]], at_row=at_row)
+    table = _saved_tables(wb)[TABLE]
+    af = table.find(_sml("autoFilter"))
+    sort_state = af.find(_sml("sortState"))
+    assert (table.get("ref"), af.get("ref")) == ("A1:C12", "A1:C11")
+    assert (sort_state.get("ref"), sort_state[0].get("ref")) == ("A2:C11", "B2:B11")
+
+
+def test_insert_columns_moves_the_sort_state_with_its_columns():
+    wb = _rich()
+    wb["Table"].insert_columns([["Total"]], at_col="B")
+    sort_state = _saved_tables(wb)[TABLE].find(f"{_sml('autoFilter')}/{_sml('sortState')}")
+    assert (sort_state.get("ref"), sort_state[0].get("ref")) == ("A2:D10", "C2:C10")
+
+
+def test_write_dataframe_refuses_to_resize_a_table_with_a_totals_row():
+    wb = _rich()
+    before = read_pkg(wb)
+    with pytest.raises(TableError, match="table 'Table2' has a totals row"):
+        wb.write_dataframe([("Pen", 1.5, 4)], sheet="Table", at_cell="A2", header=False)
+    assert_preserved(before, read_pkg(wb))
+    wb.write_dataframe(
+        [("Pen", 1.5, 4)], sheet="Table", at_cell="A2", header=False, resize_table=False
+    )
+    assert _saved_tables(wb)[TABLE].get("ref") == "A1:C11"
