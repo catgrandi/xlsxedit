@@ -998,10 +998,12 @@ class Worksheet:
         ``type`` is one of ``none``, ``whole``, ``decimal``, ``list``, ``date``,
         ``time``, ``textLength`` or ``custom``. Every type but ``none`` needs
         ``formula1``; surrounding whitespace and a leading ``=`` are dropped,
-        and an ``int`` or ``float`` is written as a number. ``whole`` to ``textLength`` compare with ``operator``
-        (default ``between``), and ``between`` and ``notBetween`` also need
-        ``formula2``. A ``list`` formula is a quoted list such as ``'"Yes,No"'``,
-        a range or a defined name. ``allow_blank``, ``show_input_message`` and
+        and an ``int`` or ``float`` is written as a number. ``whole`` to
+        ``textLength`` compare with ``operator`` (default ``between``), and
+        ``between`` and ``notBetween`` also need ``formula2``. A ``list``
+        formula is a quoted list such as ``'"Yes,No"'``, a range or a defined
+        name; a reference qualified with this sheet's name is written
+        unqualified. ``allow_blank``, ``show_input_message`` and
         ``show_error_message`` default to ``True``, as in Excel.
 
         Raises, changing nothing, ``InvalidRangeError`` for a malformed or
@@ -1009,7 +1011,8 @@ class Worksheet:
         sheet, ``TypeError`` for an argument of the wrong type, and
         :class:`~xlsxedit.exceptions.DataValidationError` for a value the
         schema or Excel rejects, a formula that refers to another sheet or
-        workbook, and a range that overlaps another validation on the sheet.
+        workbook, a range that overlaps another validation on the sheet, and a
+        sheet that was removed from its workbook.
         """
         return new_data_validation(
             self,

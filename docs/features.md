@@ -243,23 +243,23 @@ ws.add_data_validation("C2:C100", type="whole", operator="between", formula1=1, 
 
 - `sqref` is a range string, a `CellRange` or a `SheetRangeSet`. It is written as Excel writes it: in capitals, without `$`, `B:B` as `B1:B1048576`, `3:3` as `A3:XFD3`, and each area once.
 - Every type but `none` needs `formula1`. `whole`, `decimal`, `date`, `time` and `textLength` compare the cell with `operator`, which defaults to `between`; `between` and `notBetween` also need `formula2`. Other types take no `operator` and no `formula2`.
-- A formula is a `str`, written without surrounding whitespace or a leading `=`, or an `int` or `float`, written as a number. A `list` formula is a quoted list such as `'"Yes,No"'`, a range on the same sheet, or a defined name.
+- A formula is a `str`, written without surrounding whitespace or a leading `=`, or an `int` or `float`, written as a number. A `list` formula is a quoted list such as `'"Yes,No"'`, a range on the same sheet, or a defined name. A reference qualified with the sheet's own name, such as `Sheet1!$H$1:$H$5` on `Sheet1`, is written without the qualifier.
 - `allow_blank`, `show_input_message` and `show_error_message` default to `True`, as in Excel's dialog. Attributes equal to their schema default are left out.
 - Excel allows titles of 32 characters, messages of 255, a quoted list of 255 between its quotes, and formulas of 8,192, counted in UTF-16 code units.
 
-A formula that refers to another sheet or workbook needs the x14 form, which xlsxedit does not write yet. Refer to a defined name that the workbook already holds instead.
+A formula that refers to another sheet or workbook is refused: Excel writes such a validation in its x14 form, which xlsxedit does not write yet. Refer to a defined name that the workbook already holds instead.
 
 `add_data_validation` raises, changing nothing:
 
 - `InvalidRangeError` for a malformed or empty `sqref`, or when another validation on the sheet has a malformed range;
 - `TypeError` when `sqref` is not a range string, `CellRange` or `SheetRangeSet`, `type`, `operator`, `error_style` or a message is not a `str`, a flag is not a `bool`, or a formula is not a `str`, `int` or `float`;
-- `DataValidationError` for a `type`, `operator` or `error_style` the schema does not list, a missing or extra formula or `operator`, text that XML cannot store or that is longer than Excel allows, a number that is not finite, a formula that refers to another sheet or workbook, and a `sqref` that overlaps another validation on the sheet, because Excel keeps one validation per cell.
+- `DataValidationError` for a `type`, `operator` or `error_style` the schema does not list, a missing or extra formula or `operator`, text that XML cannot store or that is longer than Excel allows, a number that is not finite, a formula that refers to another sheet or workbook, a `sqref` that overlaps another validation on the sheet, because Excel keeps one validation per cell, and a sheet that was removed from its workbook.
 
 ### Changing and removing a validation
 
-`dv.sqref = "B2:B200"` rewrites the range by the same rules and raises the same errors. It may overlap the rule's own cells. It also raises `DataValidationError` for an x14 rule or one that is no longer on its sheet.
+`dv.sqref = "B2:B200"` rewrites the range by the same rules and raises the same errors. It may overlap the rule's own cells. It also raises `DataValidationError` for an x14 rule, one that is no longer on its sheet, or one whose sheet was removed.
 
-`ws.remove_data_validation(dv)` removes the rule, and the sheet's `dataValidations` element with its last rule. It raises `DataValidationError`, changing nothing, for an x14 rule or one that is not on the sheet, and `TypeError` for anything but a `DataValidation`.
+`ws.remove_data_validation(dv)` removes the rule, and the sheet's `dataValidations` element with its last rule. It raises `DataValidationError`, changing nothing, for an x14 rule, one that is not on the sheet, or a removed sheet, and `TypeError` for anything but a `DataValidation`.
 
 `insert_rows` and `insert_columns` move validations with their cells, as [Inserting rows and columns](#inserting-rows-and-columns) describes.
 
