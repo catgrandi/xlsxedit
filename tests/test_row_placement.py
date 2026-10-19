@@ -124,3 +124,13 @@ def test_rows_a_bulk_write_appends_are_indexed_on_first_lookup():
     ws.write_rows([["again"]], at_cell="C250")
     assert [ws[a].value for a in ("A10", "C250", "D250", "C251")] == [None, "again", "new", "s251"]
     assert _row_numbers(ws) == list(range(1, 501))
+
+
+def test_cells_after_a_merge_anchor_in_a_new_row_are_found():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws.merge_cells("A5:C5")
+    ws.write_rows([["x", "y", "z", "w", "v"]], at_cell="B5")  # B5 and C5 go to the anchor A5
+    assert ws._find_cell_element("D5") is not None
+    assert ws.clear_range("D5:F5") == 3
+    assert [ws[a].value for a in ("A5", "D5", "E5", "F5")] == ["y", None, None, None]
