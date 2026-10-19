@@ -343,7 +343,6 @@ def test_x14_cf_matching_ignores_guid_case_and_area_order():
     assert _codes(pkg) == []
 
 
-
 _DV = b'<dataValidation type="list" sqref="A1"><formula1>"a,b"</formula1></dataValidation>'
 
 
@@ -367,6 +366,8 @@ def test_data_validation_count_matches_its_children():
     one = b'<dataValidations count="1">' + _DV + b"</dataValidations>"
     assert _codes(_with_validations(one)) == []
     assert _codes(_with_validations(b"<dataValidations>" + _DV + _DV + b"</dataValidations>")) == []
+    spaced = _with_validations(b'<dataValidations count=" 02 ">' + _DV + _DV + b"</dataValidations>")
+    assert _codes(spaced) == []
     pkg = _with_validations(b'<dataValidations count="2">' + _DV + b"</dataValidations>")
     assert _only(pkg, "data-validation") == "dataValidations/@count=2 but 1 dataValidation children"
 
@@ -377,6 +378,8 @@ def test_data_validations_occur_once_and_name_a_sqref():
     assert _only(twice, "data-validation") == "2 dataValidations elements"
     no_sqref = block.replace(b' sqref="A1"', b"")
     assert _only(_with_validations(no_sqref), "data-validation") == "dataValidation 1 has no sqref"
+    empty = _with_validations(b'<dataValidations count="0"/>')
+    assert _only(empty, "data-validation") == "dataValidations holds no dataValidation"
 
 
 def test_x14_data_validation_count_and_sqref():
@@ -394,6 +397,7 @@ def test_x14_data_validation_count_and_sqref():
     assert _only(pkg, "data-validation") == (
         "x14:dataValidations/@count=3 but 2 children, x14:dataValidation 2 has no xm:sqref"
     )
+
 
 def test_relationship_to_a_missing_part():
     pkg = dict(read_pkg(BOOK1))
