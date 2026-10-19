@@ -104,6 +104,14 @@ def test_a_shift_off_the_grid_is_refused(args, error):
         _Shift(*args)
 
 
+def test_an_insert_just_past_the_grid_moves_nothing():
+    wb, ws = _sheet(_FROZEN, '<mergeCells count="1"><mergeCell ref="A1:B2"/></mergeCells>')
+    before = etree.tostring(ws._part.element)
+    for shift in (_Shift(True, 1_048_577, 1), _Shift(False, 16_385, 1)):
+        _shift(ws, shift)
+    assert etree.tostring(ws._part.element) == before
+
+
 def test_insert_plan_carries_out_whole_line_inserts_only():
     ws = Workbook.create()["Sheet1"]
     with pytest.raises(ValueError, match="inserts of whole rows or columns only"):
