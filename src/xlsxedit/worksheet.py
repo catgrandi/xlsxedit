@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import bisect
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Iterator
 
@@ -94,6 +95,7 @@ class Worksheet:
         self._row_index: dict[int, etree._Element] = {}
         self._cell_index: dict[str, etree._Element] = {}
         self._cell_indexed_rows: set[int] = set()
+        self._row_numbers: list[int] | None = None  # sorted _row_index keys, built on demand
         self._bulk_max_row_num = 0
         self._table_proxies: dict[TablePart, Table] = {}
 
@@ -140,6 +142,7 @@ class Worksheet:
         self._row_index.clear()
         self._cell_index.clear()
         self._cell_indexed_rows.clear()
+        self._row_numbers = None
         self._bulk_max_row_num = 0
 
     def _build_bulk_indexes(self) -> None:
@@ -155,6 +158,7 @@ class Worksheet:
         self._row_index.clear()
         self._cell_index.clear()
         self._cell_indexed_rows.clear()
+        self._row_numbers = None
         max_row = 0
         for row in self._sheet_data().iterchildren(_ROW):
             row_num = int(row.get("r") or 0)
@@ -282,37 +286,82 @@ class Worksheet:
         return c_elm
 
     def _ensure_row(self, row_num: int) -> etree._Element:
-        """Row ``row_num``, inserted in row order if absent, with its cells indexed."""
+        """Row ``row_num``, inserted in row order if absent, with its cells indexed.
+
+        A new row goes after the indexed row that precedes it: row ``row_num - 1``
+        when a write fills rows in order, the last row when it appends, and
+        otherwise the one found by bisecting the sorted row numbers. The XML
+        neighbours of that spot must confirm it; when they do not, because
+        the sheet changed without this index or its rows are out of order, the
+        index is rebuilt and the row placed by a scan of ``sheetData``.
+        """
         row = self._find_row_element(row_num)
         if row is not None:
             self._index_row_cells(row_num, row)
             return row
         sheet_data = self._sheet_data()
-        try:
-            last = sheet_data[-1]
-        except IndexError:
-            last = None
-        following = None
-        # Sequential bulk export appends rows in order — avoid O(n²) scan per row.
-        if row_num <= self._bulk_max_row_num or last is not self._row_index.get(
-            self._bulk_max_row_num
-        ):
-            for child in sheet_data.iterchildren(_ROW):
-                child_num = int(child.get("r") or 0)
-                if child_num == row_num:
-                    self._invalidate_bulk_indexes()
-                    return self._ensure_row(row_num)
-                if child_num > row_num:
-                    following = child
-                    break
-        row = etree.SubElement(sheet_data, _ROW)
+        row = etree.Element(_ROW)
         row.set("r", str(row_num))
-        if following is not None:
-            following.addprevious(row)
+        if not self._place_row_after_indexed(sheet_data, row, row_num):
+            self._invalidate_bulk_indexes()
+            self._build_bulk_indexes()
+            existing = self._place_row_by_scan(sheet_data, row, row_num)
+            if existing is not None:
+                self._index_row_cells(row_num, existing)
+                return existing
         self._row_index[row_num] = row
+        if self._row_numbers is not None:
+            bisect.insort(self._row_numbers, row_num)
         self._cell_indexed_rows.add(row_num)
         self._bulk_max_row_num = max(self._bulk_max_row_num, row_num)
         return row
+
+    def _place_row_after_indexed(
+        self, sheet_data: etree._Element, row: etree._Element, row_num: int
+    ) -> bool:
+        """Insert ``row`` after the indexed row before ``row_num``; False if the XML disagrees."""
+        prev_num = row_num - 1
+        if prev_num not in self._row_index:
+            if row_num > self._bulk_max_row_num:
+                prev_num = self._bulk_max_row_num
+            else:
+                if self._row_numbers is None:
+                    self._row_numbers = sorted(self._row_index)
+                i = bisect.bisect_left(self._row_numbers, row_num)
+                prev_num = self._row_numbers[i - 1] if i else 0
+        prev = self._row_index.get(prev_num)
+        if prev is None:
+            following = next(sheet_data.iterchildren(_ROW), None)
+        elif prev.getparent() is not sheet_data or int(prev.get("r") or 0) != prev_num:
+            return False
+        else:
+            following = next(prev.itersiblings(_ROW), None)
+        if following is not None and int(following.get("r") or 0) <= row_num:
+            return False
+        if prev is not None:
+            prev.addnext(row)
+        elif following is not None:
+            following.addprevious(row)
+        else:
+            sheet_data.append(row)
+        return True
+
+    def _place_row_by_scan(
+        self, sheet_data: etree._Element, row: etree._Element, row_num: int
+    ) -> etree._Element | None:
+        """Insert ``row`` before the first row numbered above ``row_num``.
+
+        Returns the row already numbered ``row_num``, inserting nothing, if the scan meets it.
+        """
+        for child in sheet_data.iterchildren(_ROW):
+            child_num = int(child.get("r") or 0)
+            if child_num == row_num:
+                return child
+            if child_num > row_num:
+                child.addprevious(row)
+                return None
+        sheet_data.append(row)
+        return None
 
     def _get_or_create_cell_element(self, address: str) -> etree._Element:
         address = self._resolve_write_address(address).upper()
