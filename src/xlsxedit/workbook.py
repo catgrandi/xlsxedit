@@ -128,7 +128,7 @@ class Workbook:
         self._refresh_sheets()
         sst_part = self._workbook_part.shared_strings_part
         self._shared_strings = (
-            SharedStringTable(sst_part.element, defer_index=self._large)
+            SharedStringTable(sst_part.element, defer_index=self._large, part=sst_part)
             if sst_part is not None
             else None
         )
@@ -206,10 +206,13 @@ class Workbook:
         """
         wb_elm = self._workbook_part.element
         calc_pr = wb_elm.find(self._CALC_PR)
+        if calc_pr is not None and calc_pr.get("fullCalcOnLoad") == "1":
+            return
         if calc_pr is None:
             calc_pr = etree.Element(self._CALC_PR)
             wb_elm.insert(self._workbook_child_insert_index(wb_elm, "calcPr"), calc_pr)
         calc_pr.set("fullCalcOnLoad", "1")
+        self._workbook_part.mark_dirty()
 
     def _on_formula_removed(self, worksheet: Worksheet, c_elm) -> None:
         """Bookkeeping before a cell loses its ``<f>`` element.

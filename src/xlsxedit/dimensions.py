@@ -68,8 +68,10 @@ class ColumnDimension:
             max_c = int(col_elm.get("max", "0"))
             if min_c <= col_idx <= max_c:
                 if min_c == max_c == col_idx:
-                    col_elm.set("width", str(value))
-                    col_elm.set("customWidth", "1")
+                    if (col_elm.get("width"), col_elm.get("customWidth")) != (str(value), "1"):
+                        col_elm.set("width", str(value))
+                        col_elm.set("customWidth", "1")
+                        self._worksheet._part.mark_dirty()
                     return
                 cols.remove(col_elm)
 
@@ -78,6 +80,7 @@ class ColumnDimension:
         col_elm.set("max", str(col_idx))
         col_elm.set("width", str(value))
         col_elm.set("customWidth", "1")
+        self._worksheet._part.mark_dirty()
 
 
 class RowDimension:
@@ -105,9 +108,12 @@ class RowDimension:
     def height(self, value: float) -> None:
         if value <= 0:
             raise ValueError("row height must be positive")
+        existed = self._worksheet._find_row_element(self._row) is not None
         row_elm = self._worksheet._ensure_row(self._row)
-        row_elm.set("ht", str(value))
-        row_elm.set("customHeight", "1")
+        if not existed or (row_elm.get("ht"), row_elm.get("customHeight")) != (str(value), "1"):
+            row_elm.set("ht", str(value))
+            row_elm.set("customHeight", "1")
+            self._worksheet._part.mark_dirty()
 
 
 class _DimensionMap:
