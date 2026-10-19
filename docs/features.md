@@ -211,7 +211,7 @@ Setters and `resize` check everything before they change anything. When they rai
 | API | Summary |
 |-----|---------|
 | `table.name` | Table name (read-only) |
-| `table.display_name` | The name formulas use; settable. Raises `TableError` for a name `add_table` would refuse, or while a formula, a defined name or another part of the workbook (a pivot cache, a connection, …) refers to the table by its current name: formulas are not rewritten |
+| `table.display_name` | The name formulas use; settable. Raises `TableError` for a name `add_table` would refuse, or while a formula, a defined name, a pivot cache or a data connection refers to the table by its current name: none of them is rewritten |
 | `table.id` | Workbook-wide id (read-only) |
 | `table.ref` | Range, e.g. `A1:B10` |
 | `table.columns` | Column names, left to right |
@@ -237,8 +237,9 @@ Setters and `resize` check everything before they change anything. When they rai
 - the header row would move;
 - `ref` does not overlap the current range, would leave no data row, or overlaps another table on the sheet;
 - the columns change without `columns`, or `columns` does not fit `ref`, repeats a name (ignoring case) or renames a column the table keeps;
+- the columns change and the table is bound to a query (`queryTableFieldId`), whose query table part would not know them;
 - a new column's header cell holds anything but its name;
-- a dropped column is named in a structured reference, in a formula that names the table or in one of the table's column formulas.
+- a dropped column is named in a structured reference, in a formula that names the table or in one of the table's column formulas, or a table slicer filters on it.
 
 It raises `InvalidRangeError` for a `ref` that is reversed or off the grid.
 
@@ -246,10 +247,10 @@ It raises `InvalidRangeError` for a `ref` that is reversed or off the grid.
 
 Setting `header_row_count` or `totals_row_count` keeps `ref` and writes no cell:
 
-- `header_row_count = 0` turns the header row into the first data row and removes the `autoFilter`, which Excel writes only with a header row. `header_row_count = 1` makes the first row the header row; its cells must already hold the column names.
+- `header_row_count = 0` turns the header row into the first data row and removes the `autoFilter`, which Excel writes only with a header row. `header_row_count = 1` makes the first row the header row; its cells must already hold the column names, and no `autoFilter` is added. The sort range follows the data rows.
 - `totals_row_count = 1` turns the last data row into the totals row and sets `totals_row_shown`; `totals_row_count = 0` turns the totals row into a data row. The `autoFilter` and the sort range follow. Write the totals row's labels and formulas yourself.
 
-Both raise `TableError`, changing nothing, for a value other than 0 or 1 or when the table would be left without a data row.
+Both raise, changing nothing, `TypeError` for a value that is not an `int` (including `True`) and `TableError` for any other value than 0 or 1 or when the table would be left without a data row.
 
 ---
 
