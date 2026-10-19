@@ -191,18 +191,17 @@ def test_partial_edit_of_a_range_formula_is_refused(kind: str, edit: str):
     assert_preserved(before, read_pkg(wb))
 
 
-def test_clear_range_keeps_the_cells_it_cleared_before_a_refused_anchor():
+def test_clear_range_refuses_an_anchor_before_clearing_any_cell():
     wb = Workbook.create()
     ws = wb["Sheet1"]
     ws["A1"].value = 1
     _plant(ws["B1"], {}, f"{RANGE_FORMULAS['array']}<v>2</v>")
     _plant(ws["B2"], {}, "<v>4</v>")
+    before = read_pkg(wb)
 
     with pytest.raises(FormulaGroupError):
         ws.clear_range("A1:B2")
-    assert ws["A1"].value is None
-    assert ws["B1"].formula == "A1:A2*2"
-    assert ws["B2"].value == 4
+    assert_preserved(before, read_pkg(wb))
 
 
 def test_formula_on_a_single_cell_array_keeps_it_an_array_formula():
