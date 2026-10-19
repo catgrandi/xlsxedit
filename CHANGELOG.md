@@ -19,9 +19,9 @@ Several changes below are breaking, so the next release is a major one.
 - **Tables** — without `name=`, `add_table` names the table `TableN` after its workbook-wide id, or the next free number, instead of always `Table1`.
 - **Bulk export** — `write_dataframe` resizes only the table the written rows overlap; rows written directly below a table no longer grow it unless `table=` names it. It raises `TableError`, before writing, when the rows overlap several tables, do not span exactly the table's columns, would put anything but the column names in the header row, or the resized table would overlap another.
 - **Inserts** — `insert_rows` and `insert_columns` refuse an insert they cannot complete, changing nothing: see [Inserting rows and columns](docs/features.md#inserting-rows-and-columns) for each case.
-- **Tables** — `Table.resize` raises `TableError`, changing nothing, when the header row would move, the new range does not overlap the current one, leaves no data row or overlaps another table, or adds or drops columns without the new `columns=` option. See [Resizing a table](docs/features.md#resizing-a-table).
+- **Tables** — `Table.resize` raises `TableError`, changing nothing, when the header row would move, the new range does not overlap the current one, leaves no data row or overlaps another table, or adds or drops columns without the new `columns=` option or of a table bound to a query. See [Resizing a table](docs/features.md#resizing-a-table).
 - **Tables** — `Table` lives in `xlsxedit.table` (still importable from `xlsxedit` and `xlsxedit.drawing`), and its constructor takes the table part and its worksheet.
-- **Bulk export** — `write_dataframe` raises `TableError`, before writing, instead of resizing a table that has a totals row, and when `Table.resize` would refuse the new range.
+- **Bulk export** — `write_dataframe` raises `TableError`, before writing, instead of resizing a table that has a totals row, or moving a table named by `table=` to rows that do not overlap it.
 - **Inserts** — `insert_columns` inside a table raises `TableError`, changing nothing, when the value it would write into a new table column's header cell is not a non-empty string that no other column of the table uses.
 
 ### Added
@@ -53,6 +53,7 @@ Several changes below are breaking, so the next release is a major one.
 - **Inserts** — `insert_rows` and `insert_columns` rewrite the formulas of conditional formats and data validations, x14 formulas that hold several references, the series, titles and labels of charts, and the references to the sheet in other sheets' formats and validations. A conditional format comparing `$B10` keeps testing its own row after rows are inserted above it.
 - **Inserts** — `insert_rows` and `insert_columns` no longer raise `AttributeError` in a workbook that has a chartsheet.
 - **Cells** — writing one row through both the cell API and a bulk API no longer saves duplicate `<row>` elements, and cells stay in column order. `ws["a6"]` reaches the same cell as `ws["A6"]`.
+- **Large mode** — a string written to a workbook opened with `large=True` no longer points one entry past its text in `sharedStrings.xml`.
 - **Formulas** — `Cell.formula` drops the stale cached value and cell type, sets `fullCalcOnLoad`, and turns a shared-formula follower into a standalone formula.
 - **Tables** — `write_dataframe` no longer moves or resizes a table it did not write into. `add_table` and `copy_worksheet` give tables unique ids and names.
 - **Tables** — `Table.resize`, `insert_rows` and `insert_columns` keep a table's totals row out of its `autoFilter`, and move the table's sort state; `resize` removes the `autoFilter` of a table without a header row.

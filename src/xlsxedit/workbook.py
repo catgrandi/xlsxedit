@@ -299,8 +299,10 @@ class Workbook:
         for example to grow it by writing below it. Before anything is
         written, :class:`~xlsxedit.exceptions.TableError` is raised when the
         rows overlap several tables, do not span exactly the table's columns,
-        or would put anything but its column names in its header row, or when
-        the resized table would overlap another table.
+        or would put anything but its column names in its header row, when
+        the table has a totals row, or when the resized table would not
+        overlap the table as it was, would have no data row, or would overlap
+        another table.
         """
         if mode not in ("overwrite", "insert"):
             raise ValueError(f"mode must be 'overwrite' or 'insert', got {mode!r}")

@@ -50,7 +50,7 @@ A value aimed at a cell that a merged range covers is not written there. It goes
 
 ## Tables in the slot
 
-In overwrite mode, `write_dataframe` resizes the Excel table that the written rows overlap so that it ends at the last written row (`resize_table=True`, the default). The table keeps its columns and, when you write only the body, its header row. Rows that overlap no table leave every table as it is, so to grow a table by writing directly below it, name it with `table`:
+In overwrite mode, `write_dataframe` resizes the Excel table that the written rows overlap so that it ends at the last written row (`resize_table=True`, the default). The table keeps its columns and, when you write only the body, its header row. A written header row (`header=True`) becomes the table's header row, even when that moves it, which [`Table.resize`](features.md#resizing-a-table) refuses to do. Rows that overlap no table leave every table as it is, so to grow a table by writing directly below it, name it with `table`:
 
 ```python
 # Table "Sales" spans A4:D5: the header row and one sample row.
@@ -64,7 +64,7 @@ wb.write_dataframe(more, at_cell="A8", header=False, table="Sales")  # appends b
 - The rows do not span exactly the table's columns.
 - The table's header row would not hold its column names: a written header (`header=True`) differs from them, or body rows start at or above the header row without repeating them.
 - The table has a totals row: ending the table at the last written row would make that row its totals row. Write with `resize_table=False`, then resize the table with [`Table.resize`](features.md#resizing-a-table).
-- [`Table.resize`](features.md#resizing-a-table) refuses the new range, for example because `table=` names a table the rows do not overlap and a written header would move it there.
+- The resized table would not overlap the table as it was: `table=` names a table the rows do not overlap, and the rows start above it or with a header row.
 
 Pass `resize_table=False` to write such rows and leave every table as it is.
 
