@@ -47,6 +47,7 @@ Several changes below are breaking, so the next release is a major one.
 - **Drawings** — `ws.charts` lists only chart frames. Geometry setters that cannot apply, such as moving a grouped object, raise `ValueError`.
 - **Saving** — parts, `.rels` items and `[Content_Types].xml` that an edit does not change keep their exact bytes, so saving an unedited workbook changes no member. Rewritten parts use Excel's XML declaration. The source's `Default` content types are kept.
 - **Saving** — cell, bulk-write, merge, `clear_range`, row-height, column-width and shared-string edits mark the parts they change, so saving them no longer parses their source a second time, and a changed part releases its source bytes. A part an edit changed is rewritten even if a later edit restores it.
+- **Bulk writes** — the cells of rows a bulk write appends join the cell index only when a single-cell access reaches their row, which cuts peak memory for writing 100,000 × 8 cells by about a fifth.
 - **Search and replace** — `replace` sets `fullCalcOnLoad` when it changes a cell.
 - **Performance** — repeated `ws[...]` access no longer rescans the sheet.
 
