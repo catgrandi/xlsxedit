@@ -8,6 +8,11 @@ text by ``rewrite_formula_refs`` (defined names) and ``rewrite_plain_ref``
 (text that is one reference). Planning raises for anything it cannot do, so a
 refused insertion changes nothing; ``apply`` only assigns computed values.
 
+A :class:`_Shift` also describes a delete and a shift restricted to a span of
+columns (rows), and the :class:`_Planner` moves every structure it reaches as
+Excel does for those; only ``InsertPlan``, which also moves the cells, is
+limited to whole-row and whole-column inserts.
+
 The ``check_*`` functions validate the rest of an insert up front. The
 remaining ``shift_*`` functions are the older per-structure entry points.
 """
@@ -36,7 +41,7 @@ from xlsxedit.opc.constants import OFFICE_REL_NS, SML_NS
 from xlsxedit.oxml.address import MAX_COL, MAX_ROW, col_to_index, index_to_col
 from xlsxedit.opc.serialize import serialize_part_xml
 from xlsxedit.oxml.parser import parse_xml
-from xlsxedit.range_set import CellRange, SheetRangeSet
+from xlsxedit.range_set import CellRange, SheetRangeSet, shift_bounds
 from xlsxedit.styles import _XML_ILLEGAL, check_style_text, datetime_to_serial, normalize_rgb
 from xlsxedit.worksheet_order import insert_worksheet_child
 
@@ -159,57 +164,148 @@ def shift_col_index(col_idx: int, at_col: int, delta: int) -> int:
 
 
 @dataclass(frozen=True)
-class _Insert:
-    """``count`` rows inserted before row ``at``, or columns before 1-based column ``at``."""
+class _Shift:
+    """Rows (``rows``) or columns moved by an insert or a delete.
+
+    ``delta > 0`` inserts that many rows before row ``at`` (columns before
+    1-based column ``at``); ``delta < 0`` deletes ``-delta`` of them from
+    ``at``. ``span`` restricts the shift to columns (rows) ``lo..hi``, as
+    Excel's "insert cells" and "delete cells" do: only areas within it move,
+    and whole rows (columns) stay. An area the shift :meth:`splits` cannot
+    follow it, so a caller must refuse such a shift. Areas move by
+    :meth:`CellRange.shift`.
+    """
 
     rows: bool
     at: int
-    count: int
+    delta: int
+    span: tuple[int, int] | None = None
+
+    def __post_init__(self) -> None:
+        if self.delta == 0 or self.at < 1:
+            raise ValueError(f"not a shift: at={self.at}, delta={self.delta}")
+        if not self.inserting and self.end > self.limit:
+            raise InvalidRangeError(f"{self.describe()} passes the edge of the grid")
+        if self.span is not None:
+            lo, hi = self.span
+            cross = MAX_COL if self.rows else MAX_ROW
+            if not 1 <= lo <= hi <= cross:
+                raise InvalidRangeError(f"span {lo}..{hi} is outside the grid")
+            if (lo, hi) == (1, cross):
+                object.__setattr__(self, "span", None)
 
     @property
     def limit(self) -> int:
         return MAX_ROW if self.rows else MAX_COL
 
-    def move(self, index: int) -> int:
-        """A 1-based row or column number on the shifted axis; may pass the grid."""
-        return index + self.count if index >= self.at else index
+    @property
+    def inserting(self) -> bool:
+        return self.delta > 0
+
+    @property
+    def end(self) -> int:
+        """The last line of the band: the last new line, or the last deleted one."""
+        return self.at + abs(self.delta) - 1
+
+    def move(self, index: int) -> int | None:
+        """Where 1-based line ``index`` goes, ignoring ``span``; ``None`` when it is
+        deleted. An insert may push it past the grid."""
+        if index < self.at:
+            return index
+        if self.inserting:
+            return index + self.delta
+        return None if index <= self.end else index + self.delta
+
+    def source(self, index: int) -> int | None:
+        """The line :meth:`move` takes to ``index``; ``None`` for an inserted line
+        or one a delete brings in from past the grid."""
+        if index < self.at:
+            return index
+        if self.inserting and index <= self.end:
+            return None
+        index -= self.delta
+        return index if index <= self.limit else None
+
+    def cell(self, col: int, row: int, *, back: bool = False) -> tuple[int, int] | None:
+        """Where cell ``(col, row)`` goes, or with ``back`` where it comes from;
+        ``None`` when it is deleted, new, or off the grid."""
+        index, cross = (row, col) if self.rows else (col, row)
+        if self.span is None or self.span[0] <= cross <= self.span[1]:
+            index = self.source(index) if back else self.move(index)
+            if index is None or index > self.limit:
+                return None
+        return (cross, index) if self.rows else (index, cross)
 
     def area(self, area: CellRange) -> CellRange | None:
-        if self.rows:
-            return area.shift_rows(self.at, self.count)
-        return area.shift_cols(self.at, self.count)
+        return area.shift(self.rows, self.at, self.delta, self.span)
 
     def ranges(self, ranges: SheetRangeSet) -> SheetRangeSet:
+        return ranges.shift(self.rows, self.at, self.delta, self.span)
+
+    def interval(self, lo: int, hi: int) -> tuple[int, int] | None:
+        """Lines ``lo..hi`` of a whole-line structure (``<col>``, ``spans``), ignoring ``span``."""
+        return shift_bounds(lo, hi, self.at, self.delta, self.limit)
+
+    def _extents(self, area: CellRange) -> tuple[int, int, int, int]:
+        """``area``'s first and last line on the shifted axis, then across it."""
         if self.rows:
-            return ranges.shift_rows(self.at, self.count)
-        return ranges.shift_cols(self.at, self.count)
+            return area.min_row, area.max_row, area.min_col, area.max_col
+        return area.min_col, area.max_col, area.min_row, area.max_row
 
     def clamps(self, area: CellRange) -> bool:
-        """Whether moving ``area`` pushes any of it past the grid."""
-        if self.rows:
-            full, hi = area.spans_all_rows, area.max_row
-        else:
-            full, hi = area.spans_all_cols, area.max_col
-        return not full and hi >= self.at and hi + self.count > self.limit
+        """Whether an insert pushes any of ``area`` past the grid."""
+        _, hi, lo_x, hi_x = self._extents(area)
+        full = area.spans_all_rows if self.rows else area.spans_all_cols
+        within = self.span is None or self.span[0] <= lo_x and hi_x <= self.span[1]
+        return self.inserting and within and not full and hi >= self.at and hi + self.delta > self.limit
+
+    def splits(self, area: CellRange) -> bool:
+        """Whether the shift would move some of ``area``'s cells and not others:
+        ``area`` crosses an edge of ``span`` and reaches the shifted region."""
+        if self.span is None:
+            return False
+        _, hi, lo_x, hi_x = self._extents(area)
+        lo_s, hi_s = self.span
+        crosses = lo_x < lo_s <= hi_x or lo_x <= hi_s < hi_x
+        return crosses and hi >= self.at
 
     def pinned(self, area: CellRange) -> CellRange:
-        """``area`` moved, or pinned to the last row or column when pushed off (view state)."""
+        """``area`` moved or, for view state, pinned where it went: the last
+        line when an insert pushes it off, the band's first line when deleted."""
         moved = self.area(area)
         if moved is not None:
             return moved
+        line = self.limit if self.inserting else self.at
         if self.rows:
-            return replace(area, min_row=MAX_ROW, max_row=MAX_ROW, text=None)
-        return replace(area, min_col=MAX_COL, max_col=MAX_COL, text=None)
+            return replace(area, min_row=line, max_row=line, text=None)
+        return replace(area, min_col=line, max_col=line, text=None)
+
+    @property
+    def screen(self) -> _Shift | None:
+        """The shift of a view's scroll position, which an insert at the view's top
+        leaves in place; ``None`` for a span, which moves no whole rows (columns)."""
+        if self.span is not None:
+            return None
+        return replace(self, at=self.at + 1) if self.inserting else self
+
+    def describe(self) -> str:
+        noun = "row" if self.rows else "column"
+        if self.inserting:
+            where = f"row {self.at}" if self.rows else f"column {index_to_col(self.at - 1)}"
+            return f"inserting {self.delta} {noun}(s) at {where}"
+        if self.rows:
+            return f"deleting rows {self.at}:{self.end}"
+        return f"deleting columns {index_to_col(self.at - 1)}:{index_to_col(self.end - 1)}"
 
     def overflow(self, what: str) -> GridOverflowError:
-        if self.rows:
-            where, end = f"row {self.at}", f"row {MAX_ROW}"
-        else:
-            where, end = f"column {index_to_col(self.at - 1)}", "column XFD"
-        noun = "row" if self.rows else "column"
-        return GridOverflowError(
-            f"inserting {self.count} {noun}(s) at {where} would push {what} past {end}"
-        )
+        end = f"row {MAX_ROW}" if self.rows else "column XFD"
+        return GridOverflowError(f"{self.describe()} would push {what} past {end}")
+
+    def refusal(self, what: str) -> InvalidRangeError:
+        """The error for a shift that would push ``what`` off the grid, or delete it."""
+        if self.inserting:
+            return self.overflow(what)
+        return InvalidRangeError(f"{self.describe()} would delete {what}")
 
 
 def _area(text: str, where: str) -> CellRange:
@@ -274,7 +370,7 @@ def _refresh_manual_break_count(block: etree._Element) -> None:
         block.set("manualBreakCount", str(manual))
 
 
-def _walk_sheet_data(sheet_data: etree._Element | None, ins: _Insert, *, apply: bool) -> None:
+def _walk_sheet_data(sheet_data: etree._Element | None, ins: _Shift, *, apply: bool) -> None:
     """Check (``apply=False``) or carry out (``apply=True``) the move of every row and cell.
 
     Checking raises for an unparseable address and for content pushed past the
@@ -299,7 +395,7 @@ def _walk_sheet_data(sheet_data: etree._Element | None, ins: _Insert, *, apply: 
 
 
 def _move_row_down(
-    sheet_data: etree._Element, row: etree._Element, number: int, ins: _Insert, *, apply: bool
+    sheet_data: etree._Element, row: etree._Element, number: int, ins: _Shift, *, apply: bool
 ) -> None:
     new_number = ins.move(number)
     if new_number > MAX_ROW:
@@ -326,7 +422,7 @@ def _move_row_down(
             c.set("r", letters + suffix)
 
 
-def _move_cells_right(row: etree._Element, number: int, ins: _Insert, *, apply: bool) -> None:
+def _move_cells_right(row: etree._Element, number: int, ins: _Shift, *, apply: bool) -> None:
     col = 0
     for c in list(row.iterchildren(_C)):
         address = c.get("r")
@@ -342,7 +438,7 @@ def _move_cells_right(row: etree._Element, number: int, ins: _Insert, *, apply: 
             c.set("r", f"{index_to_col(new_col - 1)}{number}")
 
 
-def _move_formula_ranges(f: etree._Element, ins: _Insert, *, apply: bool, cell: str) -> None:
+def _move_formula_ranges(f: etree._Element, ins: _Shift, *, apply: bool, cell: str) -> None:
     kind = f.get("t")
     for attr in ("ref", "r1", "r2") if kind == "dataTable" else ("ref",):
         value = f.get(attr)
@@ -437,13 +533,15 @@ def _local_sheet_index(wb_elm: etree._Element, sheet_name: str) -> int | None:
 
 
 class _Planner:
-    """Collects the edits for one insertion; ``apply`` performs them in order.
+    """Collects the edits for one shift; ``apply`` performs them in order.
 
     Attribute and text assignments run first, then removals, then the
-    ``after`` steps that act on other parts.
+    ``after`` steps that act on other parts. A structure that belongs to
+    whole rows (columns), such as a page break or a ``<col>``, ignores a
+    shift restricted to a span.
     """
 
-    def __init__(self, ins: _Insert, *, sheet_name: str | None = None, part=None):
+    def __init__(self, ins: _Shift, *, sheet_name: str | None = None, part=None):
         self.ins = ins
         self.sheet_name = sheet_name
         self.part = part
@@ -464,6 +562,10 @@ class _Planner:
         if elm.text != value:
             self._sets.append(partial(setattr, elm, "text", value))
 
+    def drop(self, elm: etree._Element, attr: str) -> None:
+        if elm.get(attr) is not None:
+            self._sets.append(partial(elm.attrib.pop, attr))
+
     def remove(self, elm: etree._Element) -> None:
         self._removals.append(partial(_detach, elm))
 
@@ -473,10 +575,11 @@ class _Planner:
     # -- generic reference carriers -------------------------------------
 
     def area_attr(
-        self, elm: etree._Element, attr: str, where: str, *, lost: str, ins: _Insert | None = None
+        self, elm: etree._Element, attr: str, where: str, *, lost: str, ins: _Shift | None = None
     ) -> None:
-        """Move an ``ST_Ref`` attribute. When it is pushed off the grid, ``lost`` says
-        what happens: ``"remove"`` the element, ``"pin"`` it to the edge, or ``"raise"``."""
+        """Move an ``ST_Ref`` attribute. When it is pushed off the grid or deleted,
+        ``lost`` says what happens: ``"remove"`` the element, ``"pin"`` it where it
+        went (:meth:`_Shift.pinned`), or ``"raise"``."""
         text = elm.get(attr)
         if not text:
             return
@@ -493,24 +596,27 @@ class _Planner:
         moved = self.ins.area(area)
         if moved is None:
             if lost == "raise":
-                raise self.ins.overflow(f"{where} {text!r}")
+                raise self.ins.refusal(f"{where} {text!r}")
             self.remove(elm)
         elif moved is not area:
             self.set(elm, attr, str(moved))
 
-    def sqref_attr(self, elm: etree._Element, attr: str, where: str) -> None:
-        """Move an ``ST_Sqref`` attribute; remove ``elm`` when every area is pushed off."""
+    def sqref_attr(
+        self, elm: etree._Element, attr: str, where: str
+    ) -> tuple[SheetRangeSet, SheetRangeSet] | None:
+        """Move an ``ST_Sqref`` attribute, removing ``elm`` when every area is gone;
+        return the areas before and after the shift."""
         text = elm.get(attr)
         if text is None:
-            return
+            return None
         ranges = _range_set(text, where)
         moved = self.ins.ranges(ranges)
-        if moved is ranges:
-            return
-        if moved:
-            self.set(elm, attr, str(moved))
-        else:
-            self.remove(elm)
+        if moved is not ranges:
+            if moved:
+                self.set(elm, attr, str(moved))
+            else:
+                self.remove(elm)
+        return ranges, moved
 
     def view_sqref_attr(self, elm: etree._Element, attr: str) -> None:
         text = elm.get(attr)
@@ -602,14 +708,24 @@ class _Planner:
                 return
             if moved is not area:
                 self.set(af, "ref", str(moved))
-            if not self.ins.rows and area.min_col < self.ins.at <= area.max_col:
-                # filterColumn/@colId counts from the range's first column
-                first_moved = self.ins.at - area.min_col
-                for column in af.iterchildren(_FILTER_COLUMN):
-                    col_id = column.get("colId")
-                    if col_id is not None and col_id.isdigit() and int(col_id) >= first_moved:
-                        self.set(column, "colId", str(int(col_id) + self.ins.count))
+            self.filter_columns(af, area, moved)
         self.sort_state(af, f"{where}autoFilter/")
+
+    def filter_columns(self, af: etree._Element, area: CellRange, moved: CellRange) -> None:
+        """``filterColumn/@colId`` counts from the range's first column: follow
+        each column, and drop the filter of one deleted or pushed off the grid."""
+        span = self.ins.span
+        if self.ins.rows or span is not None and not span[0] <= area.min_row <= area.max_row <= span[1]:
+            return  # the range's columns stay where they are
+        for column in af.iterchildren(_FILTER_COLUMN):
+            col_id = column.get("colId")
+            if col_id is None or not col_id.isdigit():
+                continue
+            new = self.ins.move(area.min_col + int(col_id))
+            if new is None or new > moved.max_col:
+                self.remove(column)
+            else:
+                self.set(column, "colId", str(new - moved.min_col))
 
     def sort_state(self, container: etree._Element, where: str) -> None:
         state = container.find(_SORT_STATE)
@@ -631,38 +747,40 @@ class _Planner:
         """Move manual page breaks on the shifted axis.
 
         ``brk/@id`` is the last row (column) before the break; a break belongs
-        to the row after it, so it moves when that row does.
+        to the row after it, so it moves when that row does and goes when that
+        row is deleted.
         """
         block = container.find(_ROW_BREAKS if self.ins.rows else _COL_BREAKS)
-        if block is None:
+        if block is None or self.ins.span is not None:
             return
         removed = False
         for brk in block.iterchildren(_BRK):
             brk_id = _number(brk.get("id", "0"), "brk/@id")
-            if brk_id + 1 < self.ins.at:
+            after = self.ins.move(brk_id + 1)
+            if after == brk_id + 1:
                 continue
-            new_id = brk_id + self.ins.count
-            if new_id >= self.ins.limit:
+            if after is None or not 1 < after <= self.ins.limit:
                 self.remove(brk)
                 removed = True
             else:
-                self.set(brk, "id", str(new_id))
+                self.set(brk, "id", str(after - 1))
         if removed:
             self.after(partial(_refresh_manual_break_count, block))
 
     def views(self, root: etree._Element) -> None:
         """Selections follow their cells. The scroll positions (``topLeftCell``)
         are places on screen: they move only for an insertion strictly above
-        (left of) them, so new rows inserted at the top of a view stay in sight."""
+        (left of) them, so new rows inserted at the top of a view stay in sight,
+        and a span shift leaves them alone."""
         custom = list(root.iterfind(f"{_CUSTOM_SHEET_VIEWS}/{_CUSTOM_SHEET_VIEW}"))
-        screen = _Insert(self.ins.rows, self.ins.at + 1, self.ins.count)
+        screen = self.ins.screen
         for view in [*root.iterfind(f"{_SHEET_VIEWS}/{_SHEET_VIEW}"), *custom]:
             top = self._view_start(view.get("topLeftCell"))
-            self.area_attr(view, "topLeftCell", "topLeftCell", lost="pin", ins=screen)
             pane = view.find(_PANE)
-            if pane is not None:
-                self.frozen_split(pane, top)
-                self.area_attr(pane, "topLeftCell", "pane/@topLeftCell", lost="pin", ins=screen)
+            if screen is not None:
+                self.area_attr(view, "topLeftCell", "topLeftCell", lost="pin", ins=screen)
+                if pane is not None:
+                    self.pane(pane, top, screen)
             for selection in view.iterchildren(_SELECTION):
                 self.area_attr(selection, "activeCell", "activeCell", lost="pin")
                 self.view_sqref_attr(selection, "sqref")
@@ -678,56 +796,87 @@ class _Planner:
             return 1
         return area.min_row if self.ins.rows else area.min_col
 
-    def frozen_split(self, pane: etree._Element, top: int) -> None:
-        """Grow a frozen split when rows (columns) are inserted inside the frozen band.
+    def pane(self, pane: etree._Element, top: int, screen: _Shift) -> None:
+        """The frozen split, then the pane's scroll position, which a delete
+        leaves no higher (further left) than the first unfrozen row (column)."""
+        split = self.frozen_split(pane, top)
+        text = pane.get("topLeftCell")
+        if not text:
+            return
+        try:
+            area = CellRange.parse(text)
+        except InvalidRangeError:
+            return  # view state only; never block a shift over it
+        pinned = screen.pinned(area)
+        if split is not None and not self.ins.inserting:
+            first = top + int(split)
+            if self.ins.rows and pinned.min_row < first:
+                pinned = replace(pinned, min_row=first, max_row=max(first, pinned.max_row), text=None)
+            elif not self.ins.rows and pinned.min_col < first:
+                pinned = replace(pinned, min_col=first, max_col=max(first, pinned.max_col), text=None)
+        if pinned is not area:
+            self.set(pane, "topLeftCell", str(pinned))
+
+    def frozen_split(self, pane: etree._Element, top: int) -> float | None:
+        """Grow a frozen split when rows (columns) are inserted inside the frozen
+        band, and shrink it, to one row (column) at least, by those deleted
+        from it; return the split, or ``None`` for a pane that is not frozen.
 
         The split counts rows (columns) from the view's top-left cell, so the
         band is ``top .. top + split - 1``.
         """
         if pane.get("state") not in ("frozen", "frozenSplit"):
-            return  # a plain split is measured in twips, not cells
+            return None  # a plain split is measured in twips, not cells
         attr = "ySplit" if self.ins.rows else "xSplit"
         try:
             split = float(pane.get(attr, "0"))
         except ValueError:
-            return
-        if split > 0 and top <= self.ins.at < top + split:
-            new = split + self.ins.count
+            return None
+        if split <= 0:
+            return None
+        if self.ins.inserting:
+            new = split + self.ins.delta if top <= self.ins.at < top + split else split
+        else:
+            gone = min(self.ins.end, top + split - 1) - max(self.ins.at, top) + 1
+            new = max(1.0, split - max(gone, 0))
+        if new != split:
             self.set(pane, attr, str(int(new)) if new.is_integer() else repr(new))
+        return new
 
     def columns(self, root: etree._Element) -> None:
-        """Move ``<col min max>`` spans, clamped to column XFD."""
+        """Move ``<col min max>`` spans like ranges of columns, clamped to column XFD."""
+        if self.ins.span is not None:
+            return
         for col in root.iterfind(f"{_COLS}/{_COL}"):
             lo = _number(col.get("min"), "col/@min")
             hi = _number(col.get("max"), "col/@max")
-            if hi < self.ins.at:
-                continue
-            new_lo = self.ins.move(lo)
-            if new_lo > MAX_COL:
+            moved = self.ins.interval(lo, hi)
+            if moved is None:
                 self.remove(col)
-                continue
-            self.set(col, "min", str(new_lo))
-            self.set(col, "max", str(min(hi + self.ins.count, MAX_COL)))
+            elif moved != (lo, hi):
+                self.set(col, "min", str(moved[0]))
+                self.set(col, "max", str(moved[1]))
 
     def row_spans(self, sheet_data: etree._Element | None) -> None:
-        """Move each row's ``spans`` hint (columns of its block's cells)."""
+        """Move each row's ``spans`` hint (columns of its block's cells); drop a
+        hint whose columns are all deleted."""
         if sheet_data is None:
             return
+        number = 0
         for row in sheet_data.iterchildren(_ROW):
+            r = row.get("r")
+            number = int(r) if r is not None and r.isdigit() else number + 1
             spans = row.get("spans")
-            if not spans:
+            if not spans or (self.ins.span and not self.ins.span[0] <= number <= self.ins.span[1]):
                 continue
             intervals = _parse_spans(spans)
             if intervals is None:
                 continue  # an optimisation hint only; leave what we cannot read
-            moved = []
-            for lo, hi in intervals:
-                if hi >= self.ins.at:
-                    lo, hi = self.ins.move(lo), min(hi + self.ins.count, MAX_COL)
-                if lo <= MAX_COL:
-                    moved.append(f"{lo}:{hi}")
+            moved = [m for m in (self.ins.interval(lo, hi) for lo, hi in intervals) if m]
             if moved:
-                self.set(row, "spans", " ".join(moved))
+                self.set(row, "spans", " ".join(f"{lo}:{hi}" for lo, hi in moved))
+            else:
+                self.drop(row, "spans")
 
     def extensions(self, root: etree._Element) -> None:
         """``xm:sqref`` anywhere in the worksheet's extensions, and x14 ``xm:f`` references."""
@@ -823,7 +972,9 @@ class InsertPlan:
     sheet's merge ranges as they will be after ``apply``.
     """
 
-    def __init__(self, worksheet, ins: _Insert):
+    def __init__(self, worksheet, ins: _Shift):
+        if not ins.inserting or ins.span is not None:
+            raise ValueError("InsertPlan carries out inserts of whole rows or columns only")
         self._worksheet = worksheet
         self._insert = ins
         root = worksheet._part.element
@@ -845,9 +996,9 @@ class InsertPlan:
             planner.hyperlink_locations(other_root, own=False)
         self._check_tables()
         if ins.rows:
-            planner.after(partial(shift_table_parts, worksheet, ins.at, ins.count))
+            planner.after(partial(shift_table_parts, worksheet, ins.at, ins.delta))
         else:
-            planner.after(partial(shift_table_parts_cols, worksheet, ins.at - 1, ins.count))
+            planner.after(partial(shift_table_parts_cols, worksheet, ins.at - 1, ins.delta))
         planner.defined_names(workbook)
         planner.after(workbook._invalidate_calc_chain)
         planner.after(workbook.set_full_calc_on_load)
@@ -883,12 +1034,12 @@ class InsertPlan:
 
 def plan_insert_rows(worksheet, at_row: int, count: int) -> InsertPlan:
     """Plan inserting ``count`` rows before row ``at_row`` (1-based)."""
-    return InsertPlan(worksheet, _Insert(True, at_row, count))
+    return InsertPlan(worksheet, _Shift(True, at_row, count))
 
 
 def plan_insert_columns(worksheet, at_col: int, count: int) -> InsertPlan:
     """Plan inserting ``count`` columns before 0-based column ``at_col``."""
-    return InsertPlan(worksheet, _Insert(False, at_col + 1, count))
+    return InsertPlan(worksheet, _Shift(False, at_col + 1, count))
 
 
 def check_block_in_grid(
@@ -1111,7 +1262,7 @@ def shift_range_ref(ref: str, at_row: int, delta: int) -> str:
     """Shift a range at or below ``at_row``; a straddling range grows. Clamped to the grid."""
     moved = CellRange.parse(ref).shift_rows(at_row, delta)
     if moved is None:
-        raise _Insert(True, at_row, delta).overflow(repr(ref))
+        raise _Shift(True, at_row, delta).overflow(repr(ref))
     return str(moved)
 
 
@@ -1119,7 +1270,7 @@ def shift_range_ref_cols(ref: str, at_col: int, delta: int) -> str:
     """Shift column letters in a range at or to the right of ``at_col`` (0-based)."""
     moved = CellRange.parse(ref).shift_cols(at_col + 1, delta)
     if moved is None:
-        raise _Insert(False, at_col + 1, delta).overflow(repr(ref))
+        raise _Shift(False, at_col + 1, delta).overflow(repr(ref))
     return str(moved)
 
 
@@ -1131,7 +1282,7 @@ def shift_sqref_cols(sqref: str, at_col: int, delta: int) -> str:
     return str(SheetRangeSet.parse(sqref).shift_cols(at_col + 1, delta))
 
 
-def _shift_worksheet_element(ws_element: etree._Element, ins: _Insert) -> None:
+def _shift_worksheet_element(ws_element: etree._Element, ins: _Shift) -> None:
     planner = _Planner(ins)
     planner.worksheet(ws_element)
     planner.apply()
@@ -1139,12 +1290,12 @@ def _shift_worksheet_element(ws_element: etree._Element, ins: _Insert) -> None:
 
 def shift_sheet_row_references(ws_element: etree._Element, at_row: int, delta: int) -> None:
     """Shift every reference carrier outside ``sheetData`` after row insertion."""
-    _shift_worksheet_element(ws_element, _Insert(True, at_row, delta))
+    _shift_worksheet_element(ws_element, _Shift(True, at_row, delta))
 
 
 def shift_sheet_col_references(ws_element: etree._Element, at_col: int, delta: int) -> None:
     """Shift every reference carrier outside ``sheetData`` after column insertion (0-based)."""
-    _shift_worksheet_element(ws_element, _Insert(False, at_col + 1, delta))
+    _shift_worksheet_element(ws_element, _Shift(False, at_col + 1, delta))
 
 
 def shift_table_parts(worksheet, at_row: int, delta: int) -> None:
@@ -1275,21 +1426,21 @@ def shift_table_parts_cols(worksheet, at_col: int, delta: int) -> None:
 
 def shift_sheet_data_rows(sheet_data: etree._Element, at_row: int, delta: int) -> None:
     """Bump ``r`` on rows and cells with row >= ``at_row``."""
-    ins = _Insert(True, at_row, delta)
+    ins = _Shift(True, at_row, delta)
     _walk_sheet_data(sheet_data, ins, apply=False)
     _walk_sheet_data(sheet_data, ins, apply=True)
 
 
 def shift_sheet_data_cols(sheet_data: etree._Element, at_col: int, delta: int) -> None:
     """Bump column letters on cells with col >= ``at_col`` (0-based)."""
-    ins = _Insert(False, at_col + 1, delta)
+    ins = _Shift(False, at_col + 1, delta)
     _walk_sheet_data(sheet_data, ins, apply=False)
     _walk_sheet_data(sheet_data, ins, apply=True)
 
 
 def shift_col_dimensions(ws_element: etree._Element, at_col: int, delta: int) -> None:
     """Shift ``<col min/max>`` (1-based) for columns at or to the right of ``at_col`` (0-based)."""
-    planner = _Planner(_Insert(False, at_col + 1, delta))
+    planner = _Planner(_Shift(False, at_col + 1, delta))
     planner.columns(ws_element)
     planner.apply()
 
@@ -1306,13 +1457,13 @@ def shift_dollar_ref_cols(ref: str, at_col: int, delta: int) -> str:
 
 def shift_defined_names(workbook, sheet_name: str, at_row: int, delta: int) -> None:
     """Shift A1 rows in definedNames that refer to ``sheet_name``."""
-    planner = _Planner(_Insert(True, at_row, delta), sheet_name=sheet_name)
+    planner = _Planner(_Shift(True, at_row, delta), sheet_name=sheet_name)
     planner.defined_names(workbook)
     planner.apply()
 
 
 def shift_defined_names_cols(workbook, sheet_name: str, at_col: int, delta: int) -> None:
     """Shift A1 columns in definedNames that refer to ``sheet_name``."""
-    planner = _Planner(_Insert(False, at_col + 1, delta), sheet_name=sheet_name)
+    planner = _Planner(_Shift(False, at_col + 1, delta), sheet_name=sheet_name)
     planner.defined_names(workbook)
     planner.apply()
