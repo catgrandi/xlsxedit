@@ -89,7 +89,7 @@ flowchart LR
 3. **Walk the relationship graph** from the package root (same idea as Word’s OPC model): follow each internal relationship, load that part, then follow *its* relationships, and so on.
 4. For each part, `PartFactory` picks a class by content type:
    - workbook / worksheet / sharedStrings / styles / core properties → `XmlPart` subclass (parsed to lxml)
-   - drawing / chart → `XmlPart` subclass that keeps its bytes unparsed until an API first reads it
+   - drawing / chart / table → `XmlPart` subclass that keeps its bytes unparsed until an API first reads it
    - **everything else** → base `Part` (keeps original bytes)
 5. Wire relationship objects so `rId`s point at real part instances.
 6. `Workbook` wraps the workbook part, builds sheet proxies, and attaches the shared string table if present.
@@ -118,6 +118,7 @@ Only these content types are registered as live XML:
 | core properties (`docProps/core.xml`) | `CorePropertiesPart` | Via `wb.properties` |
 | drawing (`xl/drawings/drawingN.xml`) | `DrawingPart` | No; parsed when first read or edited (`ws.images`, `ws.charts`, `ws.drawing_objects`, `add_image`, `add_chart`, `copy_worksheet`, …) |
 | chart (`xl/charts/chartN.xml`) | `ChartPart` | No; parsed when first read or edited |
+| table (`xl/tables/tableN.xml`) | `TablePart` | No; parsed when first read or edited (`ws.tables`, `add_table`, `insert_rows`, `insert_columns`, `copy_worksheet`, …) |
 
 Everything else (theme, media, chart styles and colours, pivot caches, VBA, slicers, customXml, printer settings, …) falls through to opaque `Part`.
 
@@ -238,9 +239,10 @@ Neither approach produces a byte-identical ZIP: the container itself (member ord
 | `hyperlinks.py` | Cell hyperlink get/set |
 | `conditional_formatting.py` | CF list and `cellIs` add |
 | `data_validation.py` | Data-validation list, add and remove; x14 rules read-only |
-| `drawing.py` | `Picture`, `Chart`, `Table` and `DrawingObject` proxies; walks a drawing's anchors, groups and `mc:AlternateContent` |
+| `drawing.py` | `Picture`, `Chart` and `DrawingObject` proxies; walks a drawing's anchors, groups and `mc:AlternateContent` |
+| `table.py` | `Table`, `TableColumn` and `TableStyle` over a live table part: resize, header and totals rows, and the name and range checks `add_table` and `write_dataframe` share |
 | `shared_strings.py` | SST display text + in-place `<t>` replace |
-| `parts.py` | Registers the typed parts: workbook, worksheet, SST, styles, core properties, drawing, chart |
+| `parts.py` | Registers the typed parts: workbook, worksheet, SST, styles, core properties, drawing, chart, table |
 | `row_shift.py` | Plans and applies `insert_rows` / `insert_columns`; the planner also describes deletes and shifts restricted to a span of columns or rows |
 | `range_set.py` | `ST_Ref` / `ST_Sqref` ranges and how they shift when rows or columns are inserted or deleted |
 | `opc/package.py` | Load/save orchestration |
