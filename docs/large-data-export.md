@@ -63,6 +63,8 @@ wb.write_dataframe(more, at_cell="A8", header=False, table="Sales")  # appends b
 - The rows overlap more than one table, or the resized table would overlap another one.
 - The rows do not span exactly the table's columns.
 - The table's header row would not hold its column names: a written header (`header=True`) differs from them, or body rows start at or above the header row without repeating them.
+- The table has a totals row: ending the table at the last written row would make that row its totals row. Write with `resize_table=False`, then resize the table with [`Table.resize`](features.md#resizing-a-table).
+- [`Table.resize`](features.md#resizing-a-table) refuses the new range, for example because `table=` names a table the rows do not overlap and a written header would move it there.
 
 Pass `resize_table=False` to write such rows and leave every table as it is.
 

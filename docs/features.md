@@ -73,7 +73,7 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | `ws.add_image(path, *, anchor, width, height, name, offset_x, offset_y)` | Insert image | Pixel offsets within anchor cell (default 0) |
 | `ws.charts` | List of `Chart` | |
 | `ws.add_chart(type, *, anchor, data_range, title, name, to_anchor)` | Add bar chart | `chart_type="bar"` today; flush from template; ``to_anchor`` optional end cell |
-| `ws.tables` | List of `Table` | |
+| `ws.tables` | List of [`Table`](#table) | The same object for a table on every call |
 | `ws.add_table(cell_range, columns, *, name, display_name, write_header)` | Add Excel table | Header row must hold `columns`, or pass `write_header=True`; `name` defaults to `TableN`, N being the new table's id or the next free number; raises `TableError`, changing nothing, for invalid or duplicate names or columns and for overlapping tables, and `FormulaGroupError` when `write_header=True` would overwrite the anchor of a multi-cell array or data-table formula |
 | `ws.conditional_formatting` | Read CF blocks | colorScale, dataBar, cellIs, … |
 | `ws.add_conditional_formatting(cell_range, *, operator, formula, …)` | Add `cellIs` rule | With optional dxf colors |
@@ -87,10 +87,11 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 
 `insert_rows` and `insert_columns` move everything in the workbook that names the shifted cells:
 
-- on the sheet: cells, merges, conditional formats and data validations with their formulas (and their x14 extensions and sparklines), hyperlinks, tables, the `autoFilter` and its sort state, page breaks, sheet views, protected ranges, ignored errors, cell watches, scenarios, shared, array and data-table formula ranges and, for columns, the `<cols>` widths and row `spans`;
+- on the sheet: cells, merges, conditional formats and data validations with their formulas (and their x14 extensions and sparklines), hyperlinks, tables with their `autoFilter` and sort state, the sheet's `autoFilter` and its sort state, page breaks, sheet views, protected ranges, ignored errors, cell watches, scenarios, shared, array and data-table formula ranges and, for columns, the `<cols>` widths and row `spans`;
 - elsewhere: defined names, reference by reference, the series, titles and labels of every chart, on a worksheet or a chartsheet (with the copies Excel keeps in chart extensions; a chartEx chart reads its data through hidden defined names, which move with the other names), and the references to the sheet in other sheets' conditional formats, data validations (with their x14 extensions and sparklines) and internal hyperlink locations.
 
-A range that straddles the insert point grows; one that spans every row (column) ignores a row (column) insert. Excel evaluates a conditional format's or data validation's formula relative to the top-left cell of its ranges, and adjusts it for each cell, splitting the format where cells come to need different formulas; xlsxedit keeps one format, with the formula Excel gives its top-left cell. A format over every row (column) that a row (column) insert leaves in place keeps its relative references, and only the absolute ones move; Excel does the same for most such formulas, but moves some ranges that mix `$` and relative bounds as a whole. String literals, structured references and names in these formulas stay as they are. A chart keeps its cached values; Excel refreshes them from the cells. The inserts do **not** rewrite formulas in cells, drawings, comments or pivot tables. Columns inserted strictly inside a table join it: each becomes a `tableColumn` with the next free id and the first unused name `Column1`, `Column2`, …, and the table's `filterColumn` ids move with their columns. The header cell of such a column keeps whatever the insert writes there, so write the column's name into it. Inserting at a table's first column moves the whole table; inserting just past its last column leaves it alone.
+A range that straddles the insert point grows; one that spans every row (column) ignores a row (column) insert. Excel evaluates a conditional format's or data validation's formula relative to the top-left cell of its ranges, and adjusts it for each cell, splitting the format where cells come to need different formulas; xlsxedit keeps one format, with the formula Excel gives its top-left cell. A format over every row (column) that a row (column) insert leaves in place keeps its relative references, and only the absolute ones move; Excel does the same for most such formulas, but moves some ranges that mix `$` and relative bounds as a whole. String literals, structured references and names in these formulas stay as they are. A chart keeps its cached values; Excel refreshes them from the cells. The inserts do **not** rewrite formulas in cells, drawings, comments or pivot tables. Columns inserted strictly inside a table join it: each becomes a `tableColumn` with the next free id, and the table's `filterColumn` ids and sort conditions move with their columns. `insert_columns` names a joining column after the value it writes into the column's header cell, which must be a non-empty string that no other column of the table uses (ignoring case); where it writes nothing there, the column gets the first unused name `Column1`, `Column2`, …, and that name is written into the header cell, as Excel does. Inserting at a table's first column moves the whole table; inserting just past its last column leaves it alone. Rows inserted at a table's totals row join its data rows, so its `autoFilter` and sort range still end at the last data row.
+
 
 Merges, formats, validations, hyperlinks and other ranges pushed past the last row or column are dropped; a single reference pushed off becomes `#REF!`. `template_rows` name rows as they are before the insert, and their one-row merges are copied onto the new rows. Both methods drop `calcChain.xml`, set `fullCalcOnLoad`, and return the number of rows (columns) inserted.
 
@@ -99,7 +100,8 @@ They refuse an insert, changing nothing, by raising:
 - `GridOverflowError` when the new cells, cell content, a table, a scenario input cell or a data-table input cell would pass row 1,048,576 or column XFD;
 - `InvalidRangeError` for a reference in the sheet they cannot parse, or an insert point off the grid (`TypeError` if it is not an integer);
 - `DTDForbiddenError` when a chart, or another sheet that may refer to this one, declares a DTD; the insert reads those parts before changing anything;
-- `TableError` when columns would be inserted strictly inside a table whose columns are bound to a query (`queryTableFieldId`);
+- `TableError` when columns would be inserted strictly inside a table whose columns are bound to a query (`queryTableFieldId`), or when `insert_columns` would write into a joining column's header cell a value that cannot name the column;
+
 - `FormulaGroupError` when a value aimed at a cell that a merge covers would overwrite a merge anchor holding a multi-cell array or data-table formula;
 - `ValueError` when a `template_rows` merge would overlap a merge, or when both `template_rows` and `row_styles` are given;
 - `TypeError` or `ValueError` for a value or inline style they cannot write.
@@ -202,14 +204,52 @@ From `ws.drawing_objects`: every object of the sheet's drawing in document order
 
 ## Table
 
-From `ws.tables` or `ws.add_table(...)`.
+From `ws.tables` or `ws.add_table(...)`. A `Table` reads and edits the table part in place, so a table you hold follows later edits such as `insert_rows`. Attributes the file leaves out read as their schema defaults: one header row, no totals row, `totals_row_shown` true. `insertRow`, `insertRowShift` and everything the API does not name are kept as they are.
+
+Setters and `resize` check everything before they change anything. When they raise, the table part and the cells are as they were; when they would change nothing, the table part keeps its exact bytes.
 
 | API | Summary |
 |-----|---------|
-| `table.name` | Table name |
-| `table.ref` | Range ref, e.g. `A1:B10` |
-| `table.columns` | Column header names |
-| `table.resize(ref)` | Change table range |
+| `table.name` | Table name (read-only) |
+| `table.display_name` | The name formulas use; settable. Raises `TableError` for a name `add_table` would refuse, or while a formula, a defined name or another part of the workbook (a pivot cache, a connection, …) refers to the table by its current name: formulas are not rewritten |
+| `table.id` | Workbook-wide id (read-only) |
+| `table.ref` | Range, e.g. `A1:B10` |
+| `table.columns` | Column names, left to right |
+| `table.column_objects` | A read-only `TableColumn` per column: `name`, `id`, `unique_name`, `calculated_column_formula`, `totals_row_function` (`"none"` when absent), `totals_row_formula`, `totals_row_label`, `data_dxf_id`, `query_table_field_id` |
+| `table.header_row_count` | 1 with a header row, else 0; settable (see [Header and totals rows](#header-and-totals-rows)) |
+| `table.totals_row_count` | 1 with a totals row, else 0; settable |
+| `table.totals_row_shown` | Whether the totals row has been shown; settable, but not to `False` while the totals row is shown |
+| `table.style` | `TableStyle(name, show_first_column, show_last_column, show_row_stripes, show_column_stripes)`, or `None` without `tableStyleInfo`; settable. The name must be a built-in table style, such as `"TableStyleMedium2"`, a custom table style in `styles.xml`, or `None` |
+| `table.header_row_dxf_id`, `data_dxf_id`, `totals_row_dxf_id`, `header_row_border_dxf_id`, `table_border_dxf_id`, `totals_row_border_dxf_id` | Index of a `dxfs` entry in `styles.xml`, or `None`; settable to an existing entry, such as one `wb.styles.ensure_dxf(...)` returns |
+| `table.header_row_cell_style`, `data_cell_style`, `totals_row_cell_style` | Cell style names (read-only) |
+| `table.header_range`, `data_range`, `totals_range` | The header, data and totals rows as ranges, `None` when the table has none |
+| `table.first_data_row`, `last_data_row` | First and last data row numbers |
+| `table.resize(ref, *, columns=None)` | Change the table's range (see [Resizing a table](#resizing-a-table)) |
+
+### Resizing a table
+
+`resize` works like Excel's Resize Table: the range takes in whatever its cells hold, and no cell moves. With a totals row, the last row of `ref` is the totals row. The `autoFilter` covers `ref` without the totals row, and is removed from a table without a header row. The sort range follows the data rows and is clamped into them; a sort condition whose column leaves the table is dropped. A `ref` equal to the current range changes nothing.
+
+`columns` names every column of `ref`, left to right, and is required when `ref` adds or drops columns. A column the table keeps keeps its `tableColumn` (id, formulas, totals function) and must keep its name. A new column's header cell must hold its name or be empty; an empty one gets the name written into it, the only cell `resize` writes.
+
+`resize` raises `TableError`, changing nothing, when:
+
+- the header row would move;
+- `ref` does not overlap the current range, would leave no data row, or overlaps another table on the sheet;
+- the columns change without `columns`, or `columns` does not fit `ref`, repeats a name (ignoring case) or renames a column the table keeps;
+- a new column's header cell holds anything but its name;
+- a dropped column is named in a structured reference, in a formula that names the table or in one of the table's column formulas.
+
+It raises `InvalidRangeError` for a `ref` that is reversed or off the grid.
+
+### Header and totals rows
+
+Setting `header_row_count` or `totals_row_count` keeps `ref` and writes no cell:
+
+- `header_row_count = 0` turns the header row into the first data row and removes the `autoFilter`, which Excel writes only with a header row. `header_row_count = 1` makes the first row the header row; its cells must already hold the column names.
+- `totals_row_count = 1` turns the last data row into the totals row and sets `totals_row_shown`; `totals_row_count = 0` turns the totals row into a data row. The `autoFilter` and the sort range follow. Write the totals row's labels and formulas yourself.
+
+Both raise `TableError`, changing nothing, for a value other than 0 or 1 or when the table would be left without a data row.
 
 ---
 
@@ -317,7 +357,8 @@ All library errors derive from `XlsxeditError`, so you can catch everything with
 | `InvalidImageError` | `ValueError` | Unsupported or corrupt image data |
 | `MissingPartError` | `RuntimeError` | A required package part is absent |
 | `DataValidationError` | `ValueError` | A data-validation edit Excel would reject or cannot apply, or a change to a read-only x14 validation ([details](#data-validation)) |
-| `TableError` | `ValueError` | A table edit would leave an invalid or inconsistent table: `add_table` names, columns, range, overlap or header cells; a `write_dataframe` resize that does not fit the table; `insert_columns` inside a table bound to a query |
+| `TableError` | `ValueError` | A table edit would leave an invalid or inconsistent table: `add_table` names, columns, range, overlap or header cells; `Table.resize` and the `Table` setters; a `write_dataframe` resize that does not fit the table; `insert_columns` inside a table bound to a query, or with a header value that cannot name a column joining a table |
+
 | `FormulaGroupError` | `ValueError` | An edit would split a formula group: setting `cell.formula` on a shared-formula master that other cells still derive from, or on any cell of a multi-cell array or data-table formula; or overwriting, clearing, or removing the formula of such a multi-cell formula's anchor (`cell.value`, `cell.clear()`, `cell.formula = None`, `clear_range`, bulk writes). The refused cell keeps its content, though a styled bulk write may already have restyled it; `clear_range` and bulk writes keep the cells they wrote before it, while `insert_rows`, `insert_columns` and `add_table` raise it before changing anything |
 | `DTDForbiddenError` | `ValueError` | An XML part xlsxedit reads declares a DTD (`<!DOCTYPE>`), which Excel never writes. Raised when the part is first parsed: on open, or when a worksheet, table, drawing, or chart is first used, which can be partway through an edit. Parsing never expands entities or fetches external resources |
 

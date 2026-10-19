@@ -46,7 +46,7 @@ These libraries **rebuild** the workbook from an object model. Anything they do 
 
 **Charts** — `add_chart`, `charts`, `to_anchor`, `offset_x`/`offset_y` (post-create), read/set `title`, `set_series_formula`
 
-**Tables** — `add_table`, `tables`, `Table.resize`
+**Tables** — `add_table`, `tables`, `Table.resize`, and each table's columns, header and totals rows, style and ranges
 
 **Conditional formatting** — read blocks and rules; `add_conditional_formatting` (`cellIs`); `add_color_scale_formatting`
 

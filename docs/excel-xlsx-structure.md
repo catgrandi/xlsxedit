@@ -765,7 +765,7 @@ Tables overlay formatting and filters on a cell range. The cell values still liv
 
 - Preserve `table1.xml` and `tableParts` on save
 - Replacing text inside the table range is fine
-- Expanding/shrinking `ref` when adding rows is Phase 6
+- `Table` reads and edits this part in place, and `Table.resize` changes `ref` with its `autoFilter` and sort state ([features.md](features.md#table))
 
 ---
 

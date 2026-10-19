@@ -19,6 +19,10 @@ Several changes below are breaking, so the next release is a major one.
 - **Tables** — without `name=`, `add_table` names the table `TableN` after its workbook-wide id, or the next free number, instead of always `Table1`.
 - **Bulk export** — `write_dataframe` resizes only the table the written rows overlap; rows written directly below a table no longer grow it unless `table=` names it. It raises `TableError`, before writing, when the rows overlap several tables, do not span exactly the table's columns, would put anything but the column names in the header row, or the resized table would overlap another.
 - **Inserts** — `insert_rows` and `insert_columns` refuse an insert they cannot complete, changing nothing: see [Inserting rows and columns](docs/features.md#inserting-rows-and-columns) for each case.
+- **Tables** — `Table.resize` raises `TableError`, changing nothing, when the header row would move, the new range does not overlap the current one, leaves no data row or overlaps another table, or adds or drops columns without the new `columns=` option. See [Resizing a table](docs/features.md#resizing-a-table).
+- **Tables** — `Table` lives in `xlsxedit.table` (still importable from `xlsxedit` and `xlsxedit.drawing`), and its constructor takes the table part and its worksheet.
+- **Bulk export** — `write_dataframe` raises `TableError`, before writing, instead of resizing a table that has a totals row, and when `Table.resize` would refuse the new range.
+- **Inserts** — `insert_columns` inside a table raises `TableError`, changing nothing, when the value it would write into a new table column's header cell is not a non-empty string that no other column of the table uses.
 
 ### Added
 
@@ -29,11 +33,14 @@ Several changes below are breaking, so the next release is a major one.
 - **Tables** — `write_dataframe(..., table=...)` names the table to resize; `add_table(..., write_header=True)` writes the header cells.
 - **Styles** — `Color`, and `Styles.effective_xf_index(worksheet, address)`.
 - **Data validation** — `ws.data_validations` lists a sheet's validations as `DataValidation` objects, x14 ones read-only. `ws.add_data_validation(...)` and `ws.remove_data_validation(dv)` add and remove them, and `dv.sqref` is settable; a refused edit raises the new `DataValidationError`, `InvalidRangeError` or `TypeError` and changes nothing. `SheetRangeSet` and `CellRange`, the types of `dv.sqref` and its areas, are exported.
+- **Tables** — `Table` reads and writes `display_name`, `header_row_count`, `totals_row_count`, `totals_row_shown`, `style` (a `TableStyle`) and the six table dxf ids, and reads `id`, the cell style names, `header_range`, `data_range`, `totals_range`, `first_data_row` and `last_data_row`. `table.column_objects` lists each column as a `TableColumn`. `Table.resize(ref, columns=[...])` adds and drops columns.
+
 
 ### Changed
 
 - **Inserts** — `insert_rows` and `insert_columns` plan the whole move before changing anything, and now also move shared, array and data-table formula ranges, x14 conditional formats, validations and sparklines, internal hyperlinks, `autoFilter` and sort state, page breaks, sheet views, protected ranges, ignored errors, cell watches, scenarios, `<cols>` and row `spans`, and rewrite defined names reference by reference. Both drop `calcChain.xml` and set `fullCalcOnLoad`.
-- **Inserts** — `template_rows` name rows as they are before the insert. `insert_columns` inside a table adds table columns.
+- **Inserts** — `template_rows` name rows as they are before the insert. `insert_columns` inside a table adds table columns, named after the text it writes into their header cells, or `ColumnN`, which it then writes there.
+- **Tables** — `ws.tables` returns the same `Table` for a table on every call, over the live table part, so a table you hold follows `insert_rows` and `insert_columns`. A table part no edit changes keeps its exact bytes, including after `resize` to the range it already has.
 - **Bulk writes** — a value aimed at a cell that a merge covers goes to the merge's top-left cell, unless it is `None` or the same write fills that cell.
 - **Styles** — `apply_style` changes only the properties passed and builds on the cell's current style. Identical styles reuse existing `cellXfs`, font, fill and dxf entries. An empty cell without its own style takes its row's or column's style.
 - **Drawings** — `ws.charts` lists only chart frames. Geometry setters that cannot apply, such as moving a grouped object, raise `ValueError`.
@@ -48,6 +55,7 @@ Several changes below are breaking, so the next release is a major one.
 - **Cells** — writing one row through both the cell API and a bulk API no longer saves duplicate `<row>` elements, and cells stay in column order. `ws["a6"]` reaches the same cell as `ws["A6"]`.
 - **Formulas** — `Cell.formula` drops the stale cached value and cell type, sets `fullCalcOnLoad`, and turns a shared-formula follower into a standalone formula.
 - **Tables** — `write_dataframe` no longer moves or resizes a table it did not write into. `add_table` and `copy_worksheet` give tables unique ids and names.
+- **Tables** — `Table.resize`, `insert_rows` and `insert_columns` keep a table's totals row out of its `autoFilter`, and move the table's sort state; `resize` removes the `autoFilter` of a table without a header row.
 - **Styles** — exports with `template_rows` and `column_styles` allocate one cell format per template row and styled column instead of one per cell. `font_size` reads fractional sizes, and `<b val="0"/>` no longer reads as bold. A `num_format`, `font_name` or alignment the stylesheet cannot hold raises `TypeError` or `ValueError` before anything changes, instead of leaving an incomplete `numFmt` or an invalid alignment in `styles.xml`. `apply_style` accepts the `Color` that `font_color` returns, and a colour that is not six or eight hex digits raises `InvalidColorError`.
 - **Workbook** — `remove_worksheet` drops `calcChain.xml`, the sheet's own defined names and the parts only it reached, and renumbers later `localSheetId`s. New parts never take an orphan's name, and saving raises `ValueError` rather than write two members under one name.
 - **Drawings** — editing a chart and then a picture on one sheet keeps both edits. `Picture.anchor` moves the whole anchor, and `Picture.width` / `height` resize the picture with its anchor. Added images and charts get ids unique within their drawing. Rebuilt chart caches hold only numbers in `c:numCache`. A refused chart title or series formula leaves the chart unchanged, and clearing a title no longer writes an empty `c:tx`.
