@@ -736,7 +736,7 @@ class Worksheet:
             string_columns=string_columns,
             has_shared_strings=self.shared_strings is not None,
         )
-        plan = plan_insert_columns(self, at_col_idx, count)
+        plan = plan_insert_columns(self, at_col_idx, count, (row_list, start_row))
         template_maps = self._resolve_template_style_maps(
             template_rows=template_rows, start_col_idx=at_col_idx, row_list=row_list
         )
@@ -766,6 +766,9 @@ class Worksheet:
             last_row = start_row + len(row_list) - 1
             sort_row_cells(self._sheet_data(), start_row, last_row)
             widen_row_spans(self._sheet_data(), start_row, last_row)
+        for address, name in plan.header_cells.items():
+            row_elm = self._ensure_row(split_address(address)[1])
+            Cell(self._bulk_get_or_create_cell(address, row_elm), self).value = name
         self.update_dimension()
         return count
 

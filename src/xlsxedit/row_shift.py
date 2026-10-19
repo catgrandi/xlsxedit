@@ -42,7 +42,7 @@ from xlsxedit.exceptions import (
 )
 from xlsxedit.hyperlinks import _release_rel
 from xlsxedit.opc.constants import OFFICE_REL_NS, SML_NS
-from xlsxedit.oxml.address import MAX_COL, MAX_ROW, col_to_index, index_to_col
+from xlsxedit.oxml.address import MAX_COL, MAX_ROW, col_to_index, index_to_col, join_address
 from xlsxedit.parts import WorksheetPart
 from xlsxedit.range_set import CellRange, SheetRangeSet, shift_bounds
 from xlsxedit.styles import _XML_ILLEGAL, check_style_text, datetime_to_serial, normalize_rgb
@@ -1124,10 +1124,12 @@ class InsertPlan:
     defined names and charts and the other sheets' references to it, and raises
     ``InvalidRangeError`` or ``GridOverflowError`` before anything changes.
     ``apply`` then only assigns precomputed values. ``merges`` lists the
-    sheet's merge ranges as they will be after ``apply``.
+    sheet's merge ranges as they will be after ``apply``; ``header_cells``
+    the header cells of new table columns to write after it (see
+    ``_check_tables``, which reads ``cells``).
     """
 
-    def __init__(self, worksheet, ins: _Shift):
+    def __init__(self, worksheet, ins: _Shift, cells: tuple[list, int] | None = None):
         if not ins.inserting or ins.span is not None:
             raise ValueError("InsertPlan carries out inserts of whole rows or columns only")
         self._worksheet = worksheet
@@ -1144,11 +1146,12 @@ class InsertPlan:
             other_root = _root_if_it_may_refer(other)
             if other_root is not None:
                 planner.foreign_sheet(other_root)
-        self._check_tables()
+        self._check_tables(cells)
         if ins.rows:
             planner.after(partial(shift_table_parts, worksheet, ins.at, ins.delta))
         else:
-            planner.after(partial(shift_table_parts_cols, worksheet, ins.at - 1, ins.delta))
+            names = self._column_names
+            planner.after(partial(shift_table_parts_cols, worksheet, ins.at - 1, ins.delta, names))
         planner.defined_names(workbook)
         planner.charts(workbook)
         planner.after(workbook._invalidate_calc_chain)
@@ -1156,11 +1159,22 @@ class InsertPlan:
         self._planner = planner
         self.merges = planner.merges
 
-    def _check_tables(self) -> None:
+    def _check_tables(self, cells: tuple[list, int] | None) -> None:
         """Refuse an insertion that would push any part of a table off the grid
         (its columns and rows cannot shrink with it), or that would add columns
-        inside a table bound to a query."""
+        inside a table bound to a query; name the columns that join a table.
+
+        ``cells`` is ``(rows, first_row)``, the values ``insert_columns``
+        writes into the new columns from ``first_row`` down. The value it
+        writes into a joining column's header cell names the column when it is
+        a non-empty string no other column of the table uses (ignoring case);
+        where it writes nothing, the column gets the first unused ``ColumnN``,
+        which ``header_cells`` lists for the caller to write into that cell;
+        anything else raises ``TableError``.
+        """
         ins = self._insert
+        self._column_names: dict[object, list[str]] = {}
+        self.header_cells: dict[str, str] = {}
 
         def check(ref: str, what: str) -> None:
             if ins.clamps(_area(ref, what)):
@@ -1168,8 +1182,38 @@ class InsertPlan:
 
         for table in self._worksheet.tables:
             table._check_move(check)
-            if not ins.rows:
-                _check_table_accepts_columns(table._element, ins.at - 1)
+            if ins.rows or _inner_column_offset(table.ref, ins.at - 1) is None:
+                continue
+            _check_table_accepts_columns(table._element, ins.at - 1)
+            header_row = table._box()[1] if table.header_row_count else None
+            supplied: list = [None] * ins.delta
+            if header_row is not None and cells is not None:
+                rows, first_row = cells
+                if 0 <= header_row - first_row < len(rows):
+                    supplied = list(rows[header_row - first_row])
+            used = {(name or "").casefold() for name in table._column_names()}
+            for offset, value in enumerate(supplied):
+                if value is None:
+                    continue
+                if isinstance(value, str) and value and value.casefold() not in used:
+                    used.add(value.casefold())
+                    continue
+                address = join_address(index_to_col(ins.at - 1 + offset), header_row)
+                raise TableError(
+                    f"the header cell {address} of a column joining table "
+                    f"{table.display_name!r} would hold {value!r}; a new table column's "
+                    "header must be a non-empty string no other column of the table uses "
+                    "(ignoring case), or nothing for a generated ColumnN name"
+                )
+            names = _joining_column_names(supplied, used)
+            self._column_names[table._part] = names
+            if header_row is not None:
+                for offset, (value, name) in enumerate(zip(supplied, names)):
+                    if value is None:
+                        address = join_address(index_to_col(ins.at - 1 + offset), header_row)
+                        self.header_cells[address] = name
+        if self.header_cells and self._worksheet.shared_strings is None:
+            raise ValueError("workbook has no shared strings part")
 
     def apply(self) -> None:
         _walk_sheet_data(self._worksheet._part.element.find(_SHEET_DATA), self._insert, apply=True)
@@ -1181,9 +1225,15 @@ def plan_insert_rows(worksheet, at_row: int, count: int) -> InsertPlan:
     return InsertPlan(worksheet, _Shift(True, at_row, count))
 
 
-def plan_insert_columns(worksheet, at_col: int, count: int) -> InsertPlan:
-    """Plan inserting ``count`` columns before 0-based column ``at_col``."""
-    return InsertPlan(worksheet, _Shift(False, at_col + 1, count))
+def plan_insert_columns(
+    worksheet, at_col: int, count: int, cells: tuple[list, int] | None = None
+) -> InsertPlan:
+    """Plan inserting ``count`` columns before 0-based column ``at_col``.
+
+    ``cells`` is ``(rows, first_row)``: the values written into the new
+    columns, which name the columns that join a table (see ``InsertPlan``).
+    """
+    return InsertPlan(worksheet, _Shift(False, at_col + 1, count), cells)
 
 
 def check_block_in_grid(
@@ -1455,29 +1505,45 @@ def _check_table_accepts_columns(table_elm: etree._Element, at_col: int) -> None
         )
 
 
-def _insert_table_columns(table_elm: etree._Element, offset: int, delta: int) -> None:
-    """Add ``delta`` ``tableColumn``s before the one at ``offset``, like Excel names them.
+def _joining_column_names(supplied: list, used: set[str]) -> list[str]:
+    """Names for columns joining a table: each supplied name, and the first
+    unused ``ColumnN`` (``used`` holds casefolded names) where ``None``."""
+    names = []
+    n = 0
+    for value in supplied:
+        if value is not None:
+            names.append(value)
+            continue
+        n += 1
+        while f"column{n}" in used:
+            n += 1
+        names.append(f"Column{n}")
+    return names
 
-    Each gets the next free ``id`` and the first unused ``ColumnN`` name;
-    ``autoFilter`` ``filterColumn`` ids at or after ``offset`` move with
-    their columns.
+
+def _insert_table_columns(
+    table_elm: etree._Element, offset: int, delta: int, names: list[str] | None = None
+) -> None:
+    """Add ``delta`` ``tableColumn``s named ``names`` before the one at ``offset``.
+
+    Each gets the next free ``id``; without ``names`` they get the first
+    unused ``ColumnN`` names, as Excel names them. ``autoFilter``
+    ``filterColumn`` ids at or after ``offset`` move with their columns.
     """
     cols_elm = table_elm.find(_TABLE_COLUMNS)
     if cols_elm is None:
         return
     existing = cols_elm.findall(_TABLE_COLUMN)
     next_id = max((int(c.get("id")) for c in existing if c.get("id", "").isdigit()), default=0)
-    used = {(c.get("name") or "").casefold() for c in existing}
+    if names is None:
+        used = {(c.get("name") or "").casefold() for c in existing}
+        names = _joining_column_names([None] * delta, used)
     anchor = existing[offset] if offset < len(existing) else None
-    n = 0
-    for _ in range(delta):
-        n += 1
-        while f"column{n}" in used:
-            n += 1
+    for name in names:
         next_id += 1
         column = etree.Element(_TABLE_COLUMN)
         column.set("id", str(next_id))
-        column.set("name", f"Column{n}")
+        column.set("name", name)
         if anchor is None:
             cols_elm.append(column)
         else:
@@ -1491,22 +1557,25 @@ def _insert_table_columns(table_elm: etree._Element, offset: int, delta: int) ->
                 fc.set("colId", str(int(col_id) + delta))
 
 
-def shift_table_parts_cols(worksheet, at_col: int, delta: int) -> None:
+def shift_table_parts_cols(
+    worksheet, at_col: int, delta: int, names: dict[object, list[str]] | None = None
+) -> None:
     """Shift each table of the worksheet, with its ``autoFilter`` and sort state,
     after column insertion (see ``Table._move``).
 
     Columns inserted strictly inside a table join it as new ``tableColumn``s
-    (see ``_insert_table_columns``). Raises ``TableError``, before changing
-    any table part, when such a table is bound to a query: its query table
-    part would not know the new columns. ``plan_insert_columns`` makes the
-    same check before anything on the sheet moves.
+    (see ``_insert_table_columns``), named from ``names`` (by table part) when
+    the plan chose them. Raises ``TableError``, before changing any table
+    part, when such a table is bound to a query: its query table part would
+    not know the new columns. ``plan_insert_columns`` makes the same check
+    before anything on the sheet moves.
     """
     tables = [(t, _inner_column_offset(t.ref, at_col)) for t in worksheet.tables]
     for table, _offset in tables:
         _check_table_accepts_columns(table._element, at_col)
     for table, offset in tables:
         if offset is not None:
-            _insert_table_columns(table._element, offset, delta)
+            _insert_table_columns(table._element, offset, delta, (names or {}).get(table._part))
             table._part.mark_dirty()
         table._move(lambda ref: shift_range_ref_cols(ref, at_col, delta))
 

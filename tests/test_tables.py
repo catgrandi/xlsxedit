@@ -1070,6 +1070,46 @@ def test_insert_columns_moves_the_sort_state_with_its_columns():
     assert (sort_state.get("ref"), sort_state[0].get("ref")) == ("A2:D10", "C2:C10")
 
 
+def test_insert_columns_names_a_joining_column_after_its_header_value():
+    wb = Workbook.open(TABLES)
+    ws = wb["Table"]
+    ws.insert_columns([["Total", 1.5], [None, 2]], at_col="B")
+    names = [name for _, name in _summary(_saved_tables(wb)[TABLE])["columns"]]
+    assert names == ["Item", "Total", "Column1", "Price", "Quantity"]
+    assert [ws[a].value for a in ("A1", "B1", "C1", "D1")] == ["Item", "Total", "Column1", "Price"]
+
+
+def test_insert_columns_writes_generated_names_into_a_header_row_it_does_not_reach():
+    wb = Workbook.open(TABLES)
+    ws = wb["Table"]
+    ws.insert_columns([[1, 2]], at_cell="B5")
+    assert (ws["B1"].value, ws["B5"].value) == ("Column1", 1)
+    assert ws.tables[0].columns == ["Item", "Column1", "Price", "Quantity"]
+
+
+@pytest.mark.parametrize(
+    "cols",
+    [[["price"]], [[""]], [[5]], [["Total"], ["TOTAL"]]],
+    ids=["used-name", "empty-string", "number", "repeated"],
+)
+def test_insert_columns_refuses_a_header_value_that_cannot_name_the_column(cols):
+    wb = Workbook.open(TABLES)
+    before = read_pkg(wb)
+    with pytest.raises(TableError, match=r"joining table 'Table2' would hold"):
+        wb["Table"].insert_columns(cols, at_col="B")
+    assert_preserved(before, read_pkg(wb))
+
+
+def test_insert_columns_into_a_table_without_a_header_row_writes_no_name():
+    wb = _edited_tables(
+        (b'totalsRowShown="0"', b'headerRowCount="0" totalsRowShown="0"'), (_FIXTURE_FILTER, b"")
+    )
+    ws = wb["Table"]
+    ws.insert_columns([[7]], at_col="B")
+    assert ws["B1"].value == 7
+    assert ws.tables[0].columns == ["Item", "Column1", "Price", "Quantity"]
+
+
 def test_write_dataframe_refuses_to_resize_a_table_with_a_totals_row():
     wb = _rich()
     before = read_pkg(wb)
