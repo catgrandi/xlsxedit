@@ -543,18 +543,38 @@ def rewrite_anchored_refs(
     then move as seen from there. Excel adjusts every cell and splits the
     format where cells would need different formulas; here one formula keeps
     serving every area.
+
+    When the new top-left cell is itself inserted, the format spans every row
+    (column) and stays where it is: as in Excel, its relative references stay
+    and only the absolute ones move.
     """
     old, new = before.top_left, after.top_left
     if old is None or new is None:
         return text
-    origin = shift.cell(*new, back=True) or old
+    origin = shift.cell(*new, back=True)
+    if origin is None:
+        return rewrite_formula_refs(text, sheet_name, partial(_move_absolute, shift), unqualified=True)
     if origin != old:
         text = translate_formula_refs(text, origin[0] - old[0], origin[1] - old[1])
-    text = rewrite_formula_refs(text, sheet_name, shift.area, unqualified=True)
-    landed = shift.cell(*origin)
-    if landed is not None and landed != new:
-        text = translate_formula_refs(text, new[0] - landed[0], new[1] - landed[1])
-    return text
+    return rewrite_formula_refs(text, sheet_name, shift.area, unqualified=True)
+
+
+def _move_absolute(shift: _Shift, area: CellRange) -> CellRange | None:
+    """``area`` with only its absolute (``$``) bounds on the shifted axis moved."""
+    moved = shift.area(area)
+    if moved is area:
+        return area
+    lo_abs, hi_abs = (area.absolute[1], area.absolute[3]) if shift.rows else (area.absolute[0], area.absolute[2])
+    if not (lo_abs or hi_abs):
+        return area
+    if moved is None or (lo_abs and hi_abs):
+        return moved
+    lo_attr, hi_attr = ("min_row", "max_row") if shift.rows else ("min_col", "max_col")
+    lo = getattr(moved if lo_abs else area, lo_attr)
+    hi = getattr(moved if hi_abs else area, hi_attr)
+    if lo > hi:
+        return None
+    return replace(area, **{lo_attr: lo, hi_attr: hi}, text=None)
 
 
 def rewrite_plain_ref(

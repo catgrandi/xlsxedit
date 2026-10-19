@@ -132,6 +132,61 @@ def test_insert_rows_and_columns_rewrite_format_and_validation_formulas():
     assert_valid_package(wb)
 
 
+# A format over every row (column) that the shift leaves in place: recorded from Excel.
+_WHOLE_LINES = [
+    ("A:A", "A1<>Other!A1", _Shift(True, 1, 1), "A1<>Other!A1"),
+    ("B:B", "B1>$C$1", _Shift(True, 1, 1), "B1>$C$2"),
+    ("B:B", "B1>$C$1", _Shift(True, 1, 2), "B1>$C$3"),
+    ("E:E", "SUM(Other!E1:E3)>0", _Shift(True, 1, 1), "SUM(Other!E1:E3)>0"),
+    ("1:1", "A1<>Other!A1", _Shift(True, 1, 1), "A2<>Other!A1"),
+    ("1:1", "A1<>Other!A1", _Shift(False, 1, 1), "A1<>Other!A1"),
+    ("D2:D10", "D1048576<>Other!D1", _Shift(True, 1, 1), "#REF!<>Other!D1"),
+    ("F1:F10", "F1<>Other!F1", _Shift(True, 1, 1), "F2<>Other!F1"),
+    ("A:A", "A1<>Other!A1", _Shift(True, 1, -1), "A1<>Other!A2"),
+    ("B:B", "B1>$C$1", _Shift(True, 1, -1), "B1>#REF!"),
+    ("E:E", "SUM(Other!E1:E3)>0", _Shift(True, 1, -1), "SUM(Other!E2:E4)>0"),
+    ("D2:D10", "D1048576<>Other!D1", _Shift(True, 1, -1), "D1048575<>Other!D1"),
+    ("A:A", "A1<>Other!A1", _Shift(True, 1, -2), "A1<>Other!A3"),
+    ("D2:D10", "D1048576<>Other!D1", _Shift(True, 1, -2), "#REF!<>Other!D2"),
+]
+
+
+@pytest.mark.parametrize(("sqref", "formula", "shift", "expected"), _WHOLE_LINES)
+def test_formats_at_the_edge_of_the_grid_move_as_excel_moves_them(sqref, formula, shift, expected):
+    wb = Workbook.create()
+    wb.add_worksheet("Other")
+    ws = wb["Sheet1"]
+    _add(
+        ws,
+        f'<conditionalFormatting sqref="{sqref}"><cfRule type="expression" priority="1">'
+        f"<formula>{formula.replace('<', '&lt;').replace('>', '&gt;')}</formula></cfRule>"
+        "</conditionalFormatting>",
+    )
+    planner = _Planner(shift, sheet_name=ws.name, part=ws._part)
+    planner.worksheet(ws._part.element)
+    planner.apply()
+    assert _texts(ws, ".//m:cfRule/m:formula") == [expected]
+
+
+def test_inserting_at_the_top_keeps_a_whole_column_comparison_with_another_sheet():
+    wb = Workbook.create()
+    wb.add_worksheet("Other")
+    ws = wb["Sheet1"]
+    _add(
+        ws,
+        '<conditionalFormatting sqref="A:A"><cfRule type="expression" priority="1">'
+        "<formula>A1&lt;&gt;Other!A1</formula></cfRule></conditionalFormatting>",
+    )
+    _add(
+        ws,
+        '<dataValidations count="1"><dataValidation type="custom" sqref="A:A">'
+        "<formula1>A1&lt;&gt;[1]Data!A1</formula1></dataValidation></dataValidations>",
+    )
+    ws.insert_rows([[None]], at_row=1)
+    assert _texts(ws, ".//m:cfRule/m:formula") == ["A1<>Other!A1"]
+    assert _texts(ws, ".//m:formula1") == ["A1<>[1]Data!A1"]
+
+
 def test_a_whole_column_format_keeps_pointing_at_its_own_cells():
     wb = Workbook.create()
     ws = wb["Sheet1"]
