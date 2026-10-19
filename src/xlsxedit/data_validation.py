@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 _X14_NS = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"
 _XM_NS = "http://schemas.microsoft.com/office/excel/2006/main"
 _X14_URI = "{CCE6A557-97BC-4b89-ADB6-D9C93CAAB3DF}"
+_MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 
 _DATA_VALIDATIONS = f"{{{SML_NS}}}dataValidations"
 _DATA_VALIDATION = f"{{{SML_NS}}}dataValidation"
@@ -153,8 +154,11 @@ class DataValidation:
         return self._attribute("type")
 
     @property
-    def operator(self) -> str:
-        """How ``whole`` to ``textLength`` rules compare: ``between``, ``greaterThan``, …"""
+    def operator(self) -> str | None:
+        """How a ``whole``, ``decimal``, ``date``, ``time`` or ``textLength`` rule
+        compares: ``between``, ``greaterThan``, …; ``None`` for other types."""
+        if self.type not in _COMPARED:
+            return None
         return self._attribute("operator")
 
     @property
@@ -192,7 +196,11 @@ class DataValidation:
 
     @property
     def formula1(self) -> str | None:
-        """The first formula, without a leading ``=``; ``None`` when absent."""
+        """The first formula, without a leading ``=``; ``None`` when absent.
+
+        A formula that Excel wraps in ``mc:AlternateContent``, as it does for
+        a list whose items hold commas, reads from its ``mc:Fallback``.
+        """
         return self._formula("formula1")
 
     @property
@@ -205,6 +213,9 @@ class DataValidation:
             elm = self._element.find(f"{{{_X14_NS}}}{name}/{{{_XM_NS}}}f")
         else:
             elm = self._element.find(f"{{{SML_NS}}}{name}")
+            if elm is None:
+                fallback = f"{{{_MC_NS}}}AlternateContent/{{{_MC_NS}}}Fallback"
+                elm = self._element.find(f"{fallback}/{{{SML_NS}}}{name}")
         return None if elm is None else elm.text or ""
 
 

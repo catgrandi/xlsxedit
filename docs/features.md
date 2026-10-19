@@ -220,8 +220,8 @@ From `ws.data_validations` or `ws.add_data_validation(...)`. Each `DataValidatio
 |-----|---------|
 | `dv.sqref` | The cells, as a `SheetRangeSet`; settable |
 | `dv.type` | `none`, `whole`, `decimal`, `list`, `date`, `time`, `textLength` or `custom` |
-| `dv.operator` | `between`, `notBetween`, `equal`, `notEqual`, `lessThan`, `lessThanOrEqual`, `greaterThan` or `greaterThanOrEqual` |
-| `dv.formula1`, `dv.formula2` | Formula text without a leading `=`, or `None` |
+| `dv.operator` | `between`, `notBetween`, `equal`, `notEqual`, `lessThan`, `lessThanOrEqual`, `greaterThan` or `greaterThanOrEqual` for the types that compare; `None` for `list`, `custom` and `none` |
+| `dv.formula1`, `dv.formula2` | Formula text without a leading `=`, or `None`; a formula Excel wraps in `mc:AlternateContent` reads from its `mc:Fallback` |
 | `dv.allow_blank`, `dv.show_input_message`, `dv.show_error_message` | `bool` |
 | `dv.prompt_title`, `dv.prompt` | Input message, or `None` |
 | `dv.error_style` | `stop`, `warning` or `information` |
