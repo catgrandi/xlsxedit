@@ -99,9 +99,7 @@ They refuse an insert, changing nothing, by raising:
 
 - `GridOverflowError` when the new cells, cell content, a table, a scenario input cell or a data-table input cell would pass row 1,048,576 or column XFD;
 - `InvalidRangeError` for a reference in the sheet they cannot parse, or an insert point off the grid (`TypeError` if it is not an integer);
-- `DTDForbiddenError` when a chart, or another sheet that may refer to this one, declares a DTD; the insert reads those parts before changing anything;
 - `TableError` when columns would be inserted strictly inside a table whose columns are bound to a query (`queryTableFieldId`), or when `insert_columns` would write into a joining column's header cell a value that cannot name the column;
-
 - `FormulaGroupError` when a value aimed at a cell that a merge covers would overwrite a merge anchor holding a multi-cell array or data-table formula;
 - `ValueError` when a `template_rows` merge would overlap a merge, or when both `template_rows` and `row_styles` are given;
 - `TypeError` or `ValueError` for a value or inline style they cannot write.
