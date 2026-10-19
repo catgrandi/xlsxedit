@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from xlsxedit.opc.constants import CT
 from xlsxedit.opc.packuri import PACKAGE_URI, PackURI
-from xlsxedit.opc.part import Part, PartFactory
+from xlsxedit.opc.part import Part, PartFactory, XmlPart
 from xlsxedit.opc.pkgreader import ContentTypeMap, PackageReader
 from xlsxedit.opc.pkgwriter import PackageWriter
 from xlsxedit.opc.rel import Relationships
+from xlsxedit.oxml.parser import refuse_dtd_in_prolog
 
 
 class OpcPackage:
@@ -116,6 +118,10 @@ class Unmarshaller:
         parts = {}
         for partname, content_type, reltype, blob, _srels in pkg_reader.iter_sparts():
             part = part_factory(partname, content_type, reltype, blob, package)
+            if isinstance(part, XmlPart) or content_type == CT.TABLE:
+                # Parts kept as bytes are parsed on first use, which can be partway
+                # through an edit; their DTDs are refused now, before anything changes.
+                refuse_dtd_in_prolog(blob, partname)
             parts[partname] = part
             package._add_part(part)
         return parts

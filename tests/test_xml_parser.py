@@ -13,7 +13,7 @@ from lxml import etree
 
 from xlsxedit import DTDForbiddenError, Workbook, XlsxeditError
 from xlsxedit.oxml import parse_template_xml, parse_xml
-from xlsxedit.oxml.parser import _PARSER, _TEMPLATE_PARSER
+from xlsxedit.oxml.parser import _PARSER, _TEMPLATE_PARSER, refuse_dtd_in_prolog
 
 SST = "xl/sharedStrings.xml"
 SHEET = "xl/worksheets/sheet1.xml"
@@ -134,3 +134,129 @@ def test_workbook_with_remote_entities_makes_no_connection():
 def test_dtd_in_a_worksheet_is_refused_once_the_sheet_is_parsed():
     with pytest.raises(DTDForbiddenError):
         Workbook.open(_hostile(SHEET, "<!DOCTYPE worksheet>"))["Sheet1"]["A1"].value
+
+
+CHARTS = Path(__file__).resolve().parents[1] / "fixtures" / "ChartsAndTables.xlsx"
+
+
+def _with_member(source, member: str, change) -> io.BytesIO:
+    """A copy of the package ``source`` whose ``member`` holds ``change(bytes)``."""
+    out = io.BytesIO()
+    with zipfile.ZipFile(source) as src, zipfile.ZipFile(out, "w") as dst:
+        for info in src.infolist():
+            data = src.read(info)
+            dst.writestr(info, change(data) if info.filename == member else data)
+    out.seek(0)
+    return out
+
+
+def _add_doctype(doctype: str):
+    def change(data: bytes) -> bytes:
+        declaration, end, rest = data.partition(b"?>")
+        if not end:
+            return doctype.encode() + data
+        return declaration + end + doctype.encode() + rest
+
+    return change
+
+
+@pytest.mark.parametrize(
+    ("member", "large"),
+    [
+        ("xl/tables/table1.xml", False),
+        ("xl/drawings/drawing1.xml", False),
+        ("xl/charts/chart1.xml", False),
+        ("xl/worksheets/sheet1.xml", True),
+    ],
+)
+def test_dtd_in_a_part_kept_as_bytes_is_refused_at_open(member: str, large: bool):
+    hostile = _with_member(CHARTS, member, _add_doctype("<!DOCTYPE root>"))
+    with pytest.raises(DTDForbiddenError, match=member):
+        Workbook.open(hostile, large=large)
+
+
+def test_dtd_after_a_bom_comments_and_instructions_is_refused_at_open():
+    prolog = '\ufeff<?xml version="1.0"?>\n<!-- a <!DOCTYPE in a comment --><?pi x?>\n<!DOCTYPE c:chartSpace>'
+
+    def change(data: bytes) -> bytes:
+        return prolog.encode("utf-8") + data.partition(b"?>")[2]
+
+    with pytest.raises(DTDForbiddenError, match=r"<!DOCTYPE c:chartSpace>"):
+        Workbook.open(_with_member(CHARTS, "xl/charts/chart1.xml", change))
+
+
+@pytest.mark.parametrize("codec", ["utf-16", "utf-16-le", "utf-16-be"])
+def test_dtd_in_a_utf16_part_is_refused_at_open(codec: str):
+    def change(data: bytes) -> bytes:
+        text = data.decode("utf-8").replace('encoding="UTF-8"', 'encoding="UTF-16"')
+        declaration, end, rest = text.partition("?>")
+        return (declaration + end + "<!DOCTYPE table>" + rest).encode(codec)
+
+    with pytest.raises(DTDForbiddenError, match="xl/tables/table1.xml"):
+        Workbook.open(_with_member(CHARTS, "xl/tables/table1.xml", change))
+
+
+def test_utf16_part_without_a_dtd_still_opens():
+    def change(data: bytes) -> bytes:
+        return data.decode("utf-8").replace('encoding="UTF-8"', 'encoding="UTF-16"').encode("utf-16")
+
+    wb = Workbook.open(_with_member(CHARTS, "xl/tables/table1.xml", change))
+    assert [t.name for ws in wb.worksheets for t in ws.tables]
+
+
+@pytest.mark.parametrize(
+    "xml",
+    [
+        b"<a/>",
+        b"\xef\xbb\xbf<a/>",
+        b"<!-- comment -->\n<a><![CDATA[<!DOCTYPE a>]]></a>",
+        b"<?xml version='1.0'?><a><!-- <!DOCTYPE a> --></a>",
+        b"<a>" + b"<!DOCTYPE a>" + b"</a>",
+        b"",
+        b"   ",
+    ],
+)
+def test_prolog_without_a_dtd_passes(xml: bytes):
+    refuse_dtd_in_prolog(xml, "/part.xml")
+
+
+@pytest.mark.parametrize(
+    "xml",
+    [
+        "<!DOCTYPE a><a/>",
+        "\ufeff<!DOCTYPE a><a/>",
+        "<?xml version='1.0'?>\n\n<!--\n" + "x" * 100_000 + "\n--><?pi?> <!DOCTYPE a [<!ENTITY e 'x'>]><a/>",
+    ],
+    ids=["bare", "bom", "after-a-long-comment"],
+)
+@pytest.mark.parametrize("codec", ["utf-8", "utf-16", "utf-16-le", "utf-16-be", "utf-32"])
+def test_prolog_with_a_dtd_is_refused(xml: str, codec: str):
+    if codec in ("utf-16", "utf-32"):  # these codecs write their own byte-order mark
+        xml = xml.removeprefix("\ufeff")
+    with pytest.raises(DTDForbiddenError, match=r"/part\.xml declares a DTD \(<!DOCTYPE a>\)"):
+        refuse_dtd_in_prolog(xml.encode(codec), "/part.xml")
+
+
+def test_dtd_in_a_part_xlsxedit_never_parses_is_kept():
+    """A related part of a type xlsxedit only carries as bytes may keep its DTD."""
+    item = b'<?xml version="1.0"?><!DOCTYPE data><data/>'
+
+    def add_rel(data: bytes) -> bytes:
+        rel = (
+            b'<Relationship Id="rIdCustom" Target="../customXml/item1.xml" Type='
+            b'"http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml"/>'
+        )
+        return data.replace(b"</Relationships>", rel + b"</Relationships>")
+
+    source = _with_member(CHARTS, "xl/_rels/workbook.xml.rels", add_rel)
+    out = io.BytesIO()
+    with zipfile.ZipFile(source) as src, zipfile.ZipFile(out, "w") as dst:
+        for info in src.infolist():
+            dst.writestr(info, src.read(info))
+        dst.writestr("customXml/item1.xml", item)
+    out.seek(0)
+    wb = Workbook.open(out)
+    saved = io.BytesIO()
+    wb.save(saved)
+    with zipfile.ZipFile(saved) as z:
+        assert z.read("customXml/item1.xml") == item
