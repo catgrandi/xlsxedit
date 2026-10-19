@@ -29,6 +29,7 @@ from xlsxedit.oxml.address import (
     join_address,
     split_address,
 )
+from xlsxedit.oxml.parser import parse_xml
 from xlsxedit.parts import TablePart
 from xlsxedit.styles import _XML_ILLEGAL
 from xlsxedit.worksheet_order import insert_ordered
@@ -62,6 +63,10 @@ _FORMULA_TAGS = (
     f"{{{_XM_NS}}}f",
 )
 _TABLE_FORMULA_TAGS = (_CALCULATED_COLUMN_FORMULA, _TOTALS_ROW_FORMULA)
+# Parts that name a table in an attribute: a pivot cache's worksheetSource and
+# a data connection's x15:connection / x15:rangePr.
+_TABLE_NAMING_PARTS = (".pivotCacheDefinition+xml", ".connections+xml")
+_SLICER_CACHE_PART = "slicerCache+xml"
 
 _TABLE_DEFAULTS = ATTRIBUTE_DEFAULTS["CT_Table"]
 _COLUMN_DEFAULTS = ATTRIBUTE_DEFAULTS["CT_TableColumn"]
@@ -273,7 +278,8 @@ class Table:
         Setting it keeps ``ref``: 0 turns the header row into the first data
         row and removes the ``autoFilter`` (Excel writes none without a header
         row); 1 makes the first row the header row and requires its cells to
-        hold the column names already.
+        hold the column names already, and adds no ``autoFilter``. The sort
+        range follows the data rows.
         """
         return _uint(
             self._element, "headerRowCount", _TABLE_DEFAULTS["headerRowCount"], self._owner
@@ -282,11 +288,13 @@ class Table:
     @header_row_count.setter
     def header_row_count(self, value: int) -> None:
         count = _check_row_count(value, "header_row_count")
-        if count == self.header_row_count:
+        current = self.header_row_count
+        if count == current:
             return
         box = self._box()
+        totals = self.totals_row_count
         action = f"setting header_row_count of table {self.display_name!r} to {count}"
-        self._check_data_rows(box, count, self.totals_row_count, action)
+        self._check_data_rows(box, count, totals, action)
         if count:
             self._check_columns_fit(box)
             problems = header_mismatches(self._worksheet, box[1], box[0], self._column_names())
@@ -302,6 +310,7 @@ class Table:
             af = elm.find(_AUTO_FILTER)
             if af is not None:
                 elm.remove(af)
+        self._refit_sort_states(_data_box(box, current, totals), _data_box(box, count, totals))
         self._part.mark_dirty()
 
     @property
@@ -556,8 +565,13 @@ class Table:
                         f"{action}: the header cell {address} of new column {col_name!r} "
                         f"{_describe(held)}; write the name there or clear it"
                     )
-        kept = {id(s) for s in slots if not isinstance(s, str)}
-        dropped = [e for e in elements if id(e) not in kept]
+        dropped = [e for i, e in enumerate(elements) if not new[0] <= old[0] + i <= new[2]]
+        added = any(isinstance(slot, str) for slot in slots)
+        if (added or dropped) and any(c.get("queryTableFieldId") is not None for c in elements):
+            raise TableError(
+                f"{action} would add or drop columns of a table bound to a query "
+                "(queryTableFieldId), and the query table part is not updated"
+            )
         self._check_columns_unreferenced(dropped, action)
         if header_writes and self._worksheet.shared_strings is None:
             raise ValueError("workbook has no shared strings part")
@@ -586,19 +600,15 @@ class Table:
         elif af is not None:
             af_box = _try_box(af.get("ref")) or old
             af.set("ref", _box_ref(_filter_box(new, totals)))
-            positions = {id(s): i for i, s in enumerate(slots) if not isinstance(s, str)}
-            columns = self._column_elements()
             for fc in af.findall(_FILTER_COLUMN):
                 col_id = fc.get("colId", "")
                 if not _DIGITS.fullmatch(col_id):
                     continue
-                index = af_box[0] + int(col_id) - old[0]
-                element = columns[index] if 0 <= index < len(columns) else None
-                position = positions.get(id(element))
-                if position is None:
+                col = af_box[0] + int(col_id)
+                if not (old[0] <= col <= old[2] and new[0] <= col <= new[2]):
                     af.remove(fc)
-                elif position != int(col_id):
-                    fc.set("colId", str(position))
+                elif col - new[0] != int(col_id):
+                    fc.set("colId", str(col - new[0]))
         self._refit_sort_states(_data_box(old, header, totals), _data_box(new, header, totals))
 
         cols_elm = elm.find(_TABLE_COLUMNS)
@@ -636,17 +646,17 @@ class Table:
         the table, its ``autoFilter`` and its sort state.
 
         An ``autoFilter`` that covered the table without its totals row still
-        does; a sort range that ended at the last data row still does, so an
-        insert at the totals row grows them like the data rows.
+        does; a sort range that started at the first data row or ended at the
+        last one still does, so an insert at the first data row or at the
+        totals row grows them like the data rows.
         """
         elm = self._element
         ref = elm.get("ref")
         if not ref:
             return
-        old = _range_box(ref)
+        old, header, totals = self._layout()
         new_ref = move(ref)
         new = _range_box(new_ref)
-        totals = self.totals_row_count
         changed = _put_ref(elm, new_ref)
         af = elm.find(_AUTO_FILTER)
         if af is not None and af.get("ref"):
@@ -654,7 +664,7 @@ class Table:
                 changed |= _put_ref(af, _box_ref(_filter_box(new, totals)))
             else:
                 changed |= _put_ref(af, move(af.get("ref")))
-        old_last, new_last = old[3] - totals, new[3] - totals
+        old_data, new_data = _data_box(old, header, totals), _data_box(new, header, totals)
         for sort_state in self._sort_states():
             for item in (sort_state, *sort_state.iterchildren(_SORT_CONDITION)):
                 item_ref = item.get("ref")
@@ -662,8 +672,11 @@ class Table:
                     continue
                 moved = move(item_ref)
                 box, moved_box = _try_box(item_ref), _try_box(moved)
-                if box and moved_box and box[3] == old_last and moved_box[3] != new_last:
-                    moved = _box_ref((*moved_box[:3], new_last))
+                if box and moved_box:
+                    top = new_data[1] if box[1] == old_data[1] else moved_box[1]
+                    bottom = new_data[3] if box[3] == old_data[3] else moved_box[3]
+                    if (top, bottom) != (moved_box[1], moved_box[3]):
+                        moved = _box_ref((moved_box[0], top, moved_box[2], bottom))
                 changed |= _put_ref(item, moved)
         if changed:
             self._part.mark_dirty()
@@ -675,6 +688,7 @@ class Table:
         ref = self._element.get("ref")
         if ref:
             check(ref, what)
+            self._layout()  # a malformed ref or row count raises before anything moves
         af = self._element.find(_AUTO_FILTER)
         if af is not None and af.get("ref"):
             check(af.get("ref"), what)
@@ -691,6 +705,10 @@ class Table:
             return _range_box(ref or "")
         except InvalidRangeError:
             raise TableError(f"table {self.display_name!r} has a malformed ref {ref!r}") from None
+
+    def _layout(self) -> tuple[Box, int, int]:
+        """The table's box and its header and totals row counts."""
+        return self._box(), self.header_row_count, self.totals_row_count
 
     def _column_names(self) -> list[str | None]:
         return [c.get("name") for c in self._column_elements()]
@@ -782,18 +800,36 @@ class Table:
                 f"renaming table {current!r} to {new!r} would break {where}, whose formula "
                 f"{formula!r} refers to it by name; xlsxedit does not rewrite formulas"
             )
-        quoted = re.compile(b'"' + re.escape(current.encode()) + b'"', re.IGNORECASE)
+        folded = current.casefold()
         for part in workbook._package.iter_parts():
-            if isinstance(part, XmlPart) or not part.content_type.endswith("+xml"):
+            if isinstance(part, XmlPart) or not part.content_type.endswith(_TABLE_NAMING_PARTS):
                 continue
-            if quoted.search(part.blob):
-                raise TableError(
-                    f"renaming table {current!r} to {new!r} would break {part.partname}, "
-                    "which names it"
-                )
+            for elm in parse_xml(part.blob).iter(etree.Element):
+                if any(value.casefold() == folded for value in elm.attrib.values()):
+                    raise TableError(
+                        f"renaming table {current!r} to {new!r} would break {part.partname}, "
+                        "which names it"
+                    )
 
     def _check_columns_unreferenced(self, dropped: list[etree._Element], action: str) -> None:
-        """Refuse dropping a column that a structured reference names."""
+        """Refuse dropping a column that a structured reference names or a slicer filters."""
+        if not dropped:
+            return
+        by_id = {c.get("id"): c.get("name") for c in dropped}
+        table_id = self._element.get("id")
+        for part in self._worksheet._workbook._package.iter_parts():
+            if isinstance(part, XmlPart) or not part.content_type.endswith(_SLICER_CACHE_PART):
+                continue
+            for elm in parse_xml(part.blob).iter(etree.Element):
+                if (
+                    etree.QName(elm).localname == "tableSlicerCache"
+                    and elm.get("tableId") == table_id
+                    and elm.get("column") in by_id
+                ):
+                    raise TableError(
+                        f"{action} would drop column {by_id[elm.get('column')]!r}, which the "
+                        f"slicer cache {part.partname} filters on"
+                    )
         names = [c.get("name") for c in dropped if c.get("name")]
         if not names:
             return
