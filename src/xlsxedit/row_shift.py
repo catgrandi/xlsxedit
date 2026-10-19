@@ -558,8 +558,9 @@ def rewrite_anchored_refs(
     serving every area.
 
     When the new top-left cell is itself inserted, the format spans every row
-    (column) and stays where it is: as in Excel, its relative references stay
-    and only the absolute ones move.
+    (column) and stays where it is: its relative references stay and only the
+    absolute ones move. Excel does the same for most such formulas, but moves
+    some ranges that mix relative and absolute bounds as a whole.
     """
     old, new = before.top_left, after.top_left
     if old is None or new is None:
@@ -573,11 +574,13 @@ def rewrite_anchored_refs(
 
 
 def _move_absolute(shift: _Shift, area: CellRange) -> CellRange | None:
-    """``area`` with only its absolute (``$``) bounds on the shifted axis moved."""
+    """``area`` with only its absolute (``$``) bounds on the shifted axis moved;
+    bounds that cross are swapped with their ``$``, as Excel orders a range."""
     moved = shift.area(area)
     if moved is area:
         return area
-    lo_abs, hi_abs = (area.absolute[1], area.absolute[3]) if shift.rows else (area.absolute[0], area.absolute[2])
+    i, j = (1, 3) if shift.rows else (0, 2)
+    lo_abs, hi_abs = area.absolute[i], area.absolute[j]
     if not (lo_abs or hi_abs):
         return area
     if moved is None or (lo_abs and hi_abs):
@@ -586,8 +589,10 @@ def _move_absolute(shift: _Shift, area: CellRange) -> CellRange | None:
     lo = getattr(moved if lo_abs else area, lo_attr)
     hi = getattr(moved if hi_abs else area, hi_attr)
     if lo > hi:
-        return None
-    return replace(area, **{lo_attr: lo, hi_attr: hi}, text=None)
+        lo, hi, lo_abs, hi_abs = hi, lo, hi_abs, lo_abs
+    flags = list(area.absolute)
+    flags[i], flags[j] = lo_abs, hi_abs
+    return replace(area, **{lo_attr: lo, hi_attr: hi}, absolute=tuple(flags), text=None)
 
 
 def rewrite_plain_ref(
