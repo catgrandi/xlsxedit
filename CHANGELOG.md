@@ -44,6 +44,7 @@ Several changes below are breaking, so the next release is a major one.
 ### Fixed
 
 - **Inserts** — `insert_rows` and `insert_columns` rewrite the formulas of conditional formats and data validations, x14 formulas that hold several references, the series, titles and labels of charts, and the references to the sheet in other sheets' formats and validations. A conditional format comparing `$B10` keeps testing its own row after rows are inserted above it.
+- **Inserts** — `insert_rows` and `insert_columns` no longer raise `AttributeError` in a workbook that has a chartsheet.
 - **Cells** — writing one row through both the cell API and a bulk API no longer saves duplicate `<row>` elements, and cells stay in column order. `ws["a6"]` reaches the same cell as `ws["A6"]`.
 - **Formulas** — `Cell.formula` drops the stale cached value and cell type, sets `fullCalcOnLoad`, and turns a shared-formula follower into a standalone formula.
 - **Tables** — `write_dataframe` no longer moves or resizes a table it did not write into. `add_table` and `copy_worksheet` give tables unique ids and names.
