@@ -180,6 +180,8 @@ class _Shift:
     def __post_init__(self) -> None:
         if self.delta == 0 or self.at < 1:
             raise ValueError(f"not a shift: at={self.at}, delta={self.delta}")
+        if self.at > self.limit + (1 if self.inserting else 0):
+            raise InvalidRangeError(f"line {self.at} is outside the grid")
         if not self.inserting and self.end > self.limit:
             raise InvalidRangeError(f"{self.describe()} passes the edge of the grid")
         if self.span is not None:
@@ -288,10 +290,17 @@ class _Shift:
         noun = "row" if self.rows else "column"
         if self.inserting:
             where = f"row {self.at}" if self.rows else f"column {index_to_col(self.at - 1)}"
-            return f"inserting {self.delta} {noun}(s) at {where}"
+            text = f"inserting {self.delta} {noun}(s) at {where}"
+        elif self.rows:
+            text = f"deleting rows {self.at}:{self.end}"
+        else:
+            text = f"deleting columns {index_to_col(self.at - 1)}:{index_to_col(self.end - 1)}"
+        if self.span is None:
+            return text
+        lo, hi = self.span
         if self.rows:
-            return f"deleting rows {self.at}:{self.end}"
-        return f"deleting columns {index_to_col(self.at - 1)}:{index_to_col(self.end - 1)}"
+            return f"{text} in columns {index_to_col(lo - 1)}:{index_to_col(hi - 1)}"
+        return f"{text} in rows {lo}:{hi}"
 
     def overflow(self, what: str) -> GridOverflowError:
         end = f"row {MAX_ROW}" if self.rows else "column XFD"
@@ -302,6 +311,9 @@ class _Shift:
         if self.inserting:
             return self.overflow(what)
         return InvalidRangeError(f"{self.describe()} would delete {what}")
+
+    def split_error(self, what: str) -> InvalidRangeError:
+        return InvalidRangeError(f"{self.describe()} would move only part of {what}")
 
 
 def _area(text: str, where: str) -> CellRange:
@@ -689,17 +701,29 @@ class _Planner:
                 self.remove(elm)
         return ranges, moved
 
-    def view_sqref_attr(self, elm: etree._Element, attr: str) -> None:
+    def view_sqref_attr(self, elm: etree._Element, attr: str) -> list[int] | None:
+        """Move or pin view-state areas, merging any that land on one another;
+        return each old area's index among the new ones, ``None`` if none moved."""
         text = elm.get(attr)
         if not text:
-            return
+            return None
         try:
             ranges = SheetRangeSet.parse(text)
         except InvalidRangeError:
-            return
+            return None
         moved = [self.ins.pinned(area) for area in ranges]
-        if any(new is not old for new, old in zip(moved, ranges)):
-            self.set(elm, attr, str(SheetRangeSet(dict.fromkeys(moved))))
+        if all(new is old for new, old in zip(moved, ranges)):
+            return None
+        kept = list(dict.fromkeys(moved))
+        self.set(elm, attr, str(SheetRangeSet(kept)))
+        return [kept.index(area) for area in moved]
+
+    def selection(self, selection: etree._Element) -> None:
+        self.area_attr(selection, "activeCell", "activeCell", lost="pin")
+        index = self.view_sqref_attr(selection, "sqref")
+        active = selection.get("activeCellId")
+        if index and active is not None and active.isdigit() and int(active) < len(index):
+            self.set(selection, "activeCellId", str(index[int(active)]))
 
     # -- worksheet structures -------------------------------------------
 
@@ -744,6 +768,8 @@ class _Planner:
             if not ref:
                 continue
             area = _area(ref, "mergeCell/@ref")
+            if self.ins.splits(area):
+                raise self.ins.split_error(f"merged cells {ref}")
             moved = self.ins.area(area)
             if moved is None or moved.is_cell:
                 self.remove(merge)  # pushed off, or clamped to one cell
@@ -794,7 +820,7 @@ class _Planner:
             if col_id is None or not col_id.isdigit():
                 continue
             new = self.ins.move(area.min_col + int(col_id))
-            if new is None or new > moved.max_col:
+            if new is None or new > self.ins.limit:
                 self.remove(column)
             else:
                 self.set(column, "colId", str(new - moved.min_col))
@@ -854,8 +880,7 @@ class _Planner:
                 if pane is not None:
                     self.pane(pane, top, screen)
             for selection in view.iterchildren(_SELECTION):
-                self.area_attr(selection, "activeCell", "activeCell", lost="pin")
-                self.view_sqref_attr(selection, "sqref")
+                self.selection(selection)
         for view in custom:
             self.breaks(view)
             self.auto_filter(view, "customSheetView/")
@@ -881,7 +906,7 @@ class _Planner:
             return  # view state only; never block a shift over it
         pinned = screen.pinned(area)
         if split is not None and not self.ins.inserting:
-            first = top + int(split)
+            first = (self.ins.move(top) or self.ins.at) + int(split)
             if self.ins.rows and pinned.min_row < first:
                 pinned = replace(pinned, min_row=first, max_row=max(first, pinned.max_row), text=None)
             elif not self.ins.rows and pinned.min_col < first:

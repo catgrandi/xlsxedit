@@ -95,6 +95,8 @@ def test_a_span_moves_only_the_cells_inside_it():
         ((True, 5, 1, (0, 3)), InvalidRangeError),
         ((True, 5, 1, (4, 3)), InvalidRangeError),
         ((False, 5, 1, (1, 1_048_577)), InvalidRangeError),
+        ((True, 1_048_578, 1), InvalidRangeError),
+        ((False, 16_385, -1), InvalidRangeError),
     ],
 )
 def test_a_shift_off_the_grid_is_refused(args, error):
@@ -173,6 +175,12 @@ def test_filter_columns_pushed_off_the_grid_go_even_when_the_range_is_clamped():
     assert _attrs(ws, "m:autoFilter/m:filterColumn", "colId") == ["2"]
 
 
+def test_an_insert_away_from_a_filter_keeps_its_filter_columns():
+    wb, ws = _sheet('<autoFilter ref="A1:C10"><filterColumn colId="1"/><filterColumn colId="7"/></autoFilter>')
+    ws.insert_columns([[None]], at_col="Z")
+    assert _attrs(ws, "m:autoFilter/m:filterColumn", "colId") == ["1", "7"]
+
+
 def test_a_sort_condition_in_deleted_columns_goes():
     _, ws = _sheet(
         '<autoFilter ref="A1:E10"><sortState ref="A2:E10"><sortCondition ref="B2:B10"/>'
@@ -248,6 +256,42 @@ def test_a_frozen_split_shrinks_with_deleted_frozen_rows_as_in_excel(shift, spli
     _shift(ws, shift)
     assert _attrs(ws, "m:sheetViews/m:sheetView/m:pane", "ySplit") == [split]
     assert _attrs(ws, "m:sheetViews/m:sheetView/m:pane", "topLeftCell") == [top_left]
+
+
+@pytest.mark.parametrize(
+    ("shift", "view_top", "split", "pane_top"),
+    [
+        (_Shift(True, 1, -1), "A2", "4", "A6"),
+        (_Shift(True, 2, -2), "A2", "3", "A5"),
+    ],
+)
+def test_a_frozen_pane_counts_from_where_the_view_top_went(shift, view_top, split, pane_top):
+    _, ws = _sheet(
+        '<sheetViews><sheetView workbookViewId="0" topLeftCell="A3"><pane ySplit="4" '
+        'topLeftCell="A7" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
+    )
+    _shift(ws, shift)
+    assert _attrs(ws, "m:sheetViews/m:sheetView", "topLeftCell") == [view_top]
+    assert _attrs(ws, "m:sheetViews/m:sheetView/m:pane", "ySplit") == [split]
+    assert _attrs(ws, "m:sheetViews/m:sheetView/m:pane", "topLeftCell") == [pane_top]
+
+
+def test_selection_areas_that_merge_keep_the_active_area():
+    _, ws = _sheet(
+        '<sheetViews><sheetView workbookViewId="0"><selection activeCell="B9" activeCellId="2" '
+        'sqref="A5 A6 B9"/></sheetView></sheetViews>'
+    )
+    _shift(ws, _rows(5, 2))
+    assert _attrs(ws, "m:sheetViews/m:sheetView/m:selection", "sqref") == ["A5 B7"]
+    assert _attrs(ws, "m:sheetViews/m:sheetView/m:selection", "activeCellId") == ["1"]
+    assert _attrs(ws, "m:sheetViews/m:sheetView/m:selection", "activeCell") == ["B7"]
+
+
+def test_a_span_shift_that_would_split_a_merge_is_refused():
+    _, ws = _sheet('<mergeCells count="2"><mergeCell ref="B7:C8"/><mergeCell ref="A5:C6"/></mergeCells>')
+    with pytest.raises(InvalidRangeError, match="in columns B:C would move only part of merged cells A5:C6"):
+        _shift(ws, _Shift(True, 5, 1, (2, 3)))
+    assert ws.merged_ranges == ["B7:C8", "A5:C6"]
 
 
 def test_deleted_frozen_columns_shrink_the_split():
