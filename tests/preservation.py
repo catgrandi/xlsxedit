@@ -630,8 +630,9 @@ INVARIANTS: dict[str, str] = {
     "cell-metadata": "every cell cm/vm index resolves to a bk of the workbook's metadata part",
     "x14-cf": "every cfRule x14:id has an x14:cfRule twin whose xm:sqref equals the base sqref",
     "data-validation": (
-        "a worksheet has at most one dataValidations; its count and every x14:dataValidations "
-        "count equal their dataValidation children; every validation names a non-empty sqref"
+        "a worksheet has at most one dataValidations, holding at least one dataValidation; its "
+        "count and every x14:dataValidations count equal their dataValidation children; every "
+        "validation names a non-empty sqref"
     ),
 }
 
@@ -1115,7 +1116,6 @@ def _check_x14_cf(book: _Book) -> None:
                         )
 
 
-
 def _check_data_validations(book: _Book) -> None:
     x14_validations = f"{{{_X14_NS}}}dataValidations"
     x14_validation = f"{{{_X14_NS}}}dataValidation"
@@ -1128,7 +1128,9 @@ def _check_data_validations(book: _Book) -> None:
         for block in blocks:
             rules = block.findall(_sml("dataValidation"))
             count = block.get("count")
-            if count is not None and count != str(len(rules)):
+            if not rules:
+                bad.append("dataValidations holds no dataValidation")
+            elif _count_differs(count, len(rules)):
                 bad.append(
                     f"dataValidations/@count={count} but {len(rules)} dataValidation children"
                 )
@@ -1140,7 +1142,7 @@ def _check_data_validations(book: _Book) -> None:
         for block in root.iter(x14_validations):
             rules = block.findall(x14_validation)
             count = block.get("count")
-            if count is not None and count != str(len(rules)):
+            if _count_differs(count, len(rules)):
                 bad.append(f"x14:dataValidations/@count={count} but {len(rules)} children")
             for i, rule in enumerate(rules, 1):
                 sqref = rule.find(f"{{{_XM_NS}}}sqref")
@@ -1148,6 +1150,15 @@ def _check_data_validations(book: _Book) -> None:
                     bad.append(f"x14:dataValidation {i} has no xm:sqref")
         if bad:
             book.flag("data-validation", sheet.member, _summarise(bad))
+
+
+def _count_differs(count: str | None, children: int) -> bool:
+    """Whether a ``count`` attribute, an ``xsd:unsignedInt``, names another number."""
+    if count is None:
+        return False
+    text = count.strip(" \t\r\n")
+    return not (text.isascii() and text.isdigit() and int(text) == children)
+
 
 def waives(issue: str, *codes: str):
     """Mark a test whose workbooks still break the invariants ``codes`` until ``issue`` lands.
