@@ -19,7 +19,9 @@ Three tools use them:
   again after changing a schema; `tests/test_ooxml_order.py` fails until the
   generated module matches.
 - [`tests/schema_validate.py`](../tests/schema_validate.py) validates the
-  parts of saved workbooks during the test suite.
+  parts of saved workbooks during the test suite against
+  `transitional/sml.xsd`, and the extension payloads inside their `extLst`
+  elements against `microsoft/extensions.xsd`.
 - [`scripts/fetch_ms_xlsx_schemas.py`](../scripts/fetch_ms_xlsx_schemas.py)
   writes `microsoft/`, except `sml-shim.xsd`. Nothing is fetched when the
   tests run.
