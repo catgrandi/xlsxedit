@@ -125,3 +125,32 @@ def test_replacing_in_an_inline_string_marks_the_sheet_only_on_a_match():
     assert ws["Z99"].replace("name", "world") == 1
     assert ws._part.is_dirty
     assert Workbook.open(io.BytesIO(_saved_bytes(wb)))[SHEET]["Z99"].value == "hello world"
+
+
+def _with_a_validation() -> Workbook:
+    wb = Workbook.create()
+    wb[SHEET].add_data_validation("B2:B10", type="list", formula1='"a,b"')
+    return Workbook.open(io.BytesIO(_saved_bytes(wb)))
+
+
+def test_data_validation_writes_mark_the_sheet_only_on_a_change():
+    wb = _with_a_validation()
+    ws = wb[SHEET]
+    (dv,) = ws.data_validations
+    dv.sqref = "B2:B10"
+    assert _dirty_parts(wb) == []
+    dv.sqref = "C2:C10"
+    assert ws._part.is_dirty
+
+    wb = _with_a_validation()
+    ws = wb[SHEET]
+    with pytest.raises(Exception):
+        ws.add_data_validation("B5", type="list", formula1='"c"')  # overlaps, refused
+    assert _dirty_parts(wb) == []
+    ws.add_data_validation("D2:D10", type="list", formula1='"c"')
+    assert ws._part.is_dirty
+
+    wb = _with_a_validation()
+    ws = wb[SHEET]
+    ws.remove_data_validation(ws.data_validations[0])
+    assert ws._part.is_dirty

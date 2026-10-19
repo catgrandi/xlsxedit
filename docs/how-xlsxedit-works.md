@@ -100,7 +100,7 @@ flowchart LR
 2. Write `[Content_Types].xml` and each part’s `.rels`: their source bytes while those still describe the in-memory graph exactly, otherwise regenerated from it. A regenerated `[Content_Types].xml` keeps the source `Default` entries and adds an `Override` only for a part whose content type differs from its extension’s `Default`.
 3. Write every part’s `blob`:
    - opaque `Part` → original bytes unchanged
-   - `XmlPart` → original bytes while the live lxml tree is unchanged (never handed out, or serializing exactly as a fresh parse of the original bytes does); otherwise the tree, serialized with Excel’s XML declaration. A part that an API write changed is marked dirty and serialized without that comparison, which would otherwise parse the original bytes a second time; only a tree changed by other means, such as an element edited directly, pays for it. A dirty part drops its original bytes.
+   - `XmlPart` → original bytes while the live lxml tree is unchanged (never handed out, or serializing exactly as a fresh parse of the original bytes does); otherwise the tree, serialized with Excel’s XML declaration. A part that a cell, dimension, bulk, merge, insert, table or data-validation write changed is marked dirty and serialized without that comparison, which would otherwise parse the original bytes a second time; a tree changed by other means pays for it: an element edited directly, a conditional-formatting add, a hyperlink setter or `CellStyle.num_format`. A dirty part drops its original bytes.
 4. Produce a new ZIP.
 
 ---
