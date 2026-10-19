@@ -34,6 +34,7 @@ from lxml import etree
 
 from xlsxedit.bulk_styles import normalize_style_spec
 from xlsxedit.cell import _refuse_range_formula_edit
+from xlsxedit.drawing import chart_parts, chart_references
 from xlsxedit.exceptions import (
     GridOverflowError,
     InvalidRangeError,
@@ -1018,6 +1019,13 @@ class _Planner:
                 new = rewrite_plain_ref(location, self.sheet_name, self.ins.area, unqualified=own)
                 self.set(link, "location", new)
 
+    def charts(self, workbook) -> None:
+        """References to the shifted sheet in every chart: series, titles and
+        labels with their c15 copies. A chart's references name their sheet."""
+        for part in chart_parts(workbook._package):
+            for elm in chart_references(part.element):
+                self.set_text(elm, self.plain(elm.text, own=False))
+
     def defined_names(self, workbook) -> None:
         wb_elm = workbook._workbook_part.element
         block = wb_elm.find(_DEFINED_NAMES)
@@ -1072,7 +1080,7 @@ class InsertPlan:
     """Every change that inserting rows or columns into one worksheet makes.
 
     Building the plan reads the worksheet, its table parts, the workbook's
-    defined names and the other sheets' references to it, and raises
+    defined names and charts and the other sheets' references to it, and raises
     ``InvalidRangeError`` or ``GridOverflowError`` before anything changes.
     ``apply`` then only assigns precomputed values. ``merges`` lists the
     sheet's merge ranges as they will be after ``apply``.
@@ -1101,6 +1109,7 @@ class InsertPlan:
         else:
             planner.after(partial(shift_table_parts_cols, worksheet, ins.at - 1, ins.delta))
         planner.defined_names(workbook)
+        planner.charts(workbook)
         planner.after(workbook._invalidate_calc_chain)
         planner.after(workbook.set_full_calc_on_load)
         self._planner = planner

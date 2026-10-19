@@ -3,7 +3,8 @@
 Each case inserts at the header row (first column), inside the body, at the
 last data row (column) and just below (right of) it, then pins where the
 tables, merges, conditional formats and data validations end up, which package
-members changed, and that the result is schema-valid and consistent.
+members changed (a chart changes when the cells it plots move), and that the
+result is schema-valid and consistent.
 """
 
 from __future__ import annotations
@@ -71,6 +72,7 @@ class Case:
     expect: dict[str, tuple]
     changed: frozenset[str] = frozenset()
     changed_unless_below: frozenset[str] = frozenset()
+    changed_at: dict[str, frozenset[str]] = field(default_factory=dict)
     removed: frozenset[str] = frozenset()
     positions: tuple[str, ...] = field(default=POSITIONS)
 
@@ -172,6 +174,7 @@ ROW_CASES = {
         at={"header": 1, "body": 3, "last": 6, "below": 7},
         expect={"merges": (("A2:B2",), ("A1:B1",), ("A1:B1",), ("A1:B1",))},
         changed=frozenset({"xl/workbook.xml"}),
+        changed_unless_below=frozenset({"xl/charts/chart1.xml"}),  # the chart plots B2 and A3:B6
     ),
 }
 
@@ -242,6 +245,7 @@ COLUMN_CASES = {
         at={"header": "A", "body": "B", "last": "D", "below": "E"},
         expect={"merges": (("B1:C1",), ("A1:C1",), ("A1:B1",), ("A1:B1",))},
         changed=frozenset({"xl/workbook.xml"}),
+        changed_at={pos: frozenset({"xl/charts/chart1.xml"}) for pos in ("header", "body")},
     ),
 }
 
@@ -265,6 +269,7 @@ def _check(case: Case, position: str, insert: Callable) -> None:
     changed = {case.member, *case.changed}
     if position != "below":
         changed |= case.changed_unless_below
+    changed |= case.changed_at.get(position, frozenset())
     assert_preserved(before, after, expected_changed=changed, expected_removed=case.removed)
     index = case.positions.index(position)
     for name, values in case.expect.items():
