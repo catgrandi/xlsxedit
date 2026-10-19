@@ -997,8 +997,8 @@ class Worksheet:
 
         ``type`` is one of ``none``, ``whole``, ``decimal``, ``list``, ``date``,
         ``time``, ``textLength`` or ``custom``. Every type but ``none`` needs
-        ``formula1``; a leading ``=`` is dropped and numbers are written as
-        they are. ``whole`` to ``textLength`` compare with ``operator``
+        ``formula1``; surrounding whitespace and a leading ``=`` are dropped,
+        and an ``int`` or ``float`` is written as a number. ``whole`` to ``textLength`` compare with ``operator``
         (default ``between``), and ``between`` and ``notBetween`` also need
         ``formula2``. A ``list`` formula is a quoted list such as ``'"Yes,No"'``,
         a range or a defined name. ``allow_blank``, ``show_input_message`` and

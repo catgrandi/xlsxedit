@@ -8,6 +8,7 @@ the saved package unchanged.
 
 from __future__ import annotations
 
+import enum
 import io
 import re
 
@@ -350,6 +351,33 @@ def test_add_accepts_list_sources_on_the_same_sheet(formula1):
     assert dv.formula1 == formula1
 
 
+class _Level(enum.IntEnum):
+    LOW = 3
+
+
+class _Float(float):
+    def __repr__(self) -> str:
+        return f"_Float({float(self)!r})"
+
+
+@pytest.mark.parametrize(
+    ("formula1", "written"),
+    [
+        (" =A1+1 ", "A1+1"),
+        ("=\tA1+1", "A1+1"),
+        (_Level.LOW, "3"),
+        (_Float(0.25), "0.25"),
+        (-0.5, "-0.5"),
+        (1e20, "1e+20"),
+        (10**20, "100000000000000000000"),
+    ],
+)
+def test_add_writes_formulas_as_excel_reads_them(formula1, written):
+    wb, ws = _book()
+    ws.add_data_validation("B2", type="decimal", operator="greaterThan", formula1=formula1)
+    assert _saved_rules(wb)[0].endswith(f"<formula1>{written}</formula1></dataValidation>")
+
+
 def test_add_accepts_messages_at_excels_limits():
     wb, ws = _book()
     dv = ws.add_data_validation(
@@ -380,6 +408,7 @@ _LIST = {"sqref": "B2", "type": "list", "formula1": '"a,b"'}
         ({"sqref": "XFE1"}, InvalidRangeError, "past XFD"),
         ({"sqref": "B2,B3"}, InvalidRangeError, "invalid range"),
         ({"sqref": ["B2"]}, TypeError, "sqref must be"),
+        ({"sqref": SheetRangeSet(["B2"])}, TypeError, "CellRange areas"),
         ({"type": "lists"}, DataValidationError, "type must be one of"),
         ({"type": None}, TypeError, "type must be a str"),
         (
@@ -406,6 +435,9 @@ _LIST = {"sqref": "B2", "type": "list", "formula1": '"a,b"'}
         ({"type": "none"}, DataValidationError, "takes no formula"),
         ({"type": "custom", "formula1": "="}, DataValidationError, "formula1 is empty"),
         ({"type": "custom", "formula1": "  "}, DataValidationError, "formula1 is empty"),
+        ({"type": "custom", "formula1": " = "}, DataValidationError, "formula1 is empty"),
+        ({"type": "custom", "formula1": "==A1"}, DataValidationError, "more than one '='"),
+        ({"type": "custom", "formula1": " = =A1"}, DataValidationError, "more than one '='"),
         ({"formula1": True}, TypeError, "formula1 must be"),
         ({"formula1": ["a", "b"]}, TypeError, "formula1 must be"),
         (
@@ -427,6 +459,7 @@ _LIST = {"sqref": "B2", "type": "list", "formula1": '"a,b"'}
         ({"type": "custom", "formula1": "A1+" * 3000 + "1"}, DataValidationError, "8192"),
         ({"formula1": '"' + "x" * 256 + '"'}, DataValidationError, "255"),
         ({"formula1": '"' + '""' * 256 + '"'}, DataValidationError, "255"),
+        ({"formula1": ' "' + "x" * 256 + '"\n'}, DataValidationError, "255"),
         ({"formula1": "Lists!$A$1:$A$5"}, DataValidationError, "another sheet"),
         ({"formula1": "='Lists'!$A$1:$A$5"}, DataValidationError, "another sheet"),
         ({"formula1": "'Other ''quoted'' sheet'!A1"}, DataValidationError, "another sheet"),
