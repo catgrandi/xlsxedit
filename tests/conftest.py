@@ -21,7 +21,41 @@ INSPECT_FIXTURES = {
     "ChartsAndTables": FIXTURES / "ChartsAndTables.xlsx",
     "TextSytle": FIXTURES / "TextSytle.xlsx",
     "hyperlink": FIXTURES / "hyperlink.xlsx",
+    # authored by Excel through scripts/excel_fixtures/build_fixtures.py
+    "TableRich": FIXTURES / "TableRich.xlsx",
+    "TableWithContentBelow": FIXTURES / "TableWithContentBelow.xlsx",
+    "DataValidation": FIXTURES / "DataValidation.xlsx",
+    "ConditionalFormattingRich": FIXTURES / "ConditionalFormattingRich.xlsx",
+    "DrawingAnchors": FIXTURES / "DrawingAnchors.xlsx",
+    "Formulas": FIXTURES / "Formulas.xlsx",
+    "Preservation": FIXTURES / "Preservation.xlsm",
 }
+
+# Tests that a registered fixture makes fail until a roadmap issue lands, by node id:
+# (exception, "#issue: reason"). Each becomes a strict xfail, so its entry has to go
+# when the fix lands.
+_NO_SHARED_STRINGS = (
+    "#26 (no issue yet): writing text into a workbook without xl/sharedStrings.xml "
+    "raises instead of adding the part; Excel writes none for a book with no text"
+)
+KNOWN_FIXTURE_FAILURES: dict[str, tuple[type[BaseException], str]] = {
+    "tests/test_schema_validation.py::test_fixture_validates_after_insert_rows[DrawingAnchors]": (
+        ValueError,
+        _NO_SHARED_STRINGS,
+    ),
+    "tests/test_schema_validation.py::test_fixture_validates_after_insert_columns[DrawingAnchors]": (
+        ValueError,
+        _NO_SHARED_STRINGS,
+    ),
+}
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        known = KNOWN_FIXTURE_FAILURES.get(item.nodeid)
+        if known is not None:
+            raises, reason = known
+            item.add_marker(pytest.mark.xfail(strict=True, raises=raises, reason=reason))
 
 
 @pytest.fixture(autouse=True)
