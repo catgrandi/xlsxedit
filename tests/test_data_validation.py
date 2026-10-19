@@ -369,7 +369,8 @@ def test_add_writes_only_attributes_that_differ_from_the_schema(options, attribu
         ("'Sheet1'!$H$1:$H$3", "$H$1:$H$3"),
         ("sheet1!H1:H3", "H1:H3"),
         ("Sheet1!H1:Sheet1!H3", "H1:H3"),
-        ("Sheet1!H:Sheet1!H", "H:H"),
+        ("$H$1:Sheet1!$H$3", "$H$1:$H$3"),
+        ("'Sheet1'!H1:'Sheet1'!H3", "H1:H3"),
         ("OFFSET(Sheet1!$H$1,0,0,COUNTA('Sheet1'!$H:$H),1)", "OFFSET($H$1,0,0,COUNTA($H:$H),1)"),
         ('INDIRECT("Lists!A1:A3")', None),
     ],
@@ -381,11 +382,34 @@ def test_add_accepts_list_sources_on_the_same_sheet(formula1, written):
 
 
 @pytest.mark.parametrize(
-    "formula1", ["A1<>#REF!", "ISERROR(A1)=#DIV/0!", "AND(A1<>#NULL!,#N/A=A1)"]
+    ("formula1", "written"),
+    [
+        ("A1<>#REF!", None),
+        ("ISERROR(A1)=#div/0!", None),
+        ("AND(A1<>#NULL!,#N/A=A1)", None),
+        ("Sheet1!#REF!=A1", "#REF!=A1"),
+        ('A1&"Sheet1!x"&Sheet1!B1="a"', 'A1&"Sheet1!x"&B1="a"'),
+    ],
 )
-def test_error_values_are_not_sheet_references(formula1):
+def test_error_values_and_strings_are_not_sheet_references(formula1, written):
     wb, ws = _book()
-    assert ws.add_data_validation("B2", type="custom", formula1=formula1).formula1 == formula1
+    dv = ws.add_data_validation("B2", type="custom", formula1=formula1)
+    assert dv.formula1 == (written or formula1)
+
+
+def test_sheet_names_match_without_case_but_not_folded():
+    wb = Workbook.create()
+    wb.rename_worksheet("Sheet1", "Straße")
+    wb.add_worksheet("STRASSE")
+    ws = wb["Straße"]
+    _refused(
+        wb,
+        DataValidationError,
+        "another sheet",
+        lambda: ws.add_data_validation("B2", type="list", formula1="STRASSE!$A$1:$A$3"),
+    )
+    dv = ws.add_data_validation("B2", type="list", formula1="'STRAßE'!$A$1:$A$3")
+    assert dv.formula1 == "$A$1:$A$3"
 
 
 def test_formulas_name_the_sheet_as_it_is_called_now():
@@ -532,6 +556,13 @@ _LIST = {"sqref": "B2", "type": "list", "formula1": '"a,b"'}
         ({"formula1": "'[Book.xlsx]Sheet1'!$A$1"}, DataValidationError, "another sheet"),
         ({"formula1": "Sheet1:Lists!$A$1"}, DataValidationError, "another sheet"),
         ({"formula1": "Lists:Sheet1!$A$1"}, DataValidationError, "another sheet"),
+        ({"formula1": "Sheet1!H:Sheet1!H"}, DataValidationError, "another sheet"),
+        ({"type": "custom", "formula1": "SUM(Jan:Sheet1!B2)<9"}, DataValidationError, "sheet"),
+        ({"type": "custom", "formula1": "SUM(A:Sheet1!B2)>0"}, DataValidationError, "sheet"),
+        ({"formula1": "x'Sheet1'!A1"}, DataValidationError, "another sheet"),
+        ({"formula1": "$Sheet1!A1"}, DataValidationError, "another sheet"),
+        ({"formula1": "Sheet1!Sheet1!A1"}, DataValidationError, "another sheet"),
+        ({"type": "custom", "formula1": "Other#Sheet1!A1"}, DataValidationError, "another sheet"),
         ({"formula1": "Sheet1!A1:Lists!A2"}, DataValidationError, "another sheet"),
         ({"type": "custom", "formula1": "A1=#REF!+Lists!A1"}, DataValidationError, "another sheet"),
         (

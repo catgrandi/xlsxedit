@@ -66,13 +66,17 @@ _STRING_LITERAL = re.compile(r'"((?:[^"]|"")*)"')
 # plain sheet name before "!", or a lone "!".
 _FORMULA_TOKENS = re.compile(
     r'"(?:[^"]|"")*"'
-    r"|#[A-Za-z0-9/_]+!"
+    r"|#(?i:REF|DIV/0|NULL|NUM|VALUE|SPILL|CALC|FIELD|BLOCKED|UNKNOWN|BUSY|GETTING_DATA"
+    r"|CONNECT|EXTERNAL|PYTHON)!"
     r"|'((?:[^']|'')*)'!"
-    r"|(?<![\w.\[\]:])([\w.\[\]:]+)!"
+    r"|([\w.\[\]$]+)!"
     r"|!"
 )
-# The first end of a range (A1, A or 1) before the sheet name in A1:Sheet1!B2.
-_RANGE_START = re.compile(r"\$?[A-Za-z]{1,3}\$?[0-9]+|\$?[A-Za-z]{1,3}|\$?[0-9]+")
+# A sheet prefix follows the start, whitespace or an operator. After ":" it is the
+# second end of a range such as A1:Sheet1!B2 only when a cell precedes the colon;
+# otherwise it closes a 3-D reference such as Jan:Mar!B2.
+_BEFORE_PREFIX = frozenset(" \t\r\n(,;{=+-*/^&<>@")
+_CELL_BEFORE_COLON = re.compile(r"(?<![\w.$\[\]])\$?[A-Za-z]{1,3}\$?[0-9]+:$")
 
 
 def _utf16_len(text: str) -> int:
@@ -345,20 +349,20 @@ def _check_formula(value: object, name: str, sheet_name: str) -> str | None:
     return text
 
 
-def _sheet_prefix(token: re.Match) -> tuple[str, int] | None:
-    """The sheet a ``!`` token names and where its prefix starts; ``None`` when the
-    token is a lone ``!`` or a 3-D reference such as ``Sheet1:Sheet3!A1``."""
+def _sheet_prefix(formula: str, token: re.Match) -> str | None:
+    """The sheet a ``!`` token names; ``None`` for a lone ``!`` or a prefix where
+    no single-sheet reference starts, as in the 3-D reference ``Jan:Mar!B2``."""
     quoted, plain = token.groups()
-    if quoted is not None:
-        return quoted.replace("''", "'"), token.start()
-    if plain is None:
+    if quoted is None and plain is None:
         return None
-    first, colon, sheet = plain.rpartition(":")
-    if not colon:
-        return plain, token.start()
-    if _RANGE_START.fullmatch(first) is None:
+    start = token.start()
+    before = formula[start - 1] if start else " "
+    if before == ":":
+        if _CELL_BEFORE_COLON.search(formula, 0, start) is None:
+            return None
+    elif before not in _BEFORE_PREFIX:
         return None
-    return sheet, token.start() + len(first) + 1
+    return plain if quoted is None else quoted.replace("''", "'")
 
 
 def _own_sheet_formula(formula: str, name: str, sheet_name: str) -> str:
@@ -374,13 +378,15 @@ def _own_sheet_formula(formula: str, name: str, sheet_name: str) -> str:
     for token in _FORMULA_TOKENS.finditer(formula):
         if token.group(0)[0] in '"#':
             continue
-        prefix = _sheet_prefix(token)
-        if prefix is None or prefix[0].casefold() != sheet_name.casefold():
+        sheet = _sheet_prefix(formula, token)
+        # Sheet names match without case; casefold() would also match Straße and
+        # STRASSE, which can be two sheets.
+        if sheet is None or sheet.lower() != sheet_name.lower():
             raise DataValidationError(
                 f"{name} {formula!r} refers to another sheet or workbook, which xlsxedit "
                 "cannot write yet; refer to a defined name instead"
             )
-        kept.append(formula[end : prefix[1]])
+        kept.append(formula[end : token.start()])
         end = token.end()
     return "".join(kept) + formula[end:]
 
