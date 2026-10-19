@@ -1087,6 +1087,16 @@ def test_insert_columns_writes_generated_names_into_a_header_row_it_does_not_rea
     assert ws.tables[0].columns == ["Item", "Column1", "Price", "Quantity"]
 
 
+def test_insert_columns_names_a_joining_column_in_large_mode():
+    wb = Workbook.open(TABLES, large=True)
+    wb["Table"].insert_columns([[None]], at_col="C")
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    ws = Workbook.open(buf)["Table"]
+    assert [ws[a].value for a in ("B1", "C1", "D1")] == ["Price", "Column1", "Quantity"]
+
+
 @pytest.mark.parametrize(
     "cols",
     [[["price"]], [[""]], [[5]], [["Total"], ["TOTAL"]]],

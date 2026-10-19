@@ -145,6 +145,22 @@ def test_large_mode_deferred_worksheet_parse(tmp_path: Path):
     assert data_part._element is not None
 
 
+def test_large_mode_string_writes_get_the_next_shared_string_index(tmp_path: Path):
+    wb = Workbook.create()
+    wb["Sheet1"]["A1"].value = "first"
+    out = tmp_path / "strings.xlsx"
+    wb.save(out)
+
+    wb2 = Workbook.open(out, large=True)
+    ws = wb2["Sheet1"]
+    ws["B1"].value = "second"
+    ws.write_rows([["third", "fourth"]], at_cell="A2")
+    assert len(wb2.shared_strings) == 4
+    wb2.save(out)
+    ws3 = Workbook.open(out)["Sheet1"]
+    assert [ws3[a].value for a in ("A1", "B1", "A2", "B2")] == ["first", "second", "third", "fourth"]
+
+
 def test_export_to_template(tmp_path: Path):
     wb = Workbook.create()
     ws = wb["Sheet1"]
