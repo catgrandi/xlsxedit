@@ -68,6 +68,14 @@ wb.insert_image_at_placeholder("{logo}", "logo.png")  # sizes in pixels
 wb.write_dataframe(df, sheet="Report", at_cell="A10", row_styles=...)
 ```
 
+**Dropdowns**
+
+```python
+ws.add_data_validation("B2:B100", type="list", formula1='"Open,Closed"')  # in-cell list
+```
+
+A list or formula that refers to another sheet is refused with `DataValidationError`; point it at a defined name the template already holds.
+
 **Pandas (optional)**
 
 ```python
