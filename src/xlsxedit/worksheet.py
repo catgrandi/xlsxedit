@@ -17,6 +17,7 @@ from xlsxedit.bulk_styles import (
     validate_style_sources,
 )
 from xlsxedit.cell import (
+    _RANGE_FORMULAS,
     Cell,
     _clear_cell_content,
     _ref_contains,
@@ -688,20 +689,28 @@ class Worksheet:
             offset = row - start_row
             return 0 <= offset < len(widths) and 0 <= col_idx - start_col_idx < widths[offset]
 
-        for offset, width in enumerate(widths):
-            row_elm = self._find_row_element(start_row + offset) if width else None
-            if row_elm is None:
-                continue
-            for f_elm in row_elm.iterfind(_CELL_FORMULA):
-                if f_elm.get("t") not in ("array", "dataTable"):
+        def refuse_if_written(f_elm: etree._Element) -> None:
+            address = f_elm.getparent().get("r", "")
+            try:
+                col, row = split_address(address)
+            except InvalidRangeError:
+                return
+            if writes(col_to_index(col), row):
+                _refuse_range_formula_edit(address, f_elm)
+
+        self._build_bulk_indexes()
+        if len(widths) * 8 < len(self._row_index):
+            # A small block in a large sheet: look only at the rows it writes.
+            for offset, width in enumerate(widths):
+                row_elm = self._find_row_element(start_row + offset) if width else None
+                if row_elm is None:
                     continue
-                address = f_elm.getparent().get("r", "")
-                try:
-                    col_idx = col_to_index(split_address(address)[0])
-                except InvalidRangeError:
-                    continue
-                if writes(col_idx, start_row + offset):
-                    _refuse_range_formula_edit(address, f_elm)
+                for f_elm in row_elm.iterfind(_CELL_FORMULA):
+                    if f_elm.get("t") in ("array", "dataTable"):
+                        refuse_if_written(f_elm)
+        else:
+            for f_elm in _RANGE_FORMULAS(self._part.element):  # one pass over the sheet
+                refuse_if_written(f_elm)
 
         merges = self._merge_index
         if len(merges.areas) > sum(widths):
