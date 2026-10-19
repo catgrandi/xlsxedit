@@ -504,7 +504,7 @@ def test_both_entry_points_drop_the_calc_chain_and_request_a_full_recalc(method:
     assert b'fullCalcOnLoad="1"' in after["xl/workbook.xml"]
 
 
-def test_formula_text_is_not_rewritten():
+def test_cell_formulas_stay_while_format_and_validation_formulas_move():
     wb = Workbook.create()
     ws = wb["Sheet1"]
     etree.SubElement(ws["A1"]._element, f"{{{SML_NS}}}f").text = "B10*2"
@@ -512,8 +512,8 @@ def test_formula_text_is_not_rewritten():
     _add(ws, '<dataValidations count="1"><dataValidation type="list" sqref="D1"><formula1>$B$10:$B$12</formula1></dataValidation></dataValidations>')
     ws.insert_rows([[None]], at_row=5)
     assert ws["A1"]._element.find(f"{{{SML_NS}}}f").text == "B10*2"
-    assert _texts(ws, ".//m:cfRule/m:formula") == ["$B$10>0"]
-    assert _texts(ws, ".//m:formula1") == ["$B$10:$B$12"]
+    assert _texts(ws, ".//m:cfRule/m:formula") == ["$B$11>0"]
+    assert _texts(ws, ".//m:formula1") == ["$B$11:$B$13"]
 
 
 # -- x14 extensions and single-reference text ---------------------------------

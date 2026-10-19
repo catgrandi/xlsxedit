@@ -4,9 +4,12 @@
 insertion makes before applying any of it; ``docs/features.md`` ("Inserting
 rows and columns") lists what moves and when an insertion is refused. Ranges
 move by the rules of :class:`xlsxedit.range_set.CellRange`; references in
-text by ``rewrite_formula_refs`` (defined names) and ``rewrite_plain_ref``
-(text that is one reference). Planning raises for anything it cannot do, so a
-refused insertion changes nothing; ``apply`` only assigns computed values.
+text by ``rewrite_formula_refs`` (defined names, sparklines, other sheets'
+formats and validations), ``rewrite_anchored_refs`` (formulas of the sheet's
+own formats and validations, relative to the top-left cell of their areas)
+and ``rewrite_plain_ref`` (hyperlink locations, which are one reference).
+Planning raises for anything it cannot do, so a refused insertion changes
+nothing; ``apply`` only assigns computed values.
 
 A :class:`_Shift` also describes a delete and a shift restricted to a span of
 columns (rows), and the :class:`_Planner` moves every structure it reaches as
@@ -95,6 +98,7 @@ _XM_NS = "http://schemas.microsoft.com/office/excel/2006/main"
 _XM_SQREF = f"{{{_XM_NS}}}sqref"
 _XM_F = f"{{{_XM_NS}}}f"
 _X14_SPARKLINES = f"{{{_X14_NS}}}sparklines"
+_X14_SPARKLINE_GROUP = f"{{{_X14_NS}}}sparklineGroup"
 _EXT = f"{{{SML_NS}}}ext"
 # containers whose schema needs at least one child
 _LIST_CONTAINERS = frozenset(
@@ -120,6 +124,9 @@ _X14_FORMULA_OWNERS = frozenset(
 _CONTENT = frozenset({f"{{{SML_NS}}}v", _F, f"{{{SML_NS}}}is"})
 _RANGED_FORMULAS = frozenset({"shared", "array", "dataTable"})
 _CFVO = f"{{{SML_NS}}}cfvo"
+_FORMULA = f"{{{SML_NS}}}formula"
+_FORMULA1 = f"{{{SML_NS}}}formula1"
+_FORMULA2 = f"{{{SML_NS}}}formula2"
 _WRITABLE = (str, int, float, date)  # bool is an int and datetime a date
 
 _CELL_ADDRESS_RE = re.compile(r"([A-Za-z]{1,3})([0-9]+)")
@@ -478,7 +485,7 @@ def _move_ref_text(ref: str, move: Callable[[CellRange], CellRange | None]) -> s
 
 def rewrite_formula_refs(
     text: str,
-    sheet_name: str,
+    sheet_name: str | None,
     move: Callable[[CellRange], CellRange | None],
     *,
     unqualified: bool,
@@ -490,21 +497,76 @@ def rewrite_formula_refs(
     part of a sheet name (``Data2024!``), a function name (``LOG10(``,
     ``DAYS360(``), a defined name or a structured reference. String literals,
     other sheets, 3D spans and external workbooks are left alone. A reference
-    pushed off the grid becomes ``#REF!``.
+    pushed off the grid or deleted becomes ``#REF!``.
     """
+
+    def visit(sheet: str | None, ref: str, external: bool) -> str:
+        if sheet is None:
+            return _move_ref_text(ref, move) if unqualified else ref
+        if external or not _same_sheet(sheet, sheet_name):
+            return ref
+        return _move_ref_text(ref, move)
+
+    return _map_refs(text, visit)
+
+
+def translate_formula_refs(text: str, cols: int, rows: int) -> str:
+    """Formula ``text`` as if copied ``cols`` columns right and ``rows`` rows down.
+
+    The relative part of every reference moves, whatever sheet or workbook it
+    names; one that would leave the grid becomes ``#REF!``.
+    """
+    move = partial(CellRange.translate, cols=cols, rows=rows)
+    return _map_refs(text, lambda sheet, ref, external: _move_ref_text(ref, move))
+
+
+def _map_refs(text: str, visit: Callable[[str | None, str, bool], str]) -> str:
+    """``text`` with each reference token replaced by ``visit(sheet, ref, external)``:
+    its sheet prefix (``None`` without one), the reference, and whether a
+    workbook reference (``[1]``) precedes the prefix."""
     out: list[str] = []
     after_bracket = False
     for m in _FORMULA_TOKEN_RE.finditer(text):
         token = m.group(0)
         qref, ref = m.group("qref"), m.group("ref")
-        if qref is not None and qref != "#REF!" and not after_bracket:
-            if _same_sheet(m.group("sheet"), sheet_name):
-                token = f"{m.group('sheet')}!{_move_ref_text(qref, move)}"
-        elif ref is not None and unqualified and text[m.start() - 1 : m.start()] not in ("!", "]"):
-            token = _move_ref_text(ref, move)
+        if qref is not None and qref != "#REF!":
+            token = f"{m.group('sheet')}!{visit(m.group('sheet'), qref, after_bracket)}"
+        elif ref is not None and text[m.start() - 1 : m.start()] not in ("!", "]"):
+            token = visit(None, ref, False)
         out.append(token)
         after_bracket = m.group("bracket") is not None
     return "".join(out)
+
+
+def rewrite_anchored_refs(
+    text: str,
+    sheet_name: str | None,
+    shift: _Shift,
+    before: SheetRangeSet,
+    after: SheetRangeSet,
+) -> str:
+    """Move the references in ``text``, a formula Excel evaluates relative to the
+    top-left cell of ``before`` (a conditional format's or a validation's
+    areas), which ``shift`` turns into ``after``.
+
+    The result is what Excel writes for the cell that becomes the top-left of
+    ``after``: the formula is first re-anchored to the cell it comes from,
+    which differs when the old top-left cell is deleted, and its references
+    then move as seen from there. Excel adjusts every cell and splits the
+    format where cells would need different formulas; here one formula keeps
+    serving every area.
+    """
+    old, new = before.top_left, after.top_left
+    if old is None or new is None:
+        return text
+    origin = shift.cell(*new, back=True) or old
+    if origin != old:
+        text = translate_formula_refs(text, origin[0] - old[0], origin[1] - old[1])
+    text = rewrite_formula_refs(text, sheet_name, shift.area, unqualified=True)
+    landed = shift.cell(*origin)
+    if landed is not None and landed != new:
+        text = translate_formula_refs(text, new[0] - landed[0], new[1] - landed[1])
+    return text
 
 
 def rewrite_plain_ref(
@@ -636,10 +698,11 @@ class _Planner:
         """Every reference carrier inside the worksheet part other than ``sheetData``."""
         self.merge_cells(root)
         for cf in root.iterchildren(_CF):
-            self.sqref_attr(cf, "sqref", "conditionalFormatting/@sqref")
-        self.cfvo_values(root, own=True)
+            sqrefs = self.sqref_attr(cf, "sqref", "conditionalFormatting/@sqref")
+            self.format_formulas(cf, partial(self.anchored, sqrefs=sqrefs))
         for dv in root.iterfind(f"{_DATA_VALIDATIONS}/{_DATA_VALIDATION}"):
-            self.sqref_attr(dv, "sqref", "dataValidation/@sqref")
+            sqrefs = self.sqref_attr(dv, "sqref", "dataValidation/@sqref")
+            self.validation_formulas(dv, partial(self.anchored, sqrefs=sqrefs))
         self.hyperlinks(root)
         self.auto_filter(root, "")
         self.sort_state(root, "")
@@ -879,43 +942,73 @@ class _Planner:
                 self.drop(row, "spans")
 
     def extensions(self, root: etree._Element) -> None:
-        """``xm:sqref`` anywhere in the worksheet's extensions, and x14 ``xm:f`` references."""
+        """``xm:sqref`` anywhere in the worksheet's extensions, and the ``xm:f``
+        formulas of x14 conditional formats, validations and sparklines."""
         ext_lst = root.find(_EXT_LST)
         if ext_lst is None:
             return
+        sqrefs: dict[etree._Element, tuple[SheetRangeSet, SheetRangeSet]] = {}
         for sqref in ext_lst.iter(_XM_SQREF):
             ranges = _range_set(sqref.text or "", "xm:sqref")
             moved = self.ins.ranges(ranges)
+            sqrefs[sqref.getparent()] = ranges, moved
             if moved is ranges:
                 continue
             if moved:
                 self.set_text(sqref, str(moved))
             else:
                 self.remove(sqref.getparent())
-        self.extension_formulas(ext_lst, own=True)
+        for f, owner in _extension_formulas(ext_lst):
+            if owner.tag == _X14_SPARKLINE_GROUP:  # data ranges, not relative to a cell
+                self.set_text(f, self.plain(f.text, own=True))
+            else:
+                self.set_text(f, self.anchored(f.text, sqrefs=sqrefs.get(owner)))
 
-    def extension_formulas(self, ext_lst: etree._Element, *, own: bool) -> None:
-        """Plain-reference ``xm:f`` under x14 conditional formats, validations and sparklines.
+    def plain(self, text: str, *, own: bool) -> str:
+        """``text`` with its references to the shifted sheet moved; ``own`` is
+        whether the text belongs to that sheet, so unqualified references name it."""
+        return rewrite_formula_refs(text, self.sheet_name, self.ins.area, unqualified=own)
 
-        ``own`` is whether the extensions belong to the shifted sheet, where an
-        unqualified reference points at it.
-        """
-        move = self.ins.area
-        for f in ext_lst.iter(_XM_F):
-            if not f.text or not any(a.tag in _X14_FORMULA_OWNERS for a in f.iterancestors()):
-                continue
-            new = rewrite_plain_ref(f.text, self.sheet_name, move, unqualified=own)
-            self.set_text(f, new)
+    def anchored(
+        self, text: str, *, sqrefs: tuple[SheetRangeSet, SheetRangeSet] | None
+    ) -> str:
+        """``text``, a formula of a format or validation on the shifted sheet that
+        Excel evaluates relative to the top-left cell of its areas ``sqrefs``
+        (before, after), moved by :func:`rewrite_anchored_refs`."""
+        if sqrefs is None:
+            return self.plain(text, own=True)
+        return rewrite_anchored_refs(text, self.sheet_name, self.ins, *sqrefs)
 
-    def cfvo_values(self, root: etree._Element, *, own: bool) -> None:
-        """Plain-reference ``cfvo/@val`` of conditional formats, which an x14
-        ``xm:f`` twin repeats; the two must stay equal."""
+    def format_formulas(self, cf: etree._Element, rewrite: Callable[[str], str]) -> None:
+        """A conditional format's rule formulas and ``cfvo/@val`` values; an x14
+        ``xm:f`` twin repeats a value, and the two must stay equal."""
+        for formula in cf.iter(_FORMULA):
+            if formula.text:
+                self.set_text(formula, rewrite(formula.text))
+        for cfvo in cf.iter(_CFVO):
+            val = cfvo.get("val")
+            if val:
+                self.set(cfvo, "val", rewrite(val))
+
+    def validation_formulas(self, dv: etree._Element, rewrite: Callable[[str], str]) -> None:
+        for formula in (dv.find(_FORMULA1), dv.find(_FORMULA2)):
+            if formula is not None and formula.text:
+                self.set_text(formula, rewrite(formula.text))
+
+    def foreign_sheet(self, root: etree._Element) -> None:
+        """References to the shifted sheet from another sheet's conditional formats,
+        validations (with their x14 twins and sparklines) and internal hyperlinks.
+        That sheet's cells stay put, so its formulas need no re-anchoring."""
+        rewrite = partial(self.plain, own=False)
         for cf in root.iterchildren(_CF):
-            for cfvo in cf.iter(_CFVO):
-                val = cfvo.get("val")
-                if val:
-                    new = rewrite_plain_ref(val, self.sheet_name, self.ins.area, unqualified=own)
-                    self.set(cfvo, "val", new)
+            self.format_formulas(cf, rewrite)
+        for dv in root.iterfind(f"{_DATA_VALIDATIONS}/{_DATA_VALIDATION}"):
+            self.validation_formulas(dv, rewrite)
+        ext_lst = root.find(_EXT_LST)
+        if ext_lst is not None:
+            for f, _owner in _extension_formulas(ext_lst):
+                self.set_text(f, rewrite(f.text))
+        self.hyperlink_locations(root, own=False)
 
     def hyperlink_locations(self, root: etree._Element, *, own: bool) -> None:
         """Internal hyperlinks only: with ``r:id``, ``location`` is inside another document."""
@@ -940,6 +1033,19 @@ class _Planner:
             self.set_text(elm, new)
 
 
+def _extension_formulas(
+    ext_lst: etree._Element,
+) -> list[tuple[etree._Element, etree._Element]]:
+    """Each ``xm:f`` with text under an x14 conditional format, validation or
+    sparkline group, with that owner."""
+    found = []
+    for f in ext_lst.iter(_XM_F):
+        owner = next((a for a in f.iterancestors() if a.tag in _X14_FORMULA_OWNERS), None)
+        if f.text and owner is not None:
+            found.append((f, owner))
+    return found
+
+
 def _parse_spans(spans: str) -> list[tuple[int, int]] | None:
     intervals = []
     for item in spans.split():
@@ -950,7 +1056,7 @@ def _parse_spans(spans: str) -> list[tuple[int, int]] | None:
     return intervals
 
 
-_DEFERRED_MARKERS = (_XM_NS.encode(), b"location=")
+_DEFERRED_MARKERS = (_XM_NS.encode(), b"location=", b"formula", b"cfvo")
 
 
 def _root_if_it_may_refer(worksheet) -> etree._Element | None:
@@ -987,13 +1093,8 @@ class InsertPlan:
             if other is worksheet:
                 continue
             other_root = _root_if_it_may_refer(other)
-            if other_root is None:
-                continue
-            ext_lst = other_root.find(_EXT_LST)
-            if ext_lst is not None:
-                planner.extension_formulas(ext_lst, own=False)
-                planner.cfvo_values(other_root, own=False)
-            planner.hyperlink_locations(other_root, own=False)
+            if other_root is not None:
+                planner.foreign_sheet(other_root)
         self._check_tables()
         if ins.rows:
             planner.after(partial(shift_table_parts, worksheet, ins.at, ins.delta))
