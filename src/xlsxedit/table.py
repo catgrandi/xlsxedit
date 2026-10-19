@@ -21,7 +21,14 @@ from xlsxedit.exceptions import InvalidRangeError, TableError
 from xlsxedit.merge import parse_range
 from xlsxedit.opc.constants import CT, OFFICE_REL_NS, SML_NS
 from xlsxedit.opc.part import XmlPart
-from xlsxedit.oxml.address import col_to_index, index_to_col, join_address, split_address
+from xlsxedit.oxml.address import (
+    MAX_COL,
+    MAX_ROW,
+    col_to_index,
+    index_to_col,
+    join_address,
+    split_address,
+)
 from xlsxedit.parts import TablePart
 from xlsxedit.styles import _XML_ILLEGAL
 from xlsxedit.worksheet_order import insert_ordered
@@ -63,9 +70,6 @@ _DIGITS = re.compile(r"[0-9]+")
 _BUILT_IN_STYLE = re.compile(
     r"TableStyle(?:Light(?:[1-9]|1[0-9]|2[01])|Medium(?:[1-9]|1[0-9]|2[0-8])|Dark(?:[1-9]|1[01]))"
 )
-
-_MAX_ROW = 1048576
-_MAX_COL = 16384  # columns A..XFD
 
 # xr, xr2 and xr3: Excel's revision uids, which must not repeat across parts.
 _REVISION_NAMESPACES = frozenset(
@@ -523,7 +527,7 @@ class Table:
             raise TableError(f"{action} would not overlap its current range {self.ref}")
         self._check_data_rows(new, header, totals, action)
         for other in table_parts_for_worksheet(self._worksheet):
-            other_box = _table_box(other)
+            other_box = _try_box(other.ref)
             if other._part is not self._part and other_box and _boxes_overlap(other_box, new):
                 raise TableError(f"{action} would overlap table {other.name!r} ({other.ref})")
 
@@ -959,14 +963,14 @@ def _is_cell_reference(name: str) -> bool:
     """Whether Excel reads ``name`` as an A1 or R1C1 reference inside the grid."""
     a1 = _A1_NAME_RE.fullmatch(name)
     if a1:
-        return col_to_index(a1[1]) < _MAX_COL and 1 <= int(a1[2]) <= _MAX_ROW
+        return col_to_index(a1[1]) < MAX_COL and 1 <= int(a1[2]) <= MAX_ROW
     r1c1 = _R1C1_NAME_RE.fullmatch(name)
     if r1c1 is None:
         return False
     row, col, lone_col = r1c1.groups()
     if row is None:
         col = lone_col
-    return (not row or 1 <= int(row) <= _MAX_ROW) and (not col or 1 <= int(col) <= _MAX_COL)
+    return (not row or 1 <= int(row) <= MAX_ROW) and (not col or 1 <= int(col) <= MAX_COL)
 
 
 def _table_names_and_ids(
@@ -1016,12 +1020,13 @@ def _range_box(ref: str) -> Box:
     """
     c1, r1, c2, r2 = parse_range(ref)
     box = (col_to_index(c1), r1, col_to_index(c2), r2)
-    if not (0 <= box[0] <= box[2] < _MAX_COL and 1 <= box[1] <= box[3] <= _MAX_ROW):
+    if not (0 <= box[0] <= box[2] < MAX_COL and 1 <= box[1] <= box[3] <= MAX_ROW):
         raise InvalidRangeError(f"range {ref!r} is reversed or outside A1:XFD1048576")
     return box
 
 
 def _try_box(ref: str | None) -> Box | None:
+    """The box of ``ref``, or ``None`` when it is missing or malformed."""
     try:
         return _range_box(ref or "")
     except InvalidRangeError:
@@ -1035,11 +1040,6 @@ def _box_ref(box: Box) -> str:
 
 def _boxes_overlap(a: Box, b: Box) -> bool:
     return a[0] <= b[2] and b[0] <= a[2] and a[1] <= b[3] and b[1] <= a[3]
-
-
-def _table_box(table: Table) -> Box | None:
-    """The box of ``table.ref``, or ``None`` when the ref is missing or malformed."""
-    return _try_box(table.ref)
 
 
 def _filter_box(box: Box, totals: int) -> Box:

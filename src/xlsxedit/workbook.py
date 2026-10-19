@@ -47,8 +47,8 @@ from xlsxedit.table import (
     _next_table_name,
     _range_box,
     _refresh_revision_uids,
-    _table_box,
     _table_name_problem,
+    _try_box,
     _table_names_and_ids,
     header_mismatches,
     table_parts_for_worksheet,
@@ -852,7 +852,7 @@ class Workbook:
                 f"but {len(columns)} column names were given"
             )
         for other in ws.tables:
-            other_box = _table_box(other)
+            other_box = _try_box(other.ref)
             if other_box is not None and _boxes_overlap(box, other_box):
                 raise TableError(f"table range {ref} overlaps table {other.name!r} ({other.ref})")
 
@@ -991,7 +991,7 @@ def _plan_table_resize(
     if target is None:
         hits = []
         for candidate in tables:
-            box = _table_box(candidate)
+            box = _try_box(candidate.ref)
             if box is not None and _boxes_overlap(box, written):
                 hits.append(candidate)
         if not hits:
@@ -1004,7 +1004,7 @@ def _plan_table_resize(
             )
         target = hits[0]
 
-    box = _table_box(target)
+    box = _try_box(target.ref)
     if box is None:
         raise TableError(f"table {target.name!r} has a malformed ref {target.ref!r}")
     first_col, table_top, last_col, _ = box
@@ -1051,7 +1051,7 @@ def _check_header_row_write(
     """
     written = (start_col, start_row, start_col + len(labels) - 1, start_row)
     for table in ws.tables:
-        box = _table_box(table)
+        box = _try_box(table.ref)
         if box is None or box[1] != start_row or not table.header_row_count:
             continue
         if not _boxes_overlap(box, written):
