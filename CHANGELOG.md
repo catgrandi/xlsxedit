@@ -28,6 +28,7 @@ Several changes below are breaking, so the next release is a major one.
 - **Drawings** — `ws.drawing_objects` lists every object of a sheet's drawing as a `DrawingObject`: pictures, charts, shapes, connectors, groups and their members, slicers, timelines and other graphic frames.
 - **Tables** — `write_dataframe(..., table=...)` names the table to resize; `add_table(..., write_header=True)` writes the header cells.
 - **Styles** — `Color`, and `Styles.effective_xf_index(worksheet, address)`.
+- **Data validation** — `ws.data_validations` lists a sheet's validations as `DataValidation` objects, x14 ones read-only. `ws.add_data_validation(...)` and `ws.remove_data_validation(dv)` add and remove them, and `dv.sqref` is settable; a refused edit raises the new `DataValidationError`, `InvalidRangeError` or `TypeError` and changes nothing. `SheetRangeSet` and `CellRange`, the types of `dv.sqref` and its areas, are exported.
 
 ### Changed
 

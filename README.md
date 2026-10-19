@@ -50,6 +50,8 @@ These libraries **rebuild** the workbook from an object model. Anything they do 
 
 **Conditional formatting** — read blocks and rules; `add_conditional_formatting` (`cellIs`); `add_color_scale_formatting`
 
+**Data validation** — `data_validations`, `add_data_validation` (dropdown lists, number, date, text-length and custom rules), `remove_data_validation`
+
 **Search & replace** — workbook/sheet `replace` (substring or whole-cell with `value_type`: text, number, date)
 
 **Bulk export** — `write_dataframe`, `write_rows`, `insert_rows`, `row_styles`, `column_styles`; `Workbook.open(..., large=True)` for big files
