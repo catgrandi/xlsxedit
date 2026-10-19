@@ -241,8 +241,8 @@ Neither approach produces a byte-identical ZIP: the container itself (member ord
 | `drawing.py` | `Picture`, `Chart`, `Table` and `DrawingObject` proxies; walks a drawing's anchors, groups and `mc:AlternateContent` |
 | `shared_strings.py` | SST display text + in-place `<t>` replace |
 | `parts.py` | Registers the typed parts: workbook, worksheet, SST, styles, core properties, drawing, chart |
-| `row_shift.py` | Plans and applies `insert_rows` / `insert_columns` |
-| `range_set.py` | `ST_Ref` / `ST_Sqref` ranges and how they shift on an insert |
+| `row_shift.py` | Plans and applies `insert_rows` / `insert_columns`; the planner also describes deletes and shifts restricted to a span of columns or rows |
+| `range_set.py` | `ST_Ref` / `ST_Sqref` ranges and how they shift when rows or columns are inserted or deleted |
 | `opc/package.py` | Load/save orchestration |
 | `opc/pkgreader.py` | Relationship-graph walk |
 | `opc/pkgwriter.py` | ZIP write + content types |
