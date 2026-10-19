@@ -1521,23 +1521,18 @@ def _joining_column_names(supplied: list, used: set[str]) -> list[str]:
     return names
 
 
-def _insert_table_columns(
-    table_elm: etree._Element, offset: int, delta: int, names: list[str] | None = None
-) -> None:
-    """Add ``delta`` ``tableColumn``s named ``names`` before the one at ``offset``.
+def _insert_table_columns(table_elm: etree._Element, offset: int, names: list[str]) -> None:
+    """Add a ``tableColumn`` per name in ``names`` before the one at ``offset``.
 
-    Each gets the next free ``id``; without ``names`` they get the first
-    unused ``ColumnN`` names, as Excel names them. ``autoFilter``
-    ``filterColumn`` ids at or after ``offset`` move with their columns.
+    Each gets the next free ``id``; ``autoFilter`` ``filterColumn`` ids at or
+    after ``offset`` move with their columns.
     """
     cols_elm = table_elm.find(_TABLE_COLUMNS)
     if cols_elm is None:
         return
+    delta = len(names)
     existing = cols_elm.findall(_TABLE_COLUMN)
     next_id = max((int(c.get("id")) for c in existing if c.get("id", "").isdigit()), default=0)
-    if names is None:
-        used = {(c.get("name") or "").casefold() for c in existing}
-        names = _joining_column_names([None] * delta, used)
     anchor = existing[offset] if offset < len(existing) else None
     for name in names:
         next_id += 1
@@ -1558,14 +1553,14 @@ def _insert_table_columns(
 
 
 def shift_table_parts_cols(
-    worksheet, at_col: int, delta: int, names: dict[object, list[str]] | None = None
+    worksheet, at_col: int, delta: int, names: dict[object, list[str]]
 ) -> None:
     """Shift each table of the worksheet, with its ``autoFilter`` and sort state,
     after column insertion (see ``Table._move``).
 
     Columns inserted strictly inside a table join it as new ``tableColumn``s
-    (see ``_insert_table_columns``), named from ``names`` (by table part) when
-    the plan chose them. Raises ``TableError``, before changing any table
+    (see ``_insert_table_columns``), named from ``names``, which the plan
+    chose for each such table part. Raises ``TableError``, before changing any table
     part, when such a table is bound to a query: its query table part would
     not know the new columns. ``plan_insert_columns`` makes the same check
     before anything on the sheet moves.
@@ -1575,7 +1570,7 @@ def shift_table_parts_cols(
         _check_table_accepts_columns(table._element, at_col)
     for table, offset in tables:
         if offset is not None:
-            _insert_table_columns(table._element, offset, delta, (names or {}).get(table._part))
+            _insert_table_columns(table._element, offset, names[table._part])
             table._part.mark_dirty()
         table._move(lambda ref: shift_range_ref_cols(ref, at_col, delta))
 
