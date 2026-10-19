@@ -19,7 +19,13 @@ from lxml import etree
 from xlsxedit._ooxml_order import ATTRIBUTE_DEFAULTS, ORDER
 from xlsxedit.exceptions import InvalidRangeError, TableError
 from xlsxedit.merge import parse_range
-from xlsxedit.opc.constants import CT, OFFICE_REL_NS, SML_NS
+from xlsxedit.opc.constants import (
+    CT,
+    OFFICE_REL_NS,
+    SLICER_CACHE_PART_SUFFIX,
+    SML_NS,
+    TABLE_NAMING_PART_SUFFIXES,
+)
 from xlsxedit.opc.part import XmlPart
 from xlsxedit.oxml.address import (
     MAX_COL,
@@ -65,8 +71,8 @@ _FORMULA_TAGS = (
 _TABLE_FORMULA_TAGS = (_CALCULATED_COLUMN_FORMULA, _TOTALS_ROW_FORMULA)
 # Parts that name a table in an attribute: a pivot cache's worksheetSource and
 # a data connection's x15:connection / x15:rangePr.
-_TABLE_NAMING_PARTS = (".pivotCacheDefinition+xml", ".connections+xml")
-_SLICER_CACHE_PART = "slicerCache+xml"
+_TABLE_NAMING_PARTS = TABLE_NAMING_PART_SUFFIXES
+_SLICER_CACHE_PART = SLICER_CACHE_PART_SUFFIX
 
 _TABLE_DEFAULTS = ATTRIBUTE_DEFAULTS["CT_Table"]
 _COLUMN_DEFAULTS = ATTRIBUTE_DEFAULTS["CT_TableColumn"]
