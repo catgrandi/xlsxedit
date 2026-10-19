@@ -17,7 +17,7 @@ Excel does for those; only ``InsertPlan``, which also moves the cells, is
 limited to whole-row and whole-column inserts.
 
 The ``check_*`` functions validate the rest of an insert up front. The
-remaining ``shift_*`` functions are the older per-structure entry points.
+``shift_*`` functions are thin wrappers kept for the table code and tests.
 """
 
 from __future__ import annotations
@@ -156,19 +156,6 @@ _FORMULA_TOKEN_RE = re.compile(
     re.VERBOSE | re.DOTALL,
 )
 _PLAIN_REF_RE = re.compile(rf"\s*(?:(?P<sheet>{_SHEET_NAME})!)?(?P<ref>{_REF})\s*")
-
-
-def shift_row_number(row: int, at_row: int, delta: int) -> int:
-    if row >= at_row:
-        return row + delta
-    return row
-
-
-def shift_col_index(col_idx: int, at_col: int, delta: int) -> int:
-    """Shift a 0-based column index when inserting at ``at_col``."""
-    if col_idx >= at_col:
-        return col_idx + delta
-    return col_idx
 
 
 @dataclass(frozen=True)
@@ -1384,30 +1371,6 @@ def shift_range_ref_cols(ref: str, at_col: int, delta: int) -> str:
     return str(moved)
 
 
-def shift_sqref(sqref: str, at_row: int, delta: int) -> str:
-    return str(SheetRangeSet.parse(sqref).shift_rows(at_row, delta))
-
-
-def shift_sqref_cols(sqref: str, at_col: int, delta: int) -> str:
-    return str(SheetRangeSet.parse(sqref).shift_cols(at_col + 1, delta))
-
-
-def _shift_worksheet_element(ws_element: etree._Element, ins: _Shift) -> None:
-    planner = _Planner(ins)
-    planner.worksheet(ws_element)
-    planner.apply()
-
-
-def shift_sheet_row_references(ws_element: etree._Element, at_row: int, delta: int) -> None:
-    """Shift every reference carrier outside ``sheetData`` after row insertion."""
-    _shift_worksheet_element(ws_element, _Shift(True, at_row, delta))
-
-
-def shift_sheet_col_references(ws_element: etree._Element, at_col: int, delta: int) -> None:
-    """Shift every reference carrier outside ``sheetData`` after column insertion (0-based)."""
-    _shift_worksheet_element(ws_element, _Shift(False, at_col + 1, delta))
-
-
 def shift_table_parts(worksheet, at_row: int, delta: int) -> None:
     """Shift table ``ref`` / ``autoFilter`` for tables linked from the worksheet."""
     tp = worksheet._part.element.find(_TABLE_PARTS)
@@ -1534,46 +1497,6 @@ def shift_table_parts_cols(worksheet, at_col: int, delta: int) -> None:
         part._blob = serialize_part_xml(table_elm)
 
 
-def shift_sheet_data_rows(sheet_data: etree._Element, at_row: int, delta: int) -> None:
-    """Bump ``r`` on rows and cells with row >= ``at_row``."""
-    ins = _Shift(True, at_row, delta)
-    _walk_sheet_data(sheet_data, ins, apply=False)
-    _walk_sheet_data(sheet_data, ins, apply=True)
-
-
-def shift_sheet_data_cols(sheet_data: etree._Element, at_col: int, delta: int) -> None:
-    """Bump column letters on cells with col >= ``at_col`` (0-based)."""
-    ins = _Shift(False, at_col + 1, delta)
-    _walk_sheet_data(sheet_data, ins, apply=False)
-    _walk_sheet_data(sheet_data, ins, apply=True)
-
-
-def shift_col_dimensions(ws_element: etree._Element, at_col: int, delta: int) -> None:
-    """Shift ``<col min/max>`` (1-based) for columns at or to the right of ``at_col`` (0-based)."""
-    planner = _Planner(_Shift(False, at_col + 1, delta))
-    planner.columns(ws_element)
-    planner.apply()
-
-
 def shift_dollar_ref(ref: str, at_row: int, delta: int) -> str:
     """Shift rows in an A1 ref, preserving ``$``; an unparseable ref is returned as is."""
     return _move_ref_text(ref, lambda area: area.shift_rows(at_row, delta))
-
-
-def shift_dollar_ref_cols(ref: str, at_col: int, delta: int) -> str:
-    """Shift columns in an A1 ref, preserving ``$`` (``at_col`` is 0-based)."""
-    return _move_ref_text(ref, lambda area: area.shift_cols(at_col + 1, delta))
-
-
-def shift_defined_names(workbook, sheet_name: str, at_row: int, delta: int) -> None:
-    """Shift A1 rows in definedNames that refer to ``sheet_name``."""
-    planner = _Planner(_Shift(True, at_row, delta), sheet_name=sheet_name)
-    planner.defined_names(workbook)
-    planner.apply()
-
-
-def shift_defined_names_cols(workbook, sheet_name: str, at_col: int, delta: int) -> None:
-    """Shift A1 columns in definedNames that refer to ``sheet_name``."""
-    planner = _Planner(_Shift(False, at_col + 1, delta), sheet_name=sheet_name)
-    planner.defined_names(workbook)
-    planner.apply()
