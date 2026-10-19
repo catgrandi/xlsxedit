@@ -45,6 +45,7 @@ from xlsxedit.opc.constants import OFFICE_REL_NS, SML_NS
 from xlsxedit.oxml.address import MAX_COL, MAX_ROW, col_to_index, index_to_col
 from xlsxedit.opc.serialize import serialize_part_xml
 from xlsxedit.oxml.parser import parse_xml
+from xlsxedit.parts import WorksheetPart
 from xlsxedit.range_set import CellRange, SheetRangeSet, shift_bounds
 from xlsxedit.styles import _XML_ILLEGAL, check_style_text, datetime_to_serial, normalize_rgb
 from xlsxedit.worksheet_order import insert_worksheet_child
@@ -1076,7 +1077,10 @@ _DEFERRED_MARKERS = (_XM_NS.encode(), b"location=", b"formula", b"cfvo")
 
 def _root_if_it_may_refer(worksheet) -> etree._Element | None:
     """The worksheet's element, unless it is still unparsed and cannot hold a
-    reference this module rewrites (keeps ``Workbook.open(large=True)`` lazy)."""
+    reference this module rewrites (keeps ``Workbook.open(large=True)`` lazy),
+    or is a chartsheet, which holds none."""
+    if not isinstance(worksheet._part, WorksheetPart):
+        return None
     blob = worksheet._part.unparsed_blob
     if blob is not None and not any(marker in blob for marker in _DEFERRED_MARKERS):
         return None
