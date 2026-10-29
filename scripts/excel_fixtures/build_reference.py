@@ -215,6 +215,67 @@ def _delete_rows_under_cf_apply(wb) -> None:
     wb.Worksheets("Sheet1").Rows("5:7").Delete()
 
 
+# insert-rows-at-drawing-edges, delete-rows-at-drawing-edges ---------------
+
+_PLACEMENTS = (
+    ("two-cell", xl.MoveAndSize),
+    ("one-cell", xl.Move),
+    ("absolute", xl.FreeFloating),
+)
+
+
+def _edge_shapes(excel: Excel, spans: tuple[tuple[str, int, int], ...]):
+    """A sheet ``Edges`` with one rectangle per placement and span, all rows at the
+    default height. Each ``(what, first, end)`` span runs from the top of row
+    ``first`` to the top of row ``end``, so both edges lie on gridlines; each
+    shape has a column of its own, 3 pt in from its sides."""
+    wb = excel.new_workbook("Edges")
+    ws = wb.Worksheets("Edges")
+    col = 2
+    for label, placement in _PLACEMENTS:
+        for what, first, end in spans:
+            cell = ws.Cells(first, col)
+            left, top = cell.Left, cell.Top
+            bottom = ws.Cells(end, col).Top
+            shp = ws.Shapes.AddShape(xl.ShapeRectangle, left + 3, top, cell.Width - 6, bottom - top)
+            shp.Name = f"{what} {label}"
+            shp.Placement = placement
+            col += 2
+    return wb
+
+
+def _insert_rows_at_drawing_edges_before(excel: Excel):
+    return _edge_shapes(
+        excel,
+        (
+            ("Ends at insert", 3, 7),
+            ("Starts at insert", 7, 11),
+            ("Across insert", 5, 11),
+        ),
+    )
+
+
+def _insert_rows_at_drawing_edges_apply(wb) -> None:
+    wb.Worksheets("Edges").Rows("7:8").Insert()
+
+
+def _delete_rows_at_drawing_edges_before(excel: Excel):
+    return _edge_shapes(
+        excel,
+        (
+            ("Ends at delete", 2, 5),
+            ("Exactly deleted", 5, 8),
+            ("Ends inside delete", 3, 7),
+            ("Starts inside delete", 6, 10),
+            ("Starts after delete", 8, 11),
+        ),
+    )
+
+
+def _delete_rows_at_drawing_edges_apply(wb) -> None:
+    wb.Worksheets("Edges").Rows("5:7").Delete()
+
+
 OPERATIONS = {
     op.name: op
     for op in (
@@ -324,6 +385,58 @@ OPERATIONS = {
                 "the absolute one stays where it was on the page, which here leaves its anchor "
                 "cells unchanged because the rows are all the same height. The two-cell shape "
                 "across the deleted rows shrinks by three rows.",
+            ),
+        ),
+        Operation(
+            name="insert-rows-at-drawing-edges",
+            summary="Two whole rows inserted where drawings of every placement start or end "
+            "exactly on a gridline.",
+            build=_insert_rows_at_drawing_edges_before,
+            apply=_insert_rows_at_drawing_edges_apply,
+            steps=(
+                "Select rows 7:8 on `Edges` by their row headers.",
+                "Home > Insert > Insert Sheet Rows.",
+            ),
+            call='Worksheets("Edges").Rows("7:8").Insert()',
+            observed=(
+                "A drawing whose bottom edge lies on the gridline at the top of row 7, where the "
+                "rows go in, does not change, whatever its placement: its `to` stays at row 6 "
+                "(zero-based) with offset 0.",
+                "Two-cell and one-cell drawings whose top edge lies on that gridline move down "
+                "two rows, both corners.",
+                "The two-cell drawing across the insert grows by two rows. The one-cell one keeps "
+                "its size, and Excel writes its recomputed `to`, which falls on a gridline, as "
+                "that row with offset 0 (row 10), not as the row above with a full offset.",
+                "Absolute drawings stay where they were on the page; every row has the default "
+                "height, so their anchor cells do not change.",
+            ),
+        ),
+        Operation(
+            name="delete-rows-at-drawing-edges",
+            summary="Three whole rows deleted where drawings of every placement start or end "
+            "exactly on a gridline.",
+            build=_delete_rows_at_drawing_edges_before,
+            apply=_delete_rows_at_drawing_edges_apply,
+            steps=(
+                "Select rows 5:7 on `Edges` by their row headers.",
+                "Home > Delete > Delete Sheet Rows.",
+            ),
+            call='Worksheets("Edges").Rows("5:7").Delete()',
+            observed=(
+                "A drawing whose bottom edge lies on the gridline at the top of row 5, the first "
+                "deleted row, does not change, whatever its placement.",
+                "The two-cell drawing that covers exactly the deleted rows, from the top of row 5 "
+                "to the top of row 8, is deleted. The one-cell drawing there survives at the top "
+                "of row 5 with its size kept, and the absolute one stays where it was.",
+                "A two-cell drawing whose bottom edge lies on a gridline inside the deleted rows "
+                "(the top of row 7) now ends at the top of row 5. One whose top edge lies inside "
+                "them (the top of row 6) now starts at the top of row 5, and its bottom moves up "
+                "three rows.",
+                "One-cell drawings that start inside the deleted rows start at the top of row 5, "
+                "those that start below them move up three rows, and both keep their size; the "
+                "one that ends inside them keeps its size and place.",
+                "Absolute drawings stay where they were on the page; every row has the default "
+                "height, so their anchor cells do not change.",
             ),
         ),
     )
