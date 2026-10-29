@@ -94,6 +94,14 @@ def _holds_content(c_elm: etree._Element) -> bool:
 _CELL_FORMULA = f"{_C}/{_F}"
 
 
+def _ints(*texts: str | None) -> tuple[int | None, ...]:
+    """Each text as an ``int``; all ``None`` when one of them is not a number."""
+    try:
+        return tuple(int(text) for text in texts)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return (None,) * len(texts)
+
+
 def _column_key(address: str) -> tuple[int, str]:
     """Sort key for the column of an uppercase cell address (``Z1`` before ``AA1``)."""
     letters = address.rstrip("0123456789")
@@ -317,17 +325,20 @@ class Worksheet:
         ``<cols>`` block is replaced or its last ``<col>`` changes, as when a
         column width is set, and after the edits that clear the row index,
         inserts among them. A ``<col>`` edited in place by other means after a
-        first write is not seen.
+        first write is not seen, and one whose ``min``, ``max`` or ``style`` is
+        not a number is left out.
         """
         blocks = tuple(self._part.element.iterchildren(_COLS))
         key = tuple([(b, next(b.iterchildren(reversed=True), None)) for b in blocks]) if blocks else ()
         cache = self._column_styles
         if cache is None or cache[0] != key:
             ranges = [
-                (int(col.get("min", "0")), int(col.get("max", "0")), int(style))
+                (low, high, style)
                 for block in blocks
                 for col in block.iterchildren(_COL)
-                if (style := col.get("style")) is not None
+                if col.get("style") is not None
+                for low, high, style in [_ints(col.get("min", "0"), col.get("max", "0"), col.get("style"))]
+                if style is not None
             ]
             ordered = sorted(ranges)
             if all(a[1] < b[0] for a, b in zip(ordered, ordered[1:])):
@@ -484,10 +495,15 @@ class Worksheet:
         as they were; ``None`` instead of the function for a cell the sheet held.
         """
         col, row_num = split_address(address)
+        column = col_to_index(col) + 1
+        resolve = self._workbook.styles.resolve_xf_index
         row_elm = self._find_row_element(row_num)
+        xf = resolve(self, row_elm, None, column)  # before anything changes
         max_row = self._bulk_max_row_num
         if row_elm is None:
             row_elm, new_row = self._add_row(row_num)
+            if not new_row:  # the scan a disagreeing index falls back to found it
+                xf = resolve(self, row_elm, None, column)
         else:
             self._index_row_cells(row_num, row_elm)
             new_row = False
@@ -495,7 +511,6 @@ class Worksheet:
         c_elm = self._bulk_get_or_create_cell(address, row_elm)
         if len(row_elm) == cells:
             return c_elm, None
-        xf = self._workbook.styles.resolve_xf_index(self, row_elm, None, col_to_index(col) + 1)
         if xf:
             c_elm.set("s", str(xf))
 
