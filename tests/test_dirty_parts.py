@@ -117,7 +117,7 @@ def test_writing_what_a_sheet_already_holds_keeps_its_bytes(rewrite):
 def test_replacing_in_an_inline_string_marks_the_sheet_only_on_a_match():
     wb = Workbook.open(BOOK1)
     ws = wb[SHEET]
-    c_elm = ws["Z99"]._element
+    c_elm = ws._get_or_create_cell_element("Z99")
     c_elm.set("t", "inlineStr")
     c_elm.append(etree.fromstring(f'<is xmlns="{SML_NS}"><t>hello name</t></is>'))
     assert ws["Z99"].replace("absent", "x") == 0

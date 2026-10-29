@@ -19,6 +19,7 @@ from xlsxedit.worksheet_order import insert_ordered, reposition_ordered
 if TYPE_CHECKING:
     from lxml.etree import _Element
 
+    from xlsxedit.cell import Cell
     from xlsxedit.worksheet import Worksheet
 
 _XF = f"{{{SML_NS}}}xf"
@@ -361,9 +362,8 @@ class Styles:
 
         The cell's own ``s`` wins, and a cell with a value but no ``s`` is in
         style 0, as Excel shows it. A cell with no ``<c>`` element, or an empty
-        one such as ``ws[address]`` creates, takes the row's ``s`` when the row
-        sets ``customFormat``, then the ``style`` of the ``<col>`` covering
-        its column, then 0.
+        one, takes the row's ``s`` when the row sets ``customFormat``, then the
+        ``style`` of the ``<col>`` covering its column, then 0.
         """
         col, row_num = split_address(address)
         cell = worksheet._find_cell_element(join_address(col, row_num))
@@ -795,10 +795,10 @@ def datetime_to_serial(value: datetime | date, *, date1904: bool = False) -> flo
 class CellStyle:
     """Cell style proxy."""
 
-    def __init__(self, styles: Styles | None, style_index: str | None, cell_element=None):
+    def __init__(self, styles: Styles | None, style_index: str | None, cell: Cell | None = None):
         self._styles = styles
         self._index = style_index
-        self._cell_element = cell_element
+        self._cell = cell
 
     @property
     def style_index(self) -> str | None:
@@ -818,10 +818,10 @@ class CellStyle:
 
     @num_format.setter
     def num_format(self, format_code: str) -> None:
-        if self._styles is None or self._cell_element is None:
+        if self._styles is None or self._cell is None:
             raise ValueError("cannot set number format without styles part")
-        self._styles.apply_num_format(self._cell_element, format_code)
-        self._index = self._cell_element.get("s")
+        self._cell.apply_number_format(format_code)
+        self._index = self._cell.style.style_index
 
     @property
     def is_date(self) -> bool:

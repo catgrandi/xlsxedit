@@ -293,7 +293,7 @@ def test_grid_overflow_error_is_public():
 def test_blank_cells_and_areas_pushed_off_the_grid_are_dropped():
     wb = Workbook.create()
     ws = wb["Sheet1"]
-    ws["B1048576"]._element.set("s", "0")
+    ws._get_or_create_cell_element("B1048576").set("s", "0")
     _add(ws, '<conditionalFormatting sqref="A1048576 A1"><cfRule type="expression" priority="1"><formula>TRUE</formula></cfRule></conditionalFormatting>')
     _add(ws, '<conditionalFormatting sqref="D1048576"><cfRule type="expression" priority="2"><formula>TRUE</formula></cfRule></conditionalFormatting>')
     _add(ws, '<dataValidations count="2"><dataValidation sqref="C1048575:C1048576"/><dataValidation sqref="E1048576"/></dataValidations>')
@@ -448,7 +448,7 @@ def test_a_bad_inline_style_refuses_before_changing_anything(method, styles):
 def test_data_table_ranges_and_input_cells_move():
     wb = Workbook.create()
     ws = wb["Sheet1"]
-    f = etree.SubElement(ws["C3"]._element, f"{{{SML_NS}}}f")
+    f = etree.SubElement(ws._get_or_create_cell_element("C3"), f"{{{SML_NS}}}f")
     f.attrib.update({"t": "dataTable", "ref": "C3:D9", "dt2D": "1", "dtr": "1", "r1": "A1", "r2": "B12"})
     ws.insert_rows([[None], [None]], at_row=5)
     assert dict(f.attrib) == {
@@ -466,7 +466,7 @@ def test_data_table_ranges_and_input_cells_move():
 def test_a_data_table_input_cell_pushed_off_refuses_the_insert():
     wb = Workbook.create()
     ws = wb["Sheet1"]
-    f = etree.SubElement(ws["C3"]._element, f"{{{SML_NS}}}f")
+    f = etree.SubElement(ws._get_or_create_cell_element("C3"), f"{{{SML_NS}}}f")
     f.attrib.update({"t": "dataTable", "ref": "C3:D9", "dt2D": "0", "dtr": "0", "r1": "A1048576"})
     before = _saved(wb)
     with pytest.raises(GridOverflowError, match="dataTable"):
@@ -507,7 +507,7 @@ def test_both_entry_points_drop_the_calc_chain_and_request_a_full_recalc(method:
 def test_cell_formulas_stay_while_format_and_validation_formulas_move():
     wb = Workbook.create()
     ws = wb["Sheet1"]
-    etree.SubElement(ws["A1"]._element, f"{{{SML_NS}}}f").text = "B10*2"
+    etree.SubElement(ws._get_or_create_cell_element("A1"), f"{{{SML_NS}}}f").text = "B10*2"
     _add(ws, '<conditionalFormatting sqref="C1"><cfRule type="expression" priority="1"><formula>$B$10&gt;0</formula></cfRule></conditionalFormatting>')
     _add(ws, '<dataValidations count="1"><dataValidation type="list" sqref="D1"><formula1>$B$10:$B$12</formula1></dataValidation></dataValidations>')
     ws.insert_rows([[None]], at_row=5)

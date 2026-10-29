@@ -19,6 +19,7 @@ from xlsxedit.hyperlinks import Hyperlink
 if TYPE_CHECKING:
     from xlsxedit.worksheet import Worksheet
 
+_C = f"{{{SML_NS}}}c"
 _V = f"{{{SML_NS}}}v"
 _F = f"{{{SML_NS}}}f"
 _IS = f"{{{SML_NS}}}is"
@@ -41,11 +42,16 @@ def _marks_sheet(method: _Method) -> _Method:
 
     A call that leaves the element as it was, such as setting the value the
     cell already holds, marks nothing, so the sheet keeps its source bytes.
+    A cell the sheet has no ``<c>`` for is written by :func:`_write_new_cell`.
     """
 
     @functools.wraps(method)
     def wrapper(self: Cell, *args: Any, **kwargs: Any) -> Any:
         part = self._worksheet._part
+        if "_element" not in self.__dict__:
+            self._element, undo = self._worksheet._cell_for_write(self._address)
+            if undo is not None:
+                return _write_new_cell(self, undo, method, args, kwargs)
         if part.is_dirty:
             return method(self, *args, **kwargs)
         before = etree.tostring(self._element, with_tail=False)
@@ -56,6 +62,32 @@ def _marks_sheet(method: _Method) -> _Method:
                 part.mark_dirty()
 
     return wrapper  # type: ignore[return-value]
+
+
+def _write_new_cell(
+    cell: Cell, undo: Callable[[], None], method: Callable[..., Any], args: tuple, kwargs: dict
+) -> Any:
+    """Run the write ``method`` on the element just created for ``cell``.
+
+    ``undo`` takes the element back out, with its row when that is new too.
+    It runs when the method raises or leaves the element as it was created,
+    so a refused write, or one that writes nothing such as ``None``, leaves
+    the sheet as it was.
+    """
+    element = cell._element
+    created = element.items()
+    try:
+        result = method(cell, *args, **kwargs)
+    except BaseException:
+        undo()
+        del cell._element
+        raise
+    if len(element) or element.text is not None or element.items() != created:
+        cell._worksheet._part.mark_dirty()
+    else:
+        undo()
+        del cell._element
+    return result
 
 
 def _ref_contains(ref: str | None, address: str) -> bool:
@@ -139,11 +171,35 @@ def cell_matches(cell: Cell, value: Any) -> bool:
 
 
 class Cell:
-    """Thin proxy over a ``<c>`` element."""
+    """Thin proxy over a ``<c>`` element.
 
-    def __init__(self, element: _Element, worksheet: Worksheet):
-        self._element = element
+    ``ws[address]`` also returns one where the sheet has no ``<c>``, made with
+    ``element=None`` and the ``address``. Reading it changes nothing: it reads
+    as an empty cell until a write, through it or any other way, creates the
+    element, which it then proxies.
+    """
+
+    def __init__(self, element: _Element | None, worksheet: Worksheet, address: str | None = None):
+        if element is not None:
+            self._element = element
+        self._address = address
         self._worksheet = worksheet
+
+    def __getattr__(self, name: str) -> Any:
+        # Only a cell made without its element gets here for ``_element``.
+        if name != "_element":
+            raise AttributeError(name)
+        element = self._bind()
+        return etree.Element(_C, r=self._address) if element is None else element
+
+    def _bind(self) -> _Element | None:
+        """The cell's ``<c>``, looked up while the proxy has none; ``None`` while the sheet has none."""
+        element = self.__dict__.get("_element")
+        if element is None:
+            element = self._worksheet._find_cell_element(self._address)
+            if element is not None:
+                self._element = element
+        return element
 
     def __repr__(self) -> str:
         return f"<Cell {self.address!r}>"
@@ -281,10 +337,14 @@ class Cell:
     def style(self) -> CellStyle:
         """Read proxy for the cell's effective style (see ``Styles.effective_xf_index``)."""
         styles = self._worksheet._workbook.styles
-        index = self.style_index
-        if index is None:
-            index = str(styles._cell_xf_index(self._element))
-        return CellStyle(styles, index, self._element)
+        element = self._bind()
+        if element is None:
+            index = str(styles.effective_xf_index(self._worksheet, self._address))
+        else:
+            index = element.get("s")
+            if index is None:
+                index = str(styles._cell_xf_index(element))
+        return CellStyle(styles, index, self)
 
     @property
     def hyperlink(self) -> Hyperlink:
@@ -346,6 +406,8 @@ class Cell:
     @property
     def value(self) -> str | float | int | bool | datetime | date | None:
         """Display/string value for string cells; numeric raw value otherwise."""
+        if self._bind() is None:
+            return None
         if self.has_formula:
             v = self._v_text()
             if v is None:

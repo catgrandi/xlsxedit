@@ -5,7 +5,7 @@ from __future__ import annotations
 import bisect
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Iterator
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator
 
 from lxml import etree
 
@@ -354,6 +354,13 @@ class Worksheet:
         if row is not None:
             self._index_row_cells(row_num, row)
             return row
+        return self._add_row(row_num, index_cells=index_cells)[0]
+
+    def _add_row(self, row_num: int, *, index_cells: bool = True) -> tuple[etree._Element, bool]:
+        """``_ensure_row`` for a row the index does not hold: the row, and whether it is new.
+
+        It is not new when the scan that a disagreeing index falls back to finds it.
+        """
         sheet_data = self._sheet_data()
         row = etree.Element(_ROW)
         row.set("r", str(row_num))
@@ -363,14 +370,14 @@ class Worksheet:
             existing = self._place_row_by_scan(sheet_data, row, row_num)
             if existing is not None:
                 self._index_row_cells(row_num, existing)
-                return existing
+                return existing, False
         self._row_index[row_num] = row
         if self._row_numbers is not None:
             bisect.insort(self._row_numbers, row_num)
         if index_cells:
             self._cell_indexed_rows.add(row_num)
         self._bulk_max_row_num = max(self._bulk_max_row_num, row_num)
-        return row
+        return row, True
 
     def _place_row_after_indexed(
         self, sheet_data: etree._Element, row: etree._Element, row_num: int
@@ -420,6 +427,8 @@ class Worksheet:
         return None
 
     def _get_or_create_cell_element(self, address: str) -> etree._Element:
+        """The ``<c>`` at ``address``, created bare where the sheet has none, for
+        code that edits the element directly; cell writes use ``_cell_for_write``."""
         address = self._resolve_write_address(address).upper()
         existing = self._find_cell_element(address)
         if existing is not None:
@@ -427,8 +436,63 @@ class Worksheet:
         _, row_num = split_address(address)
         return self._bulk_get_or_create_cell(address, self._ensure_row(row_num))
 
+    def _cell_for_write(self, address: str) -> tuple[etree._Element, Callable[[], None] | None]:
+        """The ``<c>`` at uppercase ``address`` for a write, created when the sheet has
+        none, in the style Excel gives a cell typed there: its row's when the row
+        is formatted as a whole, else its column's (see
+        :meth:`Styles.effective_xf_index`).
+
+        Returns the cell and, for a created one, a function that takes it back
+        out, with its row when that is new too, leaving the row and cell index
+        as they were; ``None`` instead of the function for a cell the sheet held.
+        """
+        col, row_num = split_address(address)
+        row_elm = self._find_row_element(row_num)
+        max_row = self._bulk_max_row_num
+        if row_elm is None:
+            row_elm, new_row = self._add_row(row_num)
+        else:
+            self._index_row_cells(row_num, row_elm)
+            new_row = False
+        cells = len(row_elm)
+        c_elm = self._bulk_get_or_create_cell(address, row_elm)
+        if len(row_elm) == cells:
+            return c_elm, None
+        xf = self._workbook.styles.resolve_xf_index(
+            row_elm.getparent(), row_elm, None, col_to_index(col) + 1
+        )
+        if xf:
+            c_elm.set("s", str(xf))
+
+        def undo() -> None:
+            row_elm.remove(c_elm)
+            if self._cell_index.get(address) is c_elm:
+                del self._cell_index[address]
+            if not new_row:
+                return
+            row_elm.getparent().remove(row_elm)
+            if self._row_index.get(row_num) is row_elm:
+                del self._row_index[row_num]
+                self._cell_indexed_rows.discard(row_num)
+                numbers = self._row_numbers
+                if numbers is not None:
+                    i = bisect.bisect_left(numbers, row_num)
+                    if i < len(numbers) and numbers[i] == row_num:
+                        del numbers[i]
+                self._bulk_max_row_num = max_row
+
+        return c_elm, undo
+
     def __getitem__(self, address: str) -> Cell:
-        return Cell(self._get_or_create_cell_element(address), self)
+        """The cell at ``address``, or the top-left cell of a merge that covers it.
+
+        Reading it changes nothing. Where the sheet has no such cell, the
+        ``Cell`` reads as empty, and its first write creates it in the style of
+        its row or column (see :meth:`Styles.effective_xf_index`).
+        """
+        address = self._resolve_write_address(address).upper()
+        element = self._find_cell_element(address)
+        return Cell(element, self, None if element is not None else address)
 
     def iter_cells(self) -> Iterator[Cell]:
         sheet_data = self._part.element.find(_SHEET_DATA)
