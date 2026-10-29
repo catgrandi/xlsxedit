@@ -226,9 +226,11 @@ class DrawingShift:
             return bottom
         if self._shift.span is None and new_top == (top[0] + self._shift.delta, top[1]):
             return self._shifted(bottom, what)  # moved with its lines, sizes and all
-        before = self._before
-        extent = before.start(bottom[0]) + bottom[1] - before.start(top[0]) - top[1]
-        return self._place(self._after.start(new_top[0]) + new_top[1] + extent, what)
+        extent = self._before.between(*top, *bottom)
+        found = self._after.advance(new_top[0], new_top[1] + extent)
+        if found is None:
+            raise self._shift.overflow(what)
+        return found
 
     def _axis_part(self, marker: tuple[int, int, int, int]) -> _Marker:
         col, col_off, row, row_off = marker

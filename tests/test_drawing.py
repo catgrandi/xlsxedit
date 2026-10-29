@@ -24,7 +24,7 @@ from xlsxedit.drawing import (
     drawing_parts_for_worksheet,
     sheet_axis,
 )
-from xlsxedit.opc.constants import RT
+from xlsxedit.opc.constants import RT, SML_NS
 from xlsxedit.parts import ChartPart, DrawingPart
 
 PNG = (
@@ -443,6 +443,61 @@ def test_axis_measures_runs_and_defaults():
     assert axis.locate(70) == (3, 0)  # a gridline starts the line below it
     assert axis.locate(140) == (7, 0)  # the hidden line 6 takes no room
     assert axis.locate(170) is None  # past line 9
+
+
+def test_axis_anchors_past_its_last_sized_line_in_the_zero_size_lines_that_end_it():
+    axis = _Axis([(4, 9, 0)], 10, 10)  # like a sheet that hides every column after D
+    assert axis.locate(40) == (4, 0)
+    assert axis.locate(55) == (4, 15)
+    assert axis.advance(2, 35) == (4, 15)
+    assert axis.advance(6, 5) == (6, 5)  # never above the line it starts from
+    assert _Axis([], 10, 10).locate(100) is None  # no lines left
+
+
+def _sheet_with_rows(rows: list[tuple[int, str | None, bool]], *, zero_height: bool = False):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    root = ws._part.element
+    fmt = root.find(f"{{{SML_NS}}}sheetFormatPr")
+    if zero_height:
+        fmt.set("zeroHeight", "1")
+    sheet_data = root.find(f"{{{SML_NS}}}sheetData")
+    for number, height, hidden in rows:
+        row = etree.SubElement(sheet_data, f"{{{SML_NS}}}row", r=str(number))
+        if height is not None:
+            row.set("ht", height)
+        if hidden:
+            row.set("hidden", "1")
+    ws._invalidate_bulk_indexes()
+    return wb, ws
+
+
+def test_an_unreadable_height_counts_as_the_default():
+    _, ws = _sheet_with_rows([(2, "", False), (3, "nan", False), (4, "-5", False)])
+    assert sheet_axis(ws, rows=True).start(5) == 5 * sheet_axis(ws, rows=True).default
+
+
+def test_a_picture_reaches_into_columns_hidden_past_the_used_ones(png: Path):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    root = ws._part.element
+    cols = etree.Element(f"{{{SML_NS}}}cols")
+    etree.SubElement(cols, f"{{{SML_NS}}}col", min="5", max="16384", hidden="1", width="8")
+    root.find(f"{{{SML_NS}}}sheetData").addprevious(cols)
+    pic = ws.add_image(png, anchor="D2", width=100, height=40)
+    assert _marker(pic._anchor, "to")[:2] == (4, 36 * EMU_PER_PIXEL)  # D is 64 px wide
+    pic.anchor = "D5"
+    assert pic.width == 100
+    pic.width = 64  # exactly D: the right edge lies on the last visible gridline
+    assert _marker(pic._anchor, "to")[:2] == (4, 0)
+    assert_valid_package(wb)
+
+
+def test_rows_zero_height_hides_count_as_zero(png: Path):
+    _, ws = _sheet_with_rows([(n, None, False) for n in range(1, 11)], zero_height=True)
+    assert sheet_axis(ws, rows=True).start(20) == 10 * 20 * EMU_PER_PIXEL
+    pic = ws.add_image(png, anchor="B9", width=20, height=80)
+    assert _marker(pic._anchor, "to")[2:] == (10, 40 * EMU_PER_PIXEL)
 
 
 def test_axis_keeps_the_first_of_overlapping_runs():
