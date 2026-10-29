@@ -13,15 +13,19 @@ nothing; ``apply`` only assigns computed values.
 
 A :class:`_Shift` also describes a delete and a shift restricted to a span of
 columns (rows), and the :class:`_Planner` moves every structure it reaches as
-Excel does for those; only ``InsertPlan``, which also moves the cells, is
-limited to whole-row and whole-column inserts.
+Excel does for those. ``InsertPlan``, which also moves the cells, carries out
+whole-row and whole-column inserts; ``CellShiftPlan`` (``shift_cells``)
+carries out inserts and deletes restricted to a span, Excel's "insert cells"
+and "delete cells", with Excel's refusals. No public method runs it yet.
 
 The ``check_*`` functions validate the rest of an insert up front. The
-``shift_*`` functions are thin wrappers kept for the table code and tests.
+``shift_*`` functions other than ``shift_cells`` are thin wrappers kept for
+the table code and tests.
 """
 
 from __future__ import annotations
 
+import bisect
 import math
 import operator
 import re
@@ -34,8 +38,17 @@ from lxml import etree
 
 from xlsxedit.bulk_styles import normalize_style_spec
 from xlsxedit.cell import _refuse_range_formula_edit
-from xlsxedit.drawing import chart_parts, chart_references
+from xlsxedit.drawing import (
+    _XDR_FROM,
+    _XDR_TO,
+    _iter_anchors,
+    _marker,
+    chart_parts,
+    chart_references,
+    drawing_parts_for_worksheet,
+)
 from xlsxedit.exceptions import (
+    FormulaGroupError,
     GridOverflowError,
     InvalidRangeError,
     TableError,
@@ -332,9 +345,9 @@ class _Shift:
             return f"{text} in columns {index_to_col(lo - 1)}:{index_to_col(hi - 1)}"
         return f"{text} in rows {lo}:{hi}"
 
-    def overflow(self, what: str) -> GridOverflowError:
+    def overflow(self, what: str, *, excel: str | None = None) -> GridOverflowError:
         end = f"row {MAX_ROW}" if self.rows else "column XFD"
-        return GridOverflowError(f"{self.describe()} would push {what} past {end}")
+        return GridOverflowError(_excel_says(f"{self.describe()} would push {what} past {end}", excel))
 
     def refusal(self, what: str) -> InvalidRangeError:
         """The error for a shift that would push ``what`` off the grid, or delete it."""
@@ -346,9 +359,17 @@ class _Shift:
         return InvalidRangeError(_excel_says(f"{self.describe()} would move only part of {what}", excel))
 
 
-# What Excel asks before an "insert cells" or "delete cells" that would split a
-# merge (Excel 16.0.20527 for Microsoft 365, recorded 2026-10-29).
+# What Excel says when it refuses, or asks before, an "insert cells" or "delete
+# cells" (Excel 16.0.20527 for Microsoft 365, recorded 2026-10-29).
+_EXCEL_TABLE = "This won't work because it would move cells in a table on your worksheet."
 _EXCEL_MERGE = "This operation will cause some merged cells to unmerge.  Do you wish to continue?"
+_EXCEL_ARRAY = "You can't change part of an array."
+_EXCEL_DATA_TABLE = "Can't change part of a data table."
+_EXCEL_GRID = (
+    "Microsoft Excel can't insert new cells because it would push non-empty cells off the end"
+    " of the worksheet."
+)
+_EXCEL_OBJECTS = "Can't push objects off the sheet."
 
 
 def _excel_says(message: str, excel: str | None) -> str:
@@ -376,10 +397,10 @@ def _number(text: str | None, where: str) -> int:
 
 
 def _cell_column(address: str, where: str) -> int:
-    """1-based column of a ``<c r>`` address."""
+    """1-based column of a ``<c r>`` address, which must name a row from 1."""
     m = _CELL_ADDRESS_RE.fullmatch(address)
     index = col_to_index(m.group(1)) + 1 if m else 0
-    if not 1 <= index <= MAX_COL:
+    if not 1 <= index <= MAX_COL or int(m.group(2)) < 1:
         raise InvalidRangeError(f"{where}: invalid cell address {address!r}")
     return index
 
@@ -1290,6 +1311,334 @@ def plan_insert_columns(
     return InsertPlan(worksheet, _Shift(False, at_col + 1, count), cells)
 
 
+class CellShiftPlan:
+    """Every change that shifting the cells of a span makes, as Excel's "insert
+    cells" and "delete cells" do: ``shift`` has a ``span``.
+
+    Only the ``<c>`` elements in the span's columns (rows) from the shifted
+    lines on move: down (right) for an insert, up (left) for a delete, which
+    drops the cells it deletes. A cell moving down goes into the row it lands
+    on, created when missing; rows keep their height and style where they are,
+    and a row left with no cells and no attributes of its own goes, as in
+    Excel. The sheet's other structures move as :class:`_Planner` moves them
+    for a span, and its tables as Excel moves them (``_check_span_tables``).
+    Cell formulas, comments and drawing anchors stay, as for an
+    :class:`InsertPlan`.
+
+    Building the plan reads what an ``InsertPlan`` reads and the sheet's
+    drawings, and raises before anything changes: ``GridOverflowError`` for
+    content or a drawing object pushed past the grid; ``TableError`` for a
+    table the shift would move only part of, and the table changes
+    ``_check_span_tables`` refuses; ``InvalidRangeError`` for a merge it
+    would move only part of (Excel unmerges it after asking), a scenario or
+    data-table input cell it would delete, or a reference on the sheet it
+    cannot read; ``FormulaGroupError`` for a shared, array or data-table
+    formula range it would change only part of; and ``ValueError`` for a
+    shift without a span, as one whose span covers every column (row) is.
+    ``apply`` carries the plan out and refreshes the worksheet's caches and
+    ``<dimension>``.
+    """
+
+    def __init__(self, worksheet, shift: _Shift):
+        if shift.span is None:
+            raise ValueError("CellShiftPlan shifts the cells of a span; whole lines need an InsertPlan")
+        self._worksheet = worksheet
+        root = worksheet._part.element
+        sheet_data = root.find(_SHEET_DATA)
+        self._cells = _CellMoves(sheet_data, shift)
+        planner = _Planner(shift, sheet_name=worksheet.name, part=worksheet._part)
+        _plan_formula_ranges(sheet_data, planner)
+        planner.worksheet(root)
+        planner.hyperlink_locations(root, own=True)
+        workbook = worksheet._workbook
+        for other in workbook.worksheets:
+            if other is worksheet:
+                continue
+            other_root = _root_if_it_may_refer(other)
+            if other_root is not None:
+                planner.foreign_sheet(other_root)
+        tables = _check_span_tables(worksheet, shift)
+        planner.after(partial(_move_span_tables, tables, shift))
+        _check_span_drawings(worksheet, shift)
+        planner.defined_names(workbook)
+        planner.charts(workbook)
+        planner.after(workbook._invalidate_calc_chain)
+        planner.after(workbook.set_full_calc_on_load)
+        self._planner = planner
+        self.merges = planner.merges
+
+    def apply(self) -> None:
+        worksheet = self._worksheet
+        if self._cells.apply():
+            worksheet._part.mark_dirty()
+        self._planner.apply()
+        worksheet._invalidate_merge_map()
+        worksheet._invalidate_bulk_indexes()
+        worksheet.update_dimension()
+
+
+def plan_shift_cells(worksheet, shift: _Shift) -> CellShiftPlan:
+    """Plan shifting the cells of ``shift.span`` (see :class:`CellShiftPlan`)."""
+    return CellShiftPlan(worksheet, shift)
+
+
+def shift_cells(worksheet, shift: _Shift) -> None:
+    """Shift the cells of ``shift.span`` as Excel's "insert cells" or "delete
+    cells" does (see :class:`CellShiftPlan`); nothing changes when it raises."""
+    CellShiftPlan(worksheet, shift).apply()
+
+
+_X14AC_DY_DESCENT = "{http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac}dyDescent"
+# attributes that say nothing about a row without cells, which Excel then leaves out
+_PLAIN_ROW_ATTRIBUTES = frozenset({"r", "spans", _X14AC_DY_DESCENT})
+
+
+class _CellMoves:
+    """The ``<c>`` elements a span shift moves, checked when built.
+
+    Building it raises ``InvalidRangeError`` for an unreadable row or cell
+    address anywhere on the sheet, so that refreshing ``<dimension>`` after
+    the move cannot fail, and ``GridOverflowError`` for content an insert
+    would push past the grid; a cell pushed off that holds no content goes,
+    as in Excel.
+    """
+
+    def __init__(self, sheet_data: etree._Element | None, shift: _Shift):
+        self._sheet_data = sheet_data
+        self._shift = shift
+        self._implied: list[tuple[etree._Element, str]] = []  # r values only implied
+        self._moves: list[tuple[etree._Element, int, int]] = []  # cell, new row, new column
+        self._drops: list[etree._Element] = []
+        if sheet_data is None:
+            return
+        lo_s, hi_s = shift.span
+        number = 0
+        for row in sheet_data.iterchildren(_ROW):
+            r = row.get("r")
+            number = _number(r, "row/@r") if r is not None else number + 1
+            if r is None:  # removing a row before it would renumber it
+                self._implied.append((row, str(number)))
+            moving = number >= shift.at if shift.rows else lo_s <= number <= hi_s
+            col = 0
+            for c in row.iterchildren(_C):
+                address = c.get("r")
+                col = _cell_column(address, "c/@r") if address is not None else col + 1
+                if not moving:
+                    continue
+                if address is None:
+                    self._implied.append((c, f"{index_to_col(col - 1)}{number}"))
+                if not (lo_s <= col <= hi_s if shift.rows else col >= shift.at):
+                    continue
+                new = shift.move(number if shift.rows else col)
+                if new is not None and new > shift.limit:
+                    if _holds_content(c):
+                        name = address or f"{index_to_col(col - 1)}{number}"
+                        raise shift.overflow(f"cell {name}", excel=_EXCEL_GRID)
+                    new = None
+                if new is None:
+                    self._drops.append(c)
+                else:
+                    self._moves.append((c, new, col) if shift.rows else (c, number, new))
+
+    def apply(self) -> bool:
+        """Move the cells; return whether any moved or went."""
+        if not (self._moves or self._drops):
+            return False
+        for elm, value in self._implied:
+            elm.set("r", value)
+        left = {c.getparent() for c in self._drops}
+        for c in self._drops:
+            c.getparent().remove(c)
+        if self._shift.rows:
+            left.update(c.getparent() for c, _, _ in self._moves)
+            self._move_between_rows()
+        else:
+            for c, row, col in self._moves:
+                c.set("r", f"{index_to_col(col - 1)}{row}")
+        for row in left:
+            empty = not any(isinstance(child.tag, str) for child in row)
+            if empty and _PLAIN_ROW_ATTRIBUTES.issuperset(row.attrib.keys()):
+                row.getparent().remove(row)
+        return True
+
+    def _move_between_rows(self) -> None:
+        """Put each moving cell into its new row, after the row's cells left of the span."""
+        for c, _, _ in self._moves:
+            c.getparent().remove(c)
+        rows: dict[int, etree._Element] = {}
+        for row in self._sheet_data.iterchildren(_ROW):
+            rows.setdefault(int(row.get("r")), row)
+        numbers = sorted(rows)
+        incoming: dict[int, list[tuple[int, etree._Element]]] = {}
+        for c, number, col in self._moves:
+            incoming.setdefault(number, []).append((col, c))
+        last_col = self._shift.span[1]
+        # new rows come in ascending order, so each goes before the first existing row after it
+        for number in sorted(incoming):
+            row = rows.get(number)
+            if row is None:
+                row = etree.Element(_ROW)
+                row.set("r", str(number))
+                index = bisect.bisect_right(numbers, number)
+                if index < len(numbers):
+                    rows[numbers[index]].addprevious(row)
+                else:
+                    self._sheet_data.append(row)
+                rows[number] = row
+            following = next(
+                (child for child in row if child.tag != _C or _column_key(child) >= last_col), None
+            )
+            for col, c in sorted(incoming[number], key=operator.itemgetter(0)):
+                c.set("r", f"{index_to_col(col - 1)}{number}")
+                if following is None:
+                    row.append(c)
+                else:
+                    following.addprevious(c)
+            _widen_spans(row)
+
+
+def _plan_formula_ranges(sheet_data: etree._Element | None, planner: _Planner) -> None:
+    """Move the ranges of shared, array and data-table formulas for a span shift;
+    raise ``FormulaGroupError`` for a range the shift would change only part of."""
+    if sheet_data is None:
+        return
+    shift = planner.ins
+    for f in sheet_data.iter(_F):
+        kind = f.get("t")
+        if kind not in _RANGED_FORMULAS:
+            continue
+        cell = f.getparent().get("r") or ""
+        for attr in ("ref", "r1", "r2") if kind == "dataTable" else ("ref",):
+            value = f.get(attr)
+            if not value:
+                continue
+            area = _area(value, f"{cell} <f t={kind!r}> @{attr}")
+            if attr == "ref" and shift.tears(_formula_group(kind, area)):
+                raise _torn_formula_error(shift, kind, value, cell)
+            moved = shift.area(area)
+            if moved is None and attr == "ref" and not shift.inserting:
+                break  # deleted with its cells, input cells and all
+            if moved is None or shift.clamps(area):
+                if attr == "ref":
+                    raise shift.refusal(f"the {kind} formula range {value} of {cell}")
+                raise shift.refusal(f"the data table input cell {attr}={value!r} of {cell}")
+            if moved is not area:
+                planner.set(f, attr, str(moved))
+
+
+def _formula_group(kind: str, ref: CellRange) -> CellRange:
+    """The cells that belong to a ranged formula: its ``ref``, and for a data
+    table also the row of formulas above it and the column of inputs left of
+    it, which Excel keeps together with the results."""
+    if kind != "dataTable":
+        return ref
+    return CellRange.from_bounds(max(ref.min_col - 1, 1), max(ref.min_row - 1, 1), ref.max_col, ref.max_row)
+
+
+def _torn_formula_error(shift: _Shift, kind: str, ref: str, cell: str) -> FormulaGroupError:
+    message = f"{shift.describe()} would change only part of the {kind} formula range {ref} of {cell}"
+    if kind == "shared":
+        return FormulaGroupError(
+            f"{message}; Excel turns the cells it moves into separate formulas, which xlsxedit does not do"
+        )
+    return FormulaGroupError(_excel_says(message, _EXCEL_ARRAY if kind == "array" else _EXCEL_DATA_TABLE))
+
+
+def _check_span_tables(worksheet, shift: _Shift) -> list:
+    """Refuse a span shift that would move only part of a table, as Excel does;
+    return the tables it moves.
+
+    A table the shift reaches, past the shifted lines and across the span,
+    must lie in the span. One wholly past the shifted lines moves; one they
+    cut through must fill the span exactly, and then grows or shrinks by
+    rows, as in Excel. xlsxedit refuses, where Excel would not, to add or
+    delete table columns that way, or to delete a table's header row, totals
+    row or every data row.
+    """
+    reached = []
+    for table in worksheet.tables:
+        box, header, totals = table._layout()
+        name = table.display_name or table.name or str(table._part.partname)
+        what = f"table {name!r} ({table.ref})"
+        area = CellRange.from_bounds(box[0] + 1, box[1], box[2] + 1, box[3])
+        lo, hi, lo_x, hi_x = shift._extents(area)
+        if hi < shift.at or hi_x < shift.span[0] or shift.span[1] < lo_x:
+            continue  # before the shifted lines, or beside the span
+        cut = lo < shift.at if shift.inserting else lo <= shift.end
+        if not shift.span[0] <= lo_x <= hi_x <= shift.span[1] or cut and (lo_x, hi_x) != shift.span:
+            raise TableError(_excel_says(f"{shift.describe()} would move only part of {what}", _EXCEL_TABLE))
+        if cut and not shift.rows:
+            change = "add columns to" if shift.inserting else "delete columns of"
+            raise TableError(f"{shift.describe()} would {change} {what}, which xlsxedit does not do")
+        if cut and not shift.inserting:
+            first, last = box[1] + header, box[3] - totals
+            lost = None
+            if header and shift.at < first:
+                lost = "the header row"
+            elif totals and shift.end > last:
+                lost = "the totals row"
+            elif shift.at <= first and shift.end >= last:
+                lost = "every data row"
+            if lost is not None:
+                raise TableError(
+                    f"{shift.describe()} would delete {lost} of {what}, which xlsxedit does not do"
+                )
+
+        def check(ref: str, label: str) -> None:
+            area = _area(ref, label)
+            if shift.area(area) is None or shift.clamps(area):
+                raise shift.refusal(f"{label} ({ref})")
+
+        table._check_move(check)
+        reached.append(table)
+    return reached
+
+
+def _move_span_tables(tables: list, shift: _Shift) -> None:
+    """Move each of ``tables``, with its ``autoFilter`` and sort state (see
+    ``Table._move``), as ``_check_span_tables`` allowed."""
+    for table in tables:
+        table._move(lambda ref: str(shift.area(CellRange.parse(ref))))
+
+
+def _anchor_extent(anchor: etree._Element) -> tuple[CellRange, CellRange] | None:
+    """The cells a drawing anchor's ``xdr:from`` and ``xdr:to`` markers name, and
+    the cells it covers, which leave out a last column (row) that ``xdr:to``
+    reaches only at offset 0. A one-cell anchor gives its ``xdr:from`` cell,
+    leaving its size (``xdr:ext``) out, since that needs the sheet's column
+    widths and row heights; ``None`` for an absolute anchor or markers that
+    cannot be read."""
+    first = anchor.find(_XDR_FROM)
+    if first is None:
+        return None
+    last = anchor.find(_XDR_TO)
+    try:
+        col, _, row, _ = _marker(first)
+        to_col, col_off, to_row, row_off = (col, 1, row, 1) if last is None else _marker(last)
+        markers = CellRange.from_bounds(col + 1, row + 1, to_col + 1, to_row + 1)
+    except (ValueError, InvalidRangeError):
+        return None
+    cover_col = to_col if col_off or to_col == col else to_col - 1
+    cover_row = to_row if row_off or to_row == row else to_row - 1
+    return markers, CellRange.from_bounds(col + 1, row + 1, cover_col + 1, cover_row + 1)
+
+
+def _check_span_drawings(worksheet, shift: _Shift) -> None:
+    """Refuse an insert that would push a drawing object it :meth:`_Shift.carries`
+    past the grid, whatever the object's placement, as Excel does."""
+    if not shift.inserting:
+        return
+    for part in drawing_parts_for_worksheet(worksheet):
+        for anchor, _alternate in _iter_anchors(part.element, None):
+            extent = _anchor_extent(anchor)
+            if extent is None:
+                continue
+            markers, cells = extent
+            end = markers.max_row if shift.rows else markers.max_col
+            if shift.carries(cells) and end + shift.delta > shift.limit:
+                raise shift.overflow(f"the drawing object at {markers}", excel=_EXCEL_OBJECTS)
+
+
 def check_block_in_grid(
     method: str, first_row: int, first_col_idx: int, rows: int, cols: int
 ) -> None:
@@ -1495,20 +1844,25 @@ def place_cell_in_order(c: etree._Element) -> None:
 def widen_row_spans(sheet_data: etree._Element, first_row: int, last_row: int) -> None:
     """Grow the ``spans`` hint of rows ``first_row..last_row`` to cover their cells."""
     for row in sheet_data.iterchildren(_ROW):
-        spans, r = row.get("spans"), row.get("r")
-        if not spans or r is None or not r.isdigit() or not first_row <= int(r) <= last_row:
-            continue
-        intervals = _parse_spans(spans)
-        cols = [
-            _cell_column(c.get("r"), "c/@r") for c in row.iterchildren(_C) if c.get("r")
-        ]
-        if intervals is None or not cols:
-            continue
-        if all(any(lo <= col <= hi for lo, hi in intervals) for col in cols):
-            continue
-        lo = min(min(cols), *(lo for lo, _ in intervals))
-        hi = max(max(cols), *(hi for _, hi in intervals))
-        row.set("spans", f"{lo}:{hi}")
+        r = row.get("r")
+        if r is not None and r.isdigit() and first_row <= int(r) <= last_row:
+            _widen_spans(row)
+
+
+def _widen_spans(row: etree._Element) -> None:
+    """Grow the row's ``spans`` hint, if it has one, to cover its cells."""
+    spans = row.get("spans")
+    if not spans:
+        return
+    intervals = _parse_spans(spans)
+    cols = [_cell_column(c.get("r"), "c/@r") for c in row.iterchildren(_C) if c.get("r")]
+    if intervals is None or not cols:
+        return
+    if all(any(lo <= col <= hi for lo, hi in intervals) for col in cols):
+        return
+    lo = min(min(cols), *(lo for lo, _ in intervals))
+    hi = max(max(cols), *(hi for _, hi in intervals))
+    row.set("spans", f"{lo}:{hi}")
 
 
 def shift_range_ref(ref: str, at_row: int, delta: int) -> str:
