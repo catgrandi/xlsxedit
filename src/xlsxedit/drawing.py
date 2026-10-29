@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Iterator
 from lxml import etree
 from lxml.etree import _Element
 
+from xlsxedit._ooxml_ns import A16_NS, A_NS, C15_NS, CHART_EX_NS, CHART_NS, MC_NS, XDR_NS
 from xlsxedit._ooxml_order import ORDER
 from xlsxedit.merge import parse_range
 
@@ -28,14 +29,6 @@ from xlsxedit.worksheet_order import insert_ordered, insert_worksheet_child
 if TYPE_CHECKING:
     from xlsxedit.styles import Styles
     from xlsxedit.worksheet import Worksheet
-
-XDR_NS = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
-A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
-CHART_NS = "http://schemas.openxmlformats.org/drawingml/2006/chart"
-CHART_EX_NS = "http://schemas.microsoft.com/office/drawing/2014/chartex"
-C15_NS = "http://schemas.microsoft.com/office/drawing/2012/chart"
-A16_NS = "http://schemas.microsoft.com/office/drawing/2014/main"
-MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 
 _XDR_WSDR = f"{{{XDR_NS}}}wsDr"
 _XDR_TWO_CELL = f"{{{XDR_NS}}}twoCellAnchor"

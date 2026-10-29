@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from xlsxedit._ooxml_ns import CT_NS, OFFICE_REL_NS, REL_NS, SML_NS
+
 
 class CT:
     OPC_RELATIONSHIPS = "application/vnd.openxmlformats-package.relationships+xml"
@@ -72,17 +74,7 @@ class RT:
     )
 
 
-NSMAP = {
-    "ct": "http://schemas.openxmlformats.org/package/2006/content-types",
-    "pr": "http://schemas.openxmlformats.org/package/2006/relationships",
-    "main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
-    "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
-}
-
-SML_NS = NSMAP["main"]
-REL_NS = NSMAP["pr"]
-CT_NS = NSMAP["ct"]
-OFFICE_REL_NS = NSMAP["r"]
+NSMAP = {"ct": CT_NS, "pr": REL_NS, "main": SML_NS, "r": OFFICE_REL_NS}
 
 # Content-type suffixes of parts kept as bytes that a table edit parses on demand
 # (renames read pivot caches and connections, column drops read slicer caches).

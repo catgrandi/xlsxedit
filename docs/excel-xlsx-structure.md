@@ -4,6 +4,8 @@ An `.xlsx` file is not a single spreadsheet document. It is a **ZIP archive** of
 
 Use [xlsx-inspect](https://github.com/jonas-kupferschmid/xlsx-inspect) to unpack a workbook and look at the same files this document describes.
 
+For namespaces, extension URIs, child-element order and where Excel departs from the schemas, see [ooxml-schema-notes.md](ooxml-schema-notes.md).
+
 ---
 
 ## 1. Big picture

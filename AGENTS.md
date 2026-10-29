@@ -19,6 +19,8 @@ only points to where each fact lives.
 - [docs/features.md](docs/features.md): public API reference.
 - [docs/excel-xlsx-structure.md](docs/excel-xlsx-structure.md): OOXML
   package reference.
+- [docs/ooxml-schema-notes.md](docs/ooxml-schema-notes.md): namespaces,
+  extension URIs and element order, generated from the schemas.
 - [docs/large-data-export.md](docs/large-data-export.md) and
   [docs/pandas.md](docs/pandas.md): bulk export and the pandas engine.
 - [docs/design/](docs/design/README.md): specs and design documents.
