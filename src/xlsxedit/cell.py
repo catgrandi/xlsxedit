@@ -239,7 +239,12 @@ class Cell:
 
     def __repr__(self) -> str:
         element = self.__dict__.get("_element")
-        return f"<Cell {self._address if element is None else element.get('r', '')!r}>"
+        if element is not None:
+            return f"<Cell {element.get('r', '')!r}>"
+        try:
+            return f"<Cell {self._where()!r}>"
+        except GridOverflowError:
+            return f"<Cell {self._address!r}, moved past the grid>"
 
     @property
     def address(self) -> str:

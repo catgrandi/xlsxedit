@@ -265,7 +265,7 @@ def test_a_held_missing_cell_pushed_off_the_grid_raises_on_use():
     ws = wb[SHEET]
     held = ws["A1048576"]
     ws.insert_rows([["new"]], at_row=1)
-    assert repr(held) == "<Cell 'A1048576'>"
+    assert repr(held) == "<Cell 'A1048576', moved past the grid>"
     before = _saved(wb)
     for use in (
         lambda: held.value,
@@ -279,6 +279,13 @@ def test_a_held_missing_cell_pushed_off_the_grid_raises_on_use():
             use()
     assert ws._find_row_element(1048576) is None
     assert read_pkg(_saved(wb)) == read_pkg(before)
+
+
+def test_repr_follows_inserts():
+    wb = Workbook.create()
+    held = wb[SHEET]["B5"]
+    wb[SHEET].insert_rows([["new"]], at_cell="A2")
+    assert repr(held) == "<Cell 'B6'>"
 
 
 def test_a_malformed_col_does_not_stop_first_writes(unchecked_workbooks):
