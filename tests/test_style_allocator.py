@@ -400,6 +400,28 @@ def test_a_cell_with_a_value_keeps_style_zero():
     assert ws["C5"].style.bg_color is None
 
 
+def test_an_empty_cell_without_its_own_style_is_in_style_zero():
+    """Recorded in Excel 16.0.20527.20088 on 2026-10-29: an empty ``<c>`` without
+    ``s`` in a styled row or column shows in style 0, as one with a value does;
+    only a cell with no ``<c>`` shows its row's or column's style."""
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    yellow, _, green = _styled_xfs(wb)
+    _style_row(ws, 5, yellow)
+    _style_column(ws, 3, green)
+    for address in ("B5", "C9"):
+        ws._get_or_create_cell_element(address)
+    effective = wb.styles.effective_xf_index
+
+    assert [effective(ws, a) for a in ("B5", "C9", "A5", "C8")] == [0, 0, yellow, green]
+    assert ws["B5"].style.bg_color is None
+    assert ws["C9"].style.bg_color is None
+    ws.write_rows([("a", "b")], at_row=12, template_rows=5)
+    assert (ws["A12"].style_index, ws["B12"].style_index) == (str(yellow), None)
+    ws["C9"].apply_style(bold=True)
+    assert ws["C9"].style.bold and ws["C9"].style.bg_color is None
+
+
 def test_typed_date_replace_formats_a_cell_in_a_date_column():
     wb = Workbook.create()
     ws = wb["Sheet1"]

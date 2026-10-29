@@ -360,29 +360,25 @@ class Styles:
     def effective_xf_index(self, worksheet: Worksheet, address: str) -> int:
         """Return the ``cellXfs`` index that formats the cell at ``address``.
 
-        The cell's own ``s`` wins, and a cell with a value but no ``s`` is in
-        style 0, as Excel shows it. A cell with no ``<c>`` element, or an empty
-        one, takes the row's ``s`` when the row sets ``customFormat``, then the
-        ``style`` of the ``<col>`` covering its column, then 0.
+        A cell's ``<c>`` element decides: its ``s``, or style 0 without one,
+        whether or not it holds a value, as Excel shows it. A cell with no
+        ``<c>`` takes the row's ``s`` when the row sets ``customFormat``, then
+        the ``style`` of the ``<col>`` covering its column, then 0; its first
+        write through ``ws[address]`` gives it that style, as Excel does.
         """
         col, row_num = split_address(address)
         cell = worksheet._find_cell_element(join_address(col, row_num))
-        row = cell.getparent() if cell is not None else worksheet._find_row_element(row_num)
+        if cell is not None:
+            return self._cell_xf_index(cell)
         sheet_data = worksheet._part.element.find(_SHEET_DATA)
-        xf = self.resolve_xf_index(sheet_data, row, cell, col_to_index(col) + 1)
+        row = worksheet._find_row_element(row_num)
+        xf = self.resolve_xf_index(sheet_data, row, None, col_to_index(col) + 1)
         return 0 if xf is None else xf
 
     def _cell_xf_index(self, cell_element: _Element) -> int:
         """:meth:`effective_xf_index` for a ``<c>`` element already in hand."""
         s = cell_element.get("s")
-        if s is not None:
-            return int(s)
-        if len(cell_element):
-            return 0
-        row = cell_element.getparent()
-        sheet_data = row.getparent() if row is not None else None
-        xf = self.resolve_xf_index(sheet_data, row, cell_element)
-        return 0 if xf is None else xf
+        return 0 if s is None else int(s)
 
     def resolve_xf_index(
         self,
@@ -396,27 +392,19 @@ class Styles:
         The element-level form of :meth:`effective_xf_index`. ``sheet_data`` is
         the worksheet's ``<sheetData>``, ``row`` and ``cell`` the ``<row>`` and
         ``<c>`` elements (either may be absent) and ``column`` the 1-based
-        column number, read from the cell's ``r`` when omitted. Returns
-        ``None`` when nothing sets a style, including for a cell with a value
-        but no ``s``.
+        column number, which only a cell without ``<c>`` needs. Returns
+        ``None`` when nothing sets a style, including for a ``<c>`` without
+        ``s``.
         """
         if cell is not None:
             s = cell.get("s")
-            if s is not None:
-                return int(s)
-            if len(cell):
-                return None
+            return None if s is None else int(s)
         if row is not None and row.get("customFormat") in _TRUE:
             s = row.get("s")
             if s is not None:
                 return int(s)
-        if sheet_data is None:
+        if sheet_data is None or column is None:
             return None
-        if column is None:
-            address = cell.get("r") if cell is not None else None
-            if not address:
-                return None
-            column = col_to_index(split_address(address)[0]) + 1
         # CT_Worksheet places every <cols> before <sheetData>.
         for cols in sheet_data.itersiblings(_COLS, preceding=True):
             for col in cols.iterchildren(_COL):

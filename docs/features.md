@@ -137,7 +137,7 @@ An insert that would push a drawing object past row 1,048,576 or column XFD is r
 | `cell.address` | Cell address | |
 | `cell.worksheet` | Owning worksheet | |
 | `cell.offset(cols=0, rows=0)` | Neighbor cell | e.g. `offset(cols=1, rows=1)` is one right and one down |
-| `cell.style` | `CellStyle` read proxy | Effective style: the cell's own; an empty cell without one takes its row's (row formatted as a whole), else its column's; otherwise the default, as Excel shows it |
+| `cell.style` | `CellStyle` read proxy | Effective style, as Excel shows it: the cell's own, or the default when the cell has none, even when empty; a cell the sheet does not have takes its row's (row formatted as a whole), else its column's, else the default |
 | `cell.apply_style(**kwargs)` | Change only the passed style properties | `bold`, `font_color`, `bg_color`, `font_size`, …; a colour is six or eight hex digits (`#` optional) or a `Color` with an `rgb` value; builds on the effective style and keeps the current font's other properties; `False` turns bold/italic/underline off; reuses an identical existing format |
 | `cell.apply_date_format()` | Apply standard date format | Builds on the effective style |
 | `cell.apply_number_format(code)` | Apply custom number format | e.g. `"$#,##0.00"`; builds on the effective style |
