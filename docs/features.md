@@ -121,7 +121,7 @@ A corner moves when it lies in or below (right of) the first new row (column). A
 
 Sizes and positions are measured over the sheet's row heights and column widths, the `sheetFormatPr` defaults for the rest, and zero for hidden rows and columns, including the rows `zeroHeight` hides. On a sheet that hides every column (row) past its used ones, a corner that falls past the last visible one lies in the first hidden one, with the rest of the object's size as its offset. Row heights are in points, so rows match Excel exactly. Column widths are converted to pixels for Excel's default 11-point body font; Excel measures columns in the font and display of the machine that opens the file, so the computed corner of a `oneCell` or `absolute` object on a column insert can land a few pixels from where Excel would put it. The new rows have the default height, where Excel gives them the height of the row above them, so an object that keeps its size or place can end on another row than in Excel when that row is not of the default height. New columns inside a `<cols>` span take its width.
 
-An insert that would push a drawing object past row 1,048,576 or column XFD is refused, as Excel refuses one with "Cannot shift objects off sheet". `shift_drawings=False` leaves every anchor as it is, as earlier releases did; the charts' references still move. Comments and form controls, which VML drawings place, do not move.
+An insert that would push a drawing object past row 1,048,576 or column XFD is refused, as Excel refuses one (its *Insert Cells* says "Can't push objects off the sheet."). `shift_drawings=False` leaves every anchor as it is, as earlier releases did; the charts' references still move. Comments and form controls, which VML drawings place, do not move.
 
 ---
 
@@ -373,8 +373,8 @@ All library errors derive from `XlsxeditError`, so you can catch everything with
 | `XlsxeditError` | `Exception` | Base class for all xlsxedit errors |
 | `WorksheetNotFoundError` | `KeyError` | A worksheet name is not present |
 | `DuplicateWorksheetError` | `ValueError` | Adding/renaming to an existing sheet name |
-| `InvalidRangeError` | `ValueError` | Malformed cell address or range (e.g. `"A1:C3"`) |
-| `GridOverflowError` | `InvalidRangeError` | An insert or bulk write would put cells past row 1,048,576 or column XFD ([details](#inserting-rows-and-columns)) |
+| `InvalidRangeError` | `ValueError` | Malformed cell address or range (e.g. `"A1:C3"`), or a drawing anchor whose corner names no cell when an insert moves it |
+| `GridOverflowError` | `InvalidRangeError` | An insert or bulk write would put cells, or an insert a drawing object, past row 1,048,576 or column XFD ([details](#inserting-rows-and-columns)) |
 | `InvalidColorError` | `ValueError` | Invalid color value |
 | `InvalidImageError` | `ValueError` | Unsupported or corrupt image data |
 | `MissingPartError` | `RuntimeError` | A required package part is absent |

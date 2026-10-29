@@ -105,4 +105,5 @@ pd.ExcelWriter("out.xlsx", engine="xlsxedit")
 - Features: https://xlsxedit.jonasruilong.com/docs/features (in this repository: [docs/features.md](../../../docs/features.md))
 - Demo project: https://github.com/jonas-kupferschmid/xlsx-sar-test
 - Unpack XML for debugging: https://github.com/jonas-kupferschmid/xlsx-inspect
+- Raw OOXML, when debugging xlsxedit itself: [docs/ooxml-schema-notes.md](../../../docs/ooxml-schema-notes.md) (namespaces, extension URIs, element order); compare two saved files with `python scripts/inspect_workbook.py A.xlsx --semantic --compare B.xlsx`
 - Contributing to xlsxedit itself: start at the repository's [AGENTS.md](../../../AGENTS.md)
