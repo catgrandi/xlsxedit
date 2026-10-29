@@ -99,7 +99,8 @@ def test_each_placement_keeps_its_rule(rows: bool):
             for corner, was in ((anchor.start, old[name].start), (anchor.end, old[name].end)):
                 assert corner[i] in (was[i], was[i] + 2), name
         cross = 0 if rows else 2
-        assert (anchor.start[cross], anchor.end[cross]) == (old[name].start[cross], old[name].end[cross])
+        was = old[name]
+        assert (anchor.start[cross], anchor.end[cross]) == (was.start[cross], was.end[cross])
 
     if rows:  # rows 3 and 4 go in through the shapes on rows 2 to 4, above the rest
         assert new["Move and size"].end[2:] == (5, 50800)
@@ -152,7 +153,7 @@ def _froms(wb: Workbook) -> list[tuple[str, tuple[int, ...]]]:
         found.append(
             (
                 etree.QName(anchor).localname,
-                tuple(int(start.findtext(f"{_XDR}{n}")) for n in ("col", "row")) if start is not None else (),
+                () if start is None else (int(start.findtext(f"{_XDR}col")), int(start.findtext(f"{_XDR}row"))),
                 tuple(int(v) for v in pos.attrib.values()) if pos is not None else (),
                 tuple(int(v) for v in ext.attrib.values()) if ext is not None else (),
             )
