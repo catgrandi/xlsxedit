@@ -231,3 +231,42 @@ def test_writes_that_leave_nothing_restore_the_row_index(monkeypatch):
         ["A20", "C20"], ["B25", "D25"], ["B35"], ["B36"], ["B4999"], ["B5000"]
     )
     check_consistency(Workbook.open(io.BytesIO(_saved(wb))))
+
+
+def _values(ws) -> dict[str, object]:
+    return {cell.address: cell.value for cell in ws.iter_cells()}
+
+
+@pytest.mark.parametrize("read_first", [False, True], ids=["unread", "read"])
+def test_a_held_missing_cell_moves_with_inserted_rows_and_columns(read_first: bool):
+    wb = Workbook.create()
+    ws = wb[SHEET]
+    ws["A5"].value = "keep"
+    ws["C1"].value = "x"
+    below, right, filled = ws["A6"], ws["D1"], ws["B5"]
+    ws["B5"].value = 1  # through another handle, before ``filled`` binds
+    if read_first:
+        assert filled.value == 1
+    ws.insert_rows([["new"]], at_cell="A2")
+    ws.insert_columns([["new"]], at_cell="B1")
+
+    assert (below.address, right.address, filled.address) == ("A7", "E1", "C6")
+    assert filled.value == 1
+    below.value = "below"
+    right.value = "right"
+    assert _values(ws) == {
+        "A2": "new", "B1": "new", "D1": "x", "E1": "right", "A6": "keep", "C6": 1, "A7": "below",
+    }
+    check_consistency(Workbook.open(io.BytesIO(_saved(wb))))
+
+
+def test_a_held_missing_cell_pushed_off_the_grid_raises_on_use():
+    wb = Workbook.create()
+    ws = wb[SHEET]
+    held = ws["A1048576"]
+    ws.insert_rows([["new"]], at_row=1)
+    assert repr(held) == "<Cell 'A1048576'>"
+    for use in (lambda: held.value, lambda: held.address, lambda: setattr(held, "value", 1)):
+        with pytest.raises(GridOverflowError, match="moved cell A1048576 past the grid"):
+            use()
+    assert ws._find_row_element(1048576) is None

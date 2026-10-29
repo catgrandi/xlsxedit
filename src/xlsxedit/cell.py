@@ -9,9 +9,17 @@ from datetime import date, datetime
 from lxml import etree
 from lxml.etree import _Element
 
-from xlsxedit.exceptions import FormulaGroupError, InvalidRangeError
+from xlsxedit.exceptions import FormulaGroupError, GridOverflowError, InvalidRangeError
 from xlsxedit.merge import address_in_range, parse_range
 from xlsxedit.opc.constants import SML_NS
+from xlsxedit.oxml.address import (
+    MAX_COL,
+    MAX_ROW,
+    col_to_index,
+    index_to_col,
+    join_address,
+    split_address,
+)
 from xlsxedit.shared_strings import si_display_text
 from xlsxedit.styles import CellStyle, serial_to_datetime, datetime_to_serial
 from xlsxedit.hyperlinks import Hyperlink
@@ -49,7 +57,7 @@ def _marks_sheet(method: _Method) -> _Method:
     def wrapper(self: Cell, *args: Any, **kwargs: Any) -> Any:
         part = self._worksheet._part
         if "_element" not in self.__dict__:
-            self._element, undo = self._worksheet._cell_for_write(self._address)
+            self._element, undo = self._worksheet._cell_for_write(self._where())
             if undo is not None:
                 return _write_new_cell(self, undo, method, args, kwargs)
         if part.is_dirty:
@@ -176,12 +184,15 @@ class Cell:
     ``ws[address]`` also returns one where the sheet has no ``<c>``, made with
     ``element=None`` and the ``address``. Reading it changes nothing: it reads
     as an empty cell until a write, through it or any other way, creates the
-    element, which it then proxies.
+    element, which it then proxies. Until then it moves with the cells around
+    it when rows or columns are inserted, as a cell's element does.
     """
 
     def __init__(self, element: _Element | None, worksheet: Worksheet, address: str | None = None):
         if element is not None:
             self._element = element
+        else:
+            self._shifts_seen = len(worksheet._shifts)
         self._address = address
         self._worksheet = worksheet
 
@@ -190,23 +201,50 @@ class Cell:
         if name != "_element":
             raise AttributeError(name)
         element = self._bind()
-        return etree.Element(_C, r=self._address) if element is None else element
+        return etree.Element(_C, r=self._where()) if element is None else element
+
+    def _where(self) -> str:
+        """The address of a cell made without its element, moved by the inserts since.
+
+        Raises ``GridOverflowError`` once an insert has pushed it off the grid.
+        """
+        shifts = self._worksheet._shifts
+        seen = self._shifts_seen
+        if 0 <= seen < len(shifts):
+            col, row = split_address(self._address)
+            column = col_to_index(col) + 1
+            for rows, at, count in shifts[seen:]:
+                if rows and row >= at:
+                    row += count
+                elif not rows and column >= at:
+                    column += count
+            if row > MAX_ROW or column > MAX_COL:
+                seen = -1
+            else:
+                self._address = join_address(index_to_col(column - 1), row)
+                seen = len(shifts)
+            self._shifts_seen = seen
+        if seen < 0:
+            raise GridOverflowError(f"an insert moved cell {self._address} past the grid")
+        return self._address
 
     def _bind(self) -> _Element | None:
         """The cell's ``<c>``, looked up while the proxy has none; ``None`` while the sheet has none."""
         element = self.__dict__.get("_element")
         if element is None:
-            element = self._worksheet._find_cell_element(self._address)
+            element = self._worksheet._find_cell_element(self._where())
             if element is not None:
                 self._element = element
         return element
 
     def __repr__(self) -> str:
-        return f"<Cell {self.address!r}>"
+        element = self.__dict__.get("_element")
+        return f"<Cell {self._address if element is None else element.get('r', '')!r}>"
 
     @property
     def address(self) -> str:
-        return self._element.get("r", "")
+        element = self.__dict__.get("_element")
+        return self._where() if element is None else element.get("r", "")
 
     @property
     def worksheet(self) -> Worksheet:
@@ -214,13 +252,6 @@ class Cell:
 
     def offset(self, cols: int = 0, rows: int = 0) -> Cell:
         """Return the cell ``cols`` columns right and ``rows`` rows down (negative allowed)."""
-        from xlsxedit.oxml.address import (
-            col_to_index,
-            index_to_col,
-            join_address,
-            split_address,
-        )
-
         col, row = split_address(self.address)
         new_col = col_to_index(col) + cols
         new_row = row + rows
@@ -339,7 +370,7 @@ class Cell:
         styles = self._worksheet._workbook.styles
         element = self._bind()
         if element is None:
-            index = str(styles.effective_xf_index(self._worksheet, self._address))
+            index = str(styles.effective_xf_index(self._worksheet, self._where()))
         else:
             index = element.get("s")
             if index is None:
