@@ -396,7 +396,7 @@ class Styles:
             return None if s is None else int(s)
         if row is not None and row.get("customFormat") in _TRUE:
             s = row.get("s")
-            return None if s is None else int(s)
+            return int(s) if s is not None and s.isdigit() else None
         return worksheet._column_style(column)
 
     def num_format_id(self, style_index: int | str | None) -> int | None:

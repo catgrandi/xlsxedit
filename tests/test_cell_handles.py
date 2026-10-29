@@ -272,6 +272,21 @@ def test_a_held_missing_cell_pushed_off_the_grid_raises_on_use():
     assert ws._find_row_element(1048576) is None
 
 
+def test_a_malformed_col_does_not_stop_first_writes(unchecked_workbooks):
+    wb = Workbook.create()
+    ws = wb[SHEET]
+    green = wb.styles.allocate_cell_style(bg_color="FF00FF00")
+    ws.column_dimensions["B"].width = 10
+    cols = ws._part.element.find(f"{{{SML_NS}}}cols")
+    cols[0].set("style", str(green))
+    etree.SubElement(cols, f"{{{SML_NS}}}col", min="9", max="9.0", width="9", style=str(green))
+    row = ws._ensure_row(3)
+    row.attrib.update({"customFormat": "1", "s": "x"})
+    for address in ("B7", "C7", "I7", "C3"):
+        ws[address].value = 5
+    assert [ws[a].style_index for a in ("B7", "C7", "I7", "C3")] == [str(green), None, None, None]
+
+
 def test_a_formatted_row_without_a_style_puts_its_new_cells_in_style_zero():
     """Recorded in Excel 16.0.20527.20088 on 2026-10-29: in a row that sets
     ``customFormat`` without ``s``, a cell with no ``<c>`` shows in style 0, not
