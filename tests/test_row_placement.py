@@ -95,22 +95,42 @@ def test_rows_written_in_any_order_are_placed_without_a_scan(monkeypatch):
     assert _row_numbers(ws) == sorted({*range(1, 101), 125, 250, 251, 499, 500, 750, 1001})
 
 
-def test_rows_added_through_another_worksheet_object_are_respected(monkeypatch):
+def test_a_worksheet_held_across_add_worksheet_shares_the_row_index(monkeypatch):
     wb = Workbook.create()
     old = wb["Sheet1"]
     for n in (1, 5, 9):
         old[f"A{n}"].value = n
-    wb.add_worksheet("Other")  # hands out new Worksheet objects
+    wb.add_worksheet("Other")
     new = wb["Sheet1"]
+    assert new is old
     walks = _Walks(monkeypatch)
 
     new["A3"].value = 3
-    old["B4"].value = "old 4"  # the old index puts row 4 after row 1, where row 3 now is
+    old["B4"].value = "old 4"
     new["A6"].value = 6
-    old["B6"].value = "old 6"  # row 6 exists, but the old index does not know it
-    assert walks.counts["scan"] == 2
+    old["B6"].value = "old 6"
+    assert walks.counts["scan"] == 0
     assert _row_numbers(old) == [1, 3, 4, 5, 6, 9]
     assert [new[a].value for a in ("A3", "B4", "A6", "B6")] == [3, "old 4", 6, "old 6"]
+
+
+def test_rows_added_to_the_xml_behind_the_index_are_respected(monkeypatch):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    for n in (1, 5, 9):
+        ws[f"A{n}"].value = n
+    rows = {int(row.get("r")): row for row in ws._sheet_data().iterchildren(_ROW)}
+    for n, before in ((3, 5), (6, 9)):
+        row = etree.Element(_ROW, r=str(n))
+        etree.SubElement(row, f"{{{SML_NS}}}c", r=f"A{n}")
+        rows[before].addprevious(row)
+    walks = _Walks(monkeypatch)
+
+    ws["B4"].value = 4  # the index puts row 4 after row 1, where row 3 now is
+    ws["B6"].value = 6  # found once the scan above has rebuilt the index
+    assert walks.counts["scan"] == 1
+    assert _row_numbers(ws) == [1, 3, 4, 5, 6, 9]
+    assert [ws[a].value for a in ("B4", "B6")] == [4, 6]
 
 
 def test_rows_a_bulk_write_appends_are_indexed_on_first_lookup():

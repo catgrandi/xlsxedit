@@ -130,6 +130,7 @@ class Workbook:
             package = OpcPackage.open(path_or_package, large=large)
         self._package = package
         self._workbook_part: WorkbookPart = package.main_document_part()
+        self._sheets: list[Worksheet] = []
         self._refresh_sheets()
         sst_part = self._workbook_part.shared_strings_part
         self._shared_strings = (
@@ -148,10 +149,28 @@ class Workbook:
         return f"<Workbook sheets={self.sheetnames!r}>"
 
     def _refresh_sheets(self) -> None:
-        self._sheets = [
-            Worksheet(name, part, self)
-            for name, part in self._workbook_part.worksheet_parts()
-        ]
+        """Match the sheet list to the workbook part, one ``Worksheet`` per sheet.
+
+        A sheet already listed keeps its ``Worksheet``, renamed in place, so
+        an object a caller holds and ``wb[name]`` share one row and cell
+        index. The ``Worksheet`` of a sheet no longer listed is detached.
+        """
+        known: dict[WorksheetPart, list[Worksheet]] = {}
+        for ws in self._sheets:
+            known.setdefault(ws._live_part, []).append(ws)
+        sheets = []
+        for name, part in self._workbook_part.worksheet_parts():
+            same_part = known.get(part)
+            if same_part:
+                ws = same_part.pop(0)
+                ws._name = name
+            else:
+                ws = Worksheet(name, part, self)
+            sheets.append(ws)
+        for gone in known.values():
+            for ws in gone:
+                ws._detach()
+        self._sheets = sheets
         self._sheets_by_name = {ws.name: ws for ws in self._sheets}
 
     @classmethod

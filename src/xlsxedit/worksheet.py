@@ -37,7 +37,7 @@ from xlsxedit.data_validation import (
     new_data_validation,
 )
 from xlsxedit.dimensions import ColumnDimensions, RowDimensions
-from xlsxedit.exceptions import InvalidRangeError
+from xlsxedit.exceptions import InvalidRangeError, WorksheetNotFoundError
 from xlsxedit.drawing import (
     DrawingObject,
     Picture,
@@ -104,9 +104,17 @@ def _row_values(values) -> tuple | list:
 
 
 class Worksheet:
+    """A worksheet of a workbook.
+
+    The workbook keeps one ``Worksheet`` per sheet while the sheet is in it:
+    ``wb[name]`` returns the same object before and after other sheets are
+    added, copied, renamed or removed, and a rename changes its ``name``.
+    Once its sheet is removed, using it raises ``WorksheetNotFoundError``.
+    """
+
     def __init__(self, name: str, part: WorksheetPart, workbook: Workbook):
         self._name = name
-        self._part = part
+        self._live_part: WorksheetPart | None = part
         self._workbook = workbook
         self._merge_map: MergeMap | None = None
         self._column_dimensions = ColumnDimensions(self)
@@ -126,6 +134,25 @@ class Worksheet:
     def name(self) -> str:
         """Sheet name (read-only). Rename via :meth:`Workbook.rename_worksheet`."""
         return self._name
+
+    @property
+    def _part(self) -> WorksheetPart:
+        part = self._live_part
+        if part is None:
+            raise WorksheetNotFoundError(
+                f"worksheet {self._name!r} was removed from its workbook"
+            )
+        return part
+
+    def _detach(self) -> None:
+        """Called when the sheet leaves its workbook: every later use raises.
+
+        The caches go too, so that no lookup answers from them instead.
+        """
+        self._live_part = None
+        self._invalidate_bulk_indexes()
+        self._invalidate_merge_map()
+        self._table_proxies.clear()
 
     @property
     def shared_strings(self) -> SharedStringTable | None:
@@ -171,7 +198,7 @@ class Worksheet:
         A row's cells are indexed when a lookup first reaches that row, so one
         edit on a large sheet does not index every cell. Lookups check what the
         index returns and rebuild it when the XML changed underneath, as it
-        does when another ``Worksheet`` proxy of the same part writes.
+        does when the sheet's elements are edited directly.
         """
         if self._bulk_indexes_built:
             return
