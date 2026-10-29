@@ -244,7 +244,7 @@ Neither approach produces a byte-identical ZIP: the container itself (member ord
 | `shared_strings.py` | SST display text + in-place `<t>` replace |
 | `parts.py` | Registers the typed parts: workbook, worksheet, SST, styles, core properties, drawing, chart, table |
 | `row_shift.py` | Plans and applies `insert_rows` / `insert_columns`; the planner also describes deletes and shifts restricted to a span of columns or rows |
-| `range_set.py` | `ST_Ref` / `ST_Sqref` ranges and how they shift when rows or columns are inserted or deleted |
+| `range_set.py` | `ST_Ref` / `ST_Sqref` ranges and how they shift when rows or columns are inserted or deleted; an `ST_Sqref` area across a span's edge splits |
 | `opc/package.py` | Load/save orchestration |
 | `opc/pkgreader.py` | Relationship-graph walk |
 | `opc/pkgwriter.py` | ZIP write + content types |

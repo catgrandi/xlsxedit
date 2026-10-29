@@ -33,6 +33,7 @@ Several changes below are breaking, so the next release is a major one.
 - **Styles** — `Color`, and `Styles.effective_xf_index(worksheet, address)`.
 - **Data validation** — `ws.data_validations` lists a sheet's validations as `DataValidation` objects, x14 ones read-only. `ws.add_data_validation(...)` and `ws.remove_data_validation(dv)` add and remove them, and `dv.sqref` is settable; a refused edit raises the new `DataValidationError`, `InvalidRangeError` or `TypeError` and changes nothing. `SheetRangeSet` and `CellRange`, the types of `dv.sqref` and its areas, are exported.
 - **Tables** — `Table` reads and writes `display_name`, `header_row_count`, `totals_row_count`, `totals_row_shown`, `style` (a `TableStyle`) and the six table dxf ids, and reads `id`, the cell style names, `header_range`, `data_range`, `totals_range`, `first_data_row` and `last_data_row`. `table.column_objects` lists each column as a `TableColumn`. `Table.resize(ref, columns=[...])` adds and drops columns.
+- **Ranges** — `CellRange.shift_pieces` gives an area's cells after a shift restricted to a span as areas, split where the area crosses the span's edge.
 
 ### Changed
 
@@ -48,6 +49,7 @@ Several changes below are breaking, so the next release is a major one.
 - **Bulk writes** — the cells of rows a bulk write appends join the cell index only when a single-cell access reaches their row, which cuts peak memory for writing 100,000 × 8 cells by about a fifth.
 - **Search and replace** — `replace` sets `fullCalcOnLoad` when it changes a cell.
 - **Performance** — repeated `ws[...]` access no longer rescans the sheet.
+- **Ranges** — `SheetRangeSet.shift` with a `span` splits an area that crosses the span's edge, as Excel splits the range of a conditional format or validation, instead of leaving the area where it was.
 
 ### Fixed
 

@@ -17,8 +17,10 @@ area that spans every row, written ``A:A`` or as Excel's ``A1:A1048576``,
 ignores row insertion and deletion, and likewise for columns.
 
 A shift can be restricted to a span of columns (rows), as Excel's "insert
-cells, shift down" (right) is: only an area lying within the span moves. An
-area whose bounds do not change keeps its original text.
+cells, shift down" (right) is: only an area lying within the span moves. A
+range list is a set of cells, so in it an area that crosses the span's edge
+splits, its part in the span moving and the rest staying. An area whose
+bounds do not change keeps its original text.
 """
 
 from __future__ import annotations
@@ -227,6 +229,59 @@ class CellRange:
             return replace(self, min_row=moved[0], max_row=moved[1], text=None)
         return replace(self, min_col=moved[0], max_col=moved[1], text=None)
 
+    def shift_pieces(
+        self, rows: bool, at: int, delta: int, span: tuple[int, int] | None = None
+    ) -> tuple[CellRange, ...]:
+        """The area's cells after :meth:`shift`, as areas; empty when none is left.
+
+        An area that crosses an edge of ``span`` and reaches line ``at``
+        splits as Excel splits a range list, in horizontal strips: for a row
+        shift, the rows before ``at``, then the parts left and right of the
+        span from ``at`` on, then the part in the span, moved; for a column
+        shift, the rows above and below the span, then the rows in it, moved.
+        An area whose part in the span ends where it was, such as one reaching
+        the last line, keeps its text. Any other area gives what :meth:`shift`
+        gives.
+        """
+        if rows:
+            lo, hi, cross, limit = self.min_row, self.max_row, (self.min_col, self.max_col), MAX_ROW
+        else:
+            lo, hi, cross, limit = self.min_col, self.max_col, (self.min_row, self.max_row), MAX_COL
+        crosses = span is not None and (cross[0] < span[0] <= cross[1] or cross[0] <= span[1] < cross[1])
+        if not crosses or hi < at or (lo, hi) == (1, limit):
+            moved = self.shift(rows, at, delta, span)
+            return () if moved is None else (moved,)
+        c1, r1, c2, r2 = self.min_col, self.min_row, self.max_col, self.max_row
+        lo_s, hi_s = span
+        # a range, so that a part reaching the last line keeps reaching it on a delete
+        if rows:
+            part = CellRange(max(c1, lo_s), r1, min(c2, hi_s), r2)
+        else:
+            part = CellRange(c1, max(r1, lo_s), c2, min(r2, hi_s))
+        inner = part.shift(rows, at, delta, span)
+        if inner is part:
+            return (self,)
+        box = CellRange.from_bounds
+        pieces = []
+        if rows:
+            if r1 < at:
+                pieces.append(box(c1, r1, c2, at - 1))
+            top = max(r1, at)
+            if c1 < lo_s:
+                pieces.append(box(c1, top, lo_s - 1, r2))
+            if c2 > hi_s:
+                pieces.append(box(hi_s + 1, top, c2, r2))
+            if inner is not None and inner.max_row >= at:
+                pieces.append(box(inner.min_col, max(inner.min_row, at), inner.max_col, inner.max_row))
+        else:
+            if r1 < lo_s:
+                pieces.append(box(c1, r1, c2, lo_s - 1))
+            if r2 > hi_s:
+                pieces.append(box(c1, hi_s + 1, c2, r2))
+            if inner is not None:
+                pieces.append(inner)
+        return tuple(pieces)
+
     def _without(self, rows: bool, band: tuple[int, int]) -> CellRange:
         """The area less the rows (columns) ``band`` covers at one of its ends; else itself."""
         lo, hi = (self.min_row, self.max_row) if rows else (self.min_col, self.max_col)
@@ -346,8 +401,12 @@ class SheetRangeSet:
     def shift(
         self, rows: bool, at: int, delta: int, span: tuple[int, int] | None = None
     ) -> SheetRangeSet:
-        """Each area shifted by :meth:`CellRange.shift`; areas pushed off or deleted are dropped."""
-        return self._map(lambda r: r.shift(rows, at, delta, span))
+        """Each area as :meth:`CellRange.shift_pieces` leaves it: moved, split
+        across an edge of ``span``, or dropped when pushed off or deleted."""
+        pieces = [r.shift_pieces(rows, at, delta, span) for r in self._ranges]
+        if all(len(p) == 1 and p[0] is r for p, r in zip(pieces, self._ranges)):
+            return self
+        return SheetRangeSet(area for p in pieces for area in p)
 
     def shift_rows(self, at: int, count: int) -> SheetRangeSet:
         """Each area after inserting ``count`` rows before row ``at``; areas pushed off are dropped."""
