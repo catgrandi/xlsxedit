@@ -388,6 +388,8 @@ def test_a_cell_with_a_value_keeps_style_zero():
     date_xf = wb.styles.allocate_cell_style(num_format="yyyy-mm-dd")
     _style_row(ws, 5, yellow)
     _style_column(ws, 2, date_xf)
+    for address in ("C5", "B9"):  # a first write through ws[address] would take the style
+        ws._get_or_create_cell_element(address)
     ws["C5"].value = "x"
     ws["B9"].value = 45306
 

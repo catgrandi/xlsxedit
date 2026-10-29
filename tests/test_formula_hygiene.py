@@ -32,7 +32,7 @@ def _cell(pkg: dict[str, bytes], address: str) -> etree._Element:
 
 def _plant(cell, attrs: dict[str, str], inner: str) -> None:
     """Replace a cell's type and children with raw XML, keeping ``r`` and ``s``."""
-    c = cell._element
+    c = cell.worksheet._get_or_create_cell_element(cell.address)
     for child in list(c):
         c.remove(child)
     for name in [n for n in c.attrib if n not in ("r", "s")]:

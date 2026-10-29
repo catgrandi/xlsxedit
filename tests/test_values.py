@@ -114,7 +114,7 @@ def test_non_formula_junk_v_does_not_raise():
 
     # Numeric-typed cell (no t) with non-numeric <v> must not raise.
     cell = ws["A1"]
-    _ensure_v(cell._element).text = "#REF!"
+    _ensure_v(ws._get_or_create_cell_element("A1")).text = "#REF!"
     assert cell.value == "#REF!"
 
 

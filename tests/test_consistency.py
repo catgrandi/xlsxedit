@@ -546,7 +546,7 @@ def test_insert_rows_stays_inside_the_grid():
 def test_insert_rows_moves_array_formula_refs():
     wb = Workbook.create()
     ws = wb.worksheets[0]
-    f = etree.SubElement(ws["D2"]._element, f"{{{SML_NS}}}f", t="array", ref="D2:D3")
+    f = etree.SubElement(ws._get_or_create_cell_element("D2"), f"{{{SML_NS}}}f", t="array", ref="D2:D3")
     f.text = "A2:A3*2"
     ws.insert_rows([[None], [None]], at_row=1)
     check_consistency(wb)
