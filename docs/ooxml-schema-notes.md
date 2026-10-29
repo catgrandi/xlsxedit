@@ -528,3 +528,17 @@ Chart parts that Excel writes are not schema-valid. `CHART_ALLOWLIST` in
 order before validation:
 
 - Excel writes c:extLst before c:showDLblsOverMax in CT_Chart (fixtures/ChartsAndTables.xlsx, xl/charts/chart1.xml and chart2.xml); src/xlsxedit/templates/default-bar-chart.xml copies that chart.
+
+## Checking what changed
+
+To check an edit by meaning rather than by bytes, compare the workbook
+before and after it:
+
+```bash
+python scripts/inspect_workbook.py before.xlsx --semantic --compare after.xlsx
+```
+
+A re-serialised copy compares equal; any change in content is reported aspect
+by aspect, with exit status 1. The docstring of
+[`scripts/inspect_workbook.py`](../scripts/inspect_workbook.py) lists the
+aspects.

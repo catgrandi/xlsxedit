@@ -620,6 +620,23 @@ Chart parts that Excel writes are not schema-valid. `CHART_ALLOWLIST` in
 order before validation:
 """
 
+_NOTES_INSPECT = """\
+## Checking what changed
+
+To check an edit by meaning rather than by bytes, compare the workbook
+before and after it:
+
+```bash
+python scripts/inspect_workbook.py before.xlsx --semantic --compare after.xlsx
+```
+
+A re-serialised copy compares equal; any change in content is reported aspect
+by aspect, with exit status 1. The docstring of
+[`scripts/inspect_workbook.py`](../scripts/inspect_workbook.py) lists the
+aspects.
+"""
+
+
 def _order_section(
     level: str, filename: str, type_name: str, children: tuple[str, ...]
 ) -> list[str]:
@@ -671,6 +688,7 @@ def render_notes() -> str:
         lines += [f"### `{type_name}`", "", _code_list(enumeration(filename, type_name)), ""]
     lines.append(_NOTES_DEVIATIONS)
     lines += [f"- {reason}." for reason, _ in CHART_ALLOWLIST]
+    lines += ["", _NOTES_INSPECT.rstrip("\n")]
     return "\n".join(lines) + "\n"
 
 
