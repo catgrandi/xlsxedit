@@ -98,6 +98,15 @@ def _write_new_cell(
     return result
 
 
+def _date_or_number(numeric: int | float) -> Any:
+    """A number in a date format as a ``datetime``, or as the number itself when no
+    ``datetime`` can hold it, as for a serial past 9999-12-31, which Excel shows as ``#``."""
+    try:
+        return serial_to_datetime(float(numeric))
+    except (OverflowError, ValueError):
+        return numeric
+
+
 def _ref_contains(ref: str | None, address: str) -> bool:
     if not ref:
         return False
@@ -463,7 +472,7 @@ class Cell:
                 return v == "1"
             numeric = _coerce_numeric_cache(v)
             if isinstance(numeric, (int, float)) and self.style.is_date:
-                return serial_to_datetime(float(numeric))
+                return _date_or_number(numeric)
             return numeric
         t = self.data_type
         if t == "s":
@@ -491,7 +500,7 @@ class Cell:
             return v
         numeric = _coerce_numeric_cache(v)
         if isinstance(numeric, (int, float)) and self.style.is_date:
-            return serial_to_datetime(float(numeric))
+            return _date_or_number(numeric)
         return numeric
 
     @value.setter
