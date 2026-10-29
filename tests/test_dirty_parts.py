@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import inspect
 import io
 
 import pytest
 from lxml import etree
 
-from xlsxedit import Workbook
+import xlsxedit
+from xlsxedit import Workbook, Worksheet
 from xlsxedit.opc import part as part_module
 from xlsxedit.opc.constants import CT, SML_NS
 from xlsxedit.opc.part import XmlPart
@@ -63,16 +65,79 @@ def test_an_edited_part_releases_its_source_bytes():
     assert ws._part._orig_blob is None
 
 
-@pytest.mark.parametrize("large", [False, True], ids=["eager", "deferred"])
-@pytest.mark.parametrize("name", INSPECT_FIXTURES)
-def test_reading_marks_no_part_dirty(name: str, large: bool):
-    wb = Workbook.open(INSPECT_FIXTURES[name], large=large)
+ALL_FIXTURES = {"Book1": BOOK1, **INSPECT_FIXTURES}
+_API_TYPES = tuple(
+    obj for obj in vars(xlsxedit).values() if isinstance(obj, type) and obj.__name__ in xlsxedit.__all__
+)
+
+
+def _read_properties(obj, seen: dict[int, object]) -> None:
+    """Read every public property of ``obj``, and of the API objects and lists they
+    return, except the way back to a ``Workbook`` or ``Worksheet``."""
+    if id(obj) in seen:
+        return
+    seen[id(obj)] = obj  # kept alive, so that its id is not reused
+    if isinstance(obj, (list, tuple)):
+        for item in obj:
+            _read_properties(item, seen)
+        return
+    if not isinstance(obj, _API_TYPES) or isinstance(obj, (Workbook, Worksheet)):
+        return
+    for name, _ in inspect.getmembers(type(obj), lambda member: isinstance(member, property)):
+        if not name.startswith("_"):
+            _read_properties(getattr(obj, name), seen)
+
+
+def _read_everything(wb: Workbook) -> None:
+    """Every public read API, including ``ws[address]`` on cells the sheet does not have."""
+    seen: dict[int, object] = {}
+    wb.sheetnames, wb.orphan_partnames, wb.shared_strings
+    _read_properties(wb.properties, seen)
+    first = next((c.value for ws in wb for c in ws.iter_cells() if c.value is not None), "x")
+    assert wb.find(first) is not None or isinstance(first, float)
+    wb.findall(first), wb.find("absent from every fixture")
     for ws in wb.worksheets:
-        ws.values()
-        for cell in ws.cells:
-            cell.value, cell.formula, cell.style.num_format
-        ws.merged_ranges, ws.images, ws.charts, ws.tables
+        assert wb[ws.name] is ws
+        ws.values(), ws.values(errors_as_nan=True, max_rows=3), list(ws.iter_rows())
+        ws.find(first), ws.findall(first), ws.merged_ranges
+        for prop in ("cells", "tables", "data_validations", "conditional_formatting"):
+            _read_properties(getattr(ws, prop), seen)
+        for prop in ("drawing_objects", "images", "charts"):
+            _read_properties(getattr(ws, prop), seen)
+        addresses = {"A1", "B2", "XFD1", "A1048576", "XFD1048576"}
+        for cell in ws.iter_cells():
+            addresses |= {cell.address, cell.offset(cols=1).address, cell.offset(rows=1).address}
+        for address in sorted(addresses):
+            cell = ws[address]
+            _read_properties(cell, seen)
+            ws.column_dimensions[address.rstrip("0123456789")].width
+            ws.row_dimensions[int(address.lstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))].height
+
+
+@pytest.mark.parametrize("large", [False, True], ids=["eager", "deferred"])
+@pytest.mark.parametrize("name", ALL_FIXTURES)
+def test_reading_marks_no_part_dirty(name: str, large: bool):
+    """Reading through every public read API changes no part, so the save that
+    follows writes every member as the source holds it (#44)."""
+    source = read_pkg(ALL_FIXTURES[name])
+    wb = Workbook.open(ALL_FIXTURES[name], large=large)
+    _read_everything(wb)
     assert _dirty_parts(wb) == []
+    assert read_pkg(_saved_bytes(wb)) == source
+
+
+@pytest.mark.parametrize("large", [False, True], ids=["eager", "deferred"])
+@pytest.mark.parametrize("name", ALL_FIXTURES)
+def test_the_pandas_reader_changes_no_member(name: str, large: bool):
+    pd = pytest.importorskip("pandas")
+    from xlsxedit import pandas_io
+
+    pandas_io.register()
+    source = ALL_FIXTURES[name].read_bytes()
+    with pd.ExcelFile(io.BytesIO(source), engine="xlsxedit", engine_kwargs={"large": large}) as xl:
+        pd.read_excel(xl, sheet_name=None, header=None)
+        assert _dirty_parts(xl.book) == []
+        assert read_pkg(_saved_bytes(xl.book)) == read_pkg(source)
 
 
 def _filled() -> bytes:
