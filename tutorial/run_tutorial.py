@@ -294,8 +294,9 @@ def main() -> None:
     # ws.insert_columns(cols, *, at_col=… | at_cell=…) -> int
     # cols = sequence of column vectors (each top→bottom).
     # Shifts merges / CF / tables / column widths to the right.
-    # Moves conditional-format, validation and chart references; does not rewrite cell
-    # formulas or move drawing anchors (same as insert_rows).
+    # Moves conditional-format, validation and chart references and, by their placement,
+    # drawing anchors (shift_drawings=False keeps them); does not rewrite cell formulas
+    # (same as insert_rows).
     n_cols = invoice.insert_columns([("Note", "from tutorial")], at_col="C")
     print(f"insert_columns wrote {n_cols} column(s); C1={invoice['C1'].value!r}, C2={invoice['C2'].value!r}")
 
