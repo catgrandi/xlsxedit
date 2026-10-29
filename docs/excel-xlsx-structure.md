@@ -610,7 +610,7 @@ Each image is an `xdr:twoCellAnchor` or `xdr:oneCellAnchor` in `drawingN.xml`.
 | `col`, `row` | 0-based grid index (col 0 = A, row 0 = row 1) |
 | `colOff`, `rowOff` | Offset within cell in **EMU** (English Metric Units); 914400 EMU = 1 inch |
 | `to` | Opposite corner — defines bounding box with `from` |
-| `editAs` | `oneCell` = move/size with top-left cell when rows/columns change |
+| `editAs` | How the object follows its cells when rows or columns are inserted, deleted or resized: `twoCell` (the default) moves and sizes with them, `oneCell` moves but keeps its size, `absolute` does neither. Excel writes all three placements on a `twoCellAnchor` |
 | `a:ext cx, cy` | Explicit size in EMUs inside `spPr/xfrm` |
 
 **oneCellAnchor** — top-left cell plus explicit width/height (`xdr:ext`).
@@ -684,7 +684,7 @@ column widths  +  row heights  +  from/to cell indices  +  colOff/rowOff (EMU)
 So if you widen column C in `CustomCellSize` or a template:
 
 - **`twoCellAnchor` (most images and charts):** the object **stretches** with the cells between `from` and `to`. Wider/taller cells → larger displayed image/chart box. The drawing XML does not need to change; Excel recalculates layout on render.
-- **`editAs="oneCell"`** (e.g. `images.xlsx` sheet1): top-left corner moves with the anchor cell when rows/columns are inserted; width/height still depend on distance to `to` corner.
+- **`editAs="oneCell"`** (e.g. `images.xlsx` sheet1): the box is still drawn between `from` and `to`, but when rows or columns are inserted Excel moves the top-left corner with its cell and writes a new `to` that keeps the size; `editAs="absolute"` keeps both corners where they are on the page.
 - **`oneCellAnchor`:** position from one cell + explicit `cx`/`cy` size — less sensitive to distant column widths.
 
 **Implications for xlsxedit / image SAR:**
@@ -694,7 +694,7 @@ So if you widen column C in `CustomCellSize` or a template:
 | Text SAR only | Low — preserve `<cols>` and row `ht` siblings; drawing bytes unchanged ✓ |
 | Change column width in code | Image/chart **visual size shifts** unless you also adjust `to`/`from` or `a:ext` |
 | Place image at `{logo}` in column C | Must respect column C `width` when computing anchor EMUs |
-| Insert rows/columns | Anchors with `editAs="oneCell"` move; `twoCell` anchors may need recalculation |
+| Insert rows/columns | Every anchor must move or be recomputed by its `editAs`; [Drawings on inserts](features.md#drawings-on-inserts) says what xlsxedit does |
 
 **Recommended:** add a combined fixture later (`CustomCellSize` + image on wide column C) to test image SAR after column resize. For now, fidelity test `CustomCellSize.xlsx` for `<cols>` + `ht` preservation.
 

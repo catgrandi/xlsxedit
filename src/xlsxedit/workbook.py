@@ -23,6 +23,7 @@ from xlsxedit.drawing import (
     Chart,
     assign_new_object_ids,
     ensure_drawing_part,
+    _SheetGrid,
     _px_to_emu,
     _set_from_offset_emu,
     _validate_offset_px,
@@ -59,7 +60,6 @@ from xlsxedit.worksheet import Worksheet
 register_part_types()
 
 _XDR_TWO_CELL = f"{{{_XDR_NS}}}twoCellAnchor"
-_XDR_ONE_CELL = f"{{{_XDR_NS}}}oneCellAnchor"
 _XDR_GRAPHIC_FRAME = f"{{{_XDR_NS}}}graphicFrame"
 _C_CHART = f"{{{_CHART_NS}}}chart"
 _TABLE_PARTS = f"{{{SML_NS}}}tableParts"
@@ -68,7 +68,6 @@ _XDR_FROM = f"{{{_XDR_NS}}}from"
 _XDR_TO = f"{{{_XDR_NS}}}to"
 _XDR_COL = f"{{{_XDR_NS}}}col"
 _XDR_ROW = f"{{{_XDR_NS}}}row"
-_XDR_EXT = f"{{{_XDR_NS}}}ext"
 _XDR_CNVPR = f"{{{_XDR_NS}}}cNvPr"
 _A_EXT = f"{{{_A_NS}}}ext"
 
@@ -697,38 +696,38 @@ class Workbook:
             max_width=max_width,
             max_height=max_height,
         )
-        data = path.read_bytes()
-        ext = path.suffix.lower().lstrip(".") or "jpeg"
-        ct = mimetypes.types_map.get(f".{ext}", CT.JPEG)
+        col, row = split_address(anchor)
 
-        media_partname = self._package.next_partname("/xl/media/image%d." + ext)
-        media_part = Part(media_partname, ct, data, self._package)
-        self._package._add_part(media_part)
-
+        # Excel's own anchor for an inserted picture: two cells, moving with them
+        # but keeping its size. Placed before the package changes, so a picture
+        # that would pass the edge of the sheet changes nothing.
         template_path = _default_xlsx_path().parent / "default-picture-anchor.xml"
-        anchor_elm = parse_template_xml(template_path.read_bytes()).find(_XDR_ONE_CELL)
+        anchor_elm = parse_template_xml(template_path.read_bytes()).find(_XDR_TWO_CELL)
         if anchor_elm is None:
             raise ValueError("picture anchor template missing")
-        drawing_part = ensure_drawing_part(ws)
-
-        col, row = split_address(anchor)
         from_elm = anchor_elm.find(_XDR_FROM)
-        if from_elm is not None:
-            from_elm.find(_XDR_COL).text = str(col_to_index(col))
-            from_elm.find(_XDR_ROW).text = str(row - 1)
+        from_elm.find(_XDR_COL).text = str(col_to_index(col))
+        from_elm.find(_XDR_ROW).text = str(row - 1)
         _set_from_offset_emu(anchor_elm, _px_to_emu(offset_x), _px_to_emu(offset_y))
-
         cx, cy = int(display_w * EMU_PER_PIXEL), int(display_h * EMU_PER_PIXEL)
-        ext_elm = anchor_elm.find(_XDR_EXT)
-        if ext_elm is not None:
-            ext_elm.set("cx", str(cx))
-            ext_elm.set("cy", str(cy))
+        try:
+            _SheetGrid(ws).place_to(anchor_elm, cx, cy)
+        except ValueError:
+            raise ValueError(f"a picture anchored at {anchor!r} would pass the edge of the sheet") from None
         sp_pr = anchor_elm.find(f".//{{{_XDR_NS}}}spPr")
         if sp_pr is not None:
             a_ext = sp_pr.find(f".//{_A_EXT}")
             if a_ext is not None:
                 a_ext.set("cx", str(cx))
                 a_ext.set("cy", str(cy))
+
+        data = path.read_bytes()
+        ext = path.suffix.lower().lstrip(".") or "jpeg"
+        ct = mimetypes.types_map.get(f".{ext}", CT.JPEG)
+        media_partname = self._package.next_partname("/xl/media/image%d." + ext)
+        media_part = Part(media_partname, ct, data, self._package)
+        self._package._add_part(media_part)
+        drawing_part = ensure_drawing_part(ws)
 
         pic_name = name or path.stem
         cnv = anchor_elm.find(f".//{_XDR_CNVPR}")

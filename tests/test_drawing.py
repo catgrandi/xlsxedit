@@ -291,7 +291,7 @@ def test_resize_creates_xfrm_as_first_sppr_child(png: Path):
 
     pic.height = 70
 
-    sp_pr = _drawing_xml(_reopen(wb)).find(f"{_XDR}oneCellAnchor/{_XDR}pic/{_XDR}spPr")
+    sp_pr = _drawing_xml(_reopen(wb)).find(f"{_XDR}twoCellAnchor/{_XDR}pic/{_XDR}spPr")
     assert etree.QName(sp_pr[0]).localname == "xfrm"
     assert [etree.QName(e).localname for e in sp_pr[0]] == ["ext"]
     assert sp_pr[0][0].get("cy") == str(70 * EMU_PER_PIXEL)
@@ -304,22 +304,53 @@ def test_resize_drops_a_bare_ext_left_by_older_releases(png: Path):
 
     pic.width = 60
 
-    sp_pr = _drawing_xml(_reopen(wb)).find(f"{_XDR}oneCellAnchor/{_XDR}pic/{_XDR}spPr")
+    sp_pr = _drawing_xml(_reopen(wb)).find(f"{_XDR}twoCellAnchor/{_XDR}pic/{_XDR}spPr")
     assert sp_pr.find(f"{_A}ext") is None
     assert sp_pr.find(f"{_A}xfrm/{_A}ext").get("cx") == str(60 * EMU_PER_PIXEL)
     assert_valid_package(wb)
 
 
 def test_one_cell_picture_resize_sets_anchor_ext_and_xfrm(png: Path):
-    wb = Workbook.create()
-    pic = wb["Sheet1"].add_image(png, anchor="B2", width=40, height=40)
+    wb = _walker_workbook(png)
+    pic = next(pic for pic in wb["Sheet1"].images if pic.name == "one")
     pic.width = 120
 
     anchor = _drawing_xml(_reopen(wb)).find(f"{_XDR}oneCellAnchor")
     cx = str(120 * EMU_PER_PIXEL)
     assert anchor.find(f"{_XDR}ext").get("cx") == cx
     assert anchor.find(f"{_XDR}pic/{_XDR}spPr/{_A}xfrm/{_A}ext").get("cx") == cx
-    assert _reopen(wb)["Sheet1"].images[0].width == 120
+    assert next(p for p in _reopen(wb)["Sheet1"].images if p.name == "one").width == 120
+
+
+def test_an_added_picture_moves_with_its_cells_and_keeps_its_size(png: Path):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws.column_dimensions["B"].width = 9.140625  # 64 px
+    ws.row_dimensions[3].height = 30  # 40 px
+    pic = ws.add_image(png, anchor="B2", width=100, height=50, offset_x=4, offset_y=2)
+
+    anchor = _drawing_xml(_reopen(wb)).find(f"{_XDR}twoCellAnchor")
+    assert anchor.get("editAs") == "oneCell"
+    assert pic.placement == "oneCell"
+    assert _marker(anchor, "from") == (1, 4 * EMU_PER_PIXEL, 1, 2 * EMU_PER_PIXEL)
+    # 4 + 100 px from B: 64 px of B, then 40 px into C; 2 + 50 px from row 2: 20 px of
+    # row 2, 30 px into the 40 px row 3 (Excel's default 15 pt row is 20 px here).
+    assert _marker(anchor, "to") == (2, 40 * EMU_PER_PIXEL, 2, 32 * EMU_PER_PIXEL)
+    assert (pic.width, pic.height) == (100, 50)
+    size = _size(_box(ws, pic._anchor))
+
+    ws.insert_rows([[]] * 2, at_row=3)
+    assert _marker(pic._anchor, "from")[2] == 1
+    assert _size(_box(ws, pic._anchor)) == size
+    assert_valid_package(wb)
+
+
+def test_a_picture_past_the_edge_of_the_sheet_adds_nothing(png: Path):
+    wb = Workbook.create()
+    before = read_pkg(wb)
+    with pytest.raises(ValueError, match="would pass the edge of the sheet"):
+        wb["Sheet1"].add_image(png, anchor="A1048576", width=40, height=40)
+    assert read_pkg(wb) == before
 
 
 def _box(ws, anchor: etree._Element) -> tuple[int, int, int, int]:

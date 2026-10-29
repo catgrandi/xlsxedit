@@ -70,7 +70,7 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | `ws.findall(value)` | All matching cells as `list[Cell]` | `[]` if none |
 | `ws.drawing_objects` | Every drawing object as `DrawingObject` | Pictures, charts, shapes, groups, slicers, …; see [Drawing objects](#drawing-objects) |
 | `ws.images` | List of `Picture` | Read existing drawings |
-| `ws.add_image(path, *, anchor, width, height, name, offset_x, offset_y)` | Insert image | Pixel offsets within anchor cell (default 0) |
+| `ws.add_image(path, *, anchor, width, height, name, offset_x, offset_y)` | Insert image | Pixel offsets within anchor cell (default 0); anchored as Excel anchors an inserted picture, see [Picture](#picture) |
 | `ws.charts` | List of `Chart` | |
 | `ws.add_chart(type, *, anchor, data_range, title, name, to_anchor)` | Add bar chart | `chart_type="bar"` today; flush from template; ``to_anchor`` optional end cell |
 | `ws.tables` | List of [`Table`](#table) | The same object for a table on every call |
@@ -178,7 +178,7 @@ Setting `anchor`, `offset_x` or `offset_y` keeps the offsets that are not set. A
 
 A picture inside a group cannot be moved, offset, or resized, and one with an absolute anchor cannot be moved or offset: those setters raise `ValueError`, as does a move that would put a corner outside the sheet.
 
-Each picture `add_image` creates gets a `cNvPr/@id` unique within the drawing part and a fresh `a16:creationId`.
+`add_image` anchors a picture as Excel anchors one it inserts: a two-cell anchor placed `oneCell`, whose bottom-right corner is computed from the picture's size over the sheet's column widths and row heights. A picture that would pass the edge of the sheet raises `ValueError` and adds nothing. Each picture `add_image` creates gets a `cNvPr/@id` unique within the drawing part and a fresh `a16:creationId`.
 
 ---
 
