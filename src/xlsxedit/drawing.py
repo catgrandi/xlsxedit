@@ -6,9 +6,10 @@ import math
 import mimetypes
 import re
 import uuid
+from bisect import bisect_right
 from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING, Iterable, Iterator
 
 from lxml import etree
 from lxml.etree import _Element
@@ -242,67 +243,101 @@ def _col_width_emu(width: float) -> int:
     return int(((256 * width + int(128 / mdw)) / 256) * mdw) * EMU_PER_PIXEL
 
 
-class _SheetGrid:
-    """Column widths and row heights of a worksheet, in EMU, for two-cell anchors.
+class _Axis:
+    """Sizes in EMU of a sheet's ``count`` rows or columns, 0-based: ``runs`` of
+    lines ``(lo, hi, size)`` with their own size, ``default`` elsewhere.
 
-    Pixel widths assume Excel's default 11-point body font. Hidden columns and
-    rows are zero wide or high, as Excel draws them.
+    A position is a distance in EMU from the sheet's top (left) edge. A line of
+    size zero, such as a hidden row, takes no room, so no position lies in it.
     """
 
-    def __init__(self, worksheet: Worksheet):
-        root = worksheet._part.element
-        fmt = root.find(_SHEET_FORMAT_PR)
-        default_width = fmt.get("defaultColWidth") if fmt is not None else None
-        if default_width is not None:
-            self._default_col = _col_width_emu(float(default_width))
-        else:
-            base = float(fmt.get("baseColWidth", "8")) if fmt is not None else 8.0
-            # Excel rounds a default column up to a multiple of 8 pixels.
-            px = math.ceil((base * _MAX_DIGIT_WIDTH_PX + 5) / 8) * 8
-            self._default_col = px * EMU_PER_PIXEL
+    def __init__(self, runs: Iterable[tuple[int, int, int]], default: int, count: int):
+        self.default = default
+        self.count = count
+        self.runs: list[tuple[int, int, int]] = []
+        segments = []  # (first line, lines, size, start position), covering every line
+        line = position = 0
+        for lo, hi, size in sorted(runs):
+            lo, hi = max(lo, line), min(hi, count - 1)  # a run keeps only what earlier ones left
+            if lo > hi:
+                continue
+            if lo > line:
+                segments.append((line, lo - line, default, position))
+                position += (lo - line) * default
+            segments.append((lo, hi - lo + 1, size, position))
+            self.runs.append((lo, hi, size))
+            position += (hi - lo + 1) * size
+            line = hi + 1
+        if line < count:
+            segments.append((line, count - line, default, position))
+        self._segments = segments
+        self._firsts = [segment[0] for segment in segments]
+        self._sized = [segment for segment in segments if segment[2] > 0]
+        self._starts = [segment[3] for segment in self._sized]
+
+    def start(self, index: int) -> int:
+        """Position of the top (left) edge of line ``index``."""
+        first, _lines, size, position = self._segments[max(bisect_right(self._firsts, index) - 1, 0)]
+        return position + (index - first) * size
+
+    def locate(self, position: int) -> tuple[int, int] | None:
+        """``(line, offset)`` of ``position``: a position on a gridline is the start of
+        the line below it, as Excel writes it. ``None`` past the last line."""
+        k = bisect_right(self._starts, position) - 1
+        if k < 0:
+            return None
+        first, lines, size, start = self._sized[k]
+        n, offset = divmod(position - start, size)
+        return (first + n, offset) if n < lines else None
+
+
+def sheet_axis(worksheet: Worksheet, *, rows: bool) -> _Axis:
+    """The worksheet's rows (``rows=True``) or columns, from its row heights, its
+    ``<cols>`` and the ``sheetFormatPr`` defaults. Pixel widths assume Excel's
+    default 11-point body font; hidden columns and rows are zero wide or high,
+    as Excel draws them."""
+    root = worksheet._part.element
+    fmt = root.find(_SHEET_FORMAT_PR)
+    runs = []
+    if rows:
         default_height = fmt.get("defaultRowHeight") if fmt is not None else None
-        self._default_row = round(float(default_height or 15) * _EMU_PER_POINT)
-
-        self._cols: list[tuple[int, int, int]] = []
-        cols = root.find(_COLS)
-        for col in cols.iterchildren(_COL) if cols is not None else ():
-            if col.get("hidden") in ("1", "true"):
-                emu = 0
-            elif col.get("width") is not None:
-                emu = _col_width_emu(float(col.get("width")))
-            else:
-                emu = self._default_col
-            self._cols.append((int(col.get("min", "1")) - 1, int(col.get("max", "1")) - 1, emu))
-
-        self._rows: dict[int, int] = {}
+        default = round(float(default_height or 15) * _EMU_PER_POINT)
         sheet_data = root.find(_SHEET_DATA)
         number = 0
         for row in sheet_data.iterchildren(_ROW) if sheet_data is not None else ():
             number = int(row.get("r") or number + 1)
             if row.get("hidden") in ("1", "true"):
-                self._rows[number - 1] = 0
+                runs.append((number - 1, number - 1, 0))
             elif row.get("ht") is not None:
-                self._rows[number - 1] = round(float(row.get("ht")) * _EMU_PER_POINT)
+                runs.append((number - 1, number - 1, round(float(row.get("ht")) * _EMU_PER_POINT)))
+        return _Axis(runs, default, _MAX_ROW)
 
-    def col_emu(self, index: int) -> int:
-        for low, high, emu in self._cols:
-            if low <= index <= high:
-                return emu
-        return self._default_col
+    default_width = fmt.get("defaultColWidth") if fmt is not None else None
+    if default_width is not None:
+        default = _col_width_emu(float(default_width))
+    else:
+        base = float(fmt.get("baseColWidth", "8")) if fmt is not None else 8.0
+        # Excel rounds a default column up to a multiple of 8 pixels.
+        default = math.ceil((base * _MAX_DIGIT_WIDTH_PX + 5) / 8) * 8 * EMU_PER_PIXEL
+    cols = root.find(_COLS)
+    for col in cols.iterchildren(_COL) if cols is not None else ():
+        if col.get("hidden") in ("1", "true"):
+            emu = 0
+        elif col.get("width") is not None:
+            emu = _col_width_emu(float(col.get("width")))
+        else:
+            emu = default
+        runs.append((int(col.get("min", "1")) - 1, int(col.get("max", "1")) - 1, emu))
+    return _Axis(runs, default, _MAX_COL)
 
-    def row_emu(self, index: int) -> int:
-        return self._rows.get(index, self._default_row)
 
-    def _end(self, size_of, limit: int, index: int, offset: int, length: int) -> tuple[int, int]:
-        remaining = offset + length
-        while True:
-            size = size_of(index)
-            if remaining < size:
-                return index, remaining
-            if index == limit - 1:
-                raise ValueError("the resized object would extend beyond the sheet")
-            remaining -= size
-            index += 1
+class _SheetGrid:
+    """Column widths and row heights of a worksheet, in EMU, for two-cell anchors
+    (see :func:`sheet_axis`)."""
+
+    def __init__(self, worksheet: Worksheet):
+        self.cols = sheet_axis(worksheet, rows=False)
+        self.rows = sheet_axis(worksheet, rows=True)
 
     @staticmethod
     def _corners(anchor: _Element) -> tuple[_Element, _Element]:
@@ -315,17 +350,19 @@ class _SheetGrid:
         """Set ``xdr:to`` of a two-cell ``anchor`` to ``cx`` by ``cy`` EMU from ``xdr:from``."""
         from_elm, to_elm = self._corners(anchor)
         col, col_off, row, row_off = _marker(from_elm)
-        to_col, to_col_off = self._end(self.col_emu, _MAX_COL, col, col_off, cx)
-        to_row, to_row_off = self._end(self.row_emu, _MAX_ROW, row, row_off, cy)
-        _set_marker(to_elm, to_col, to_col_off, to_row, to_row_off)
+        to_col = self.cols.locate(self.cols.start(col) + col_off + cx)
+        to_row = self.rows.locate(self.rows.start(row) + row_off + cy)
+        if to_col is None or to_row is None:
+            raise ValueError("the resized object would extend beyond the sheet")
+        _set_marker(to_elm, *to_col, *to_row)
 
     def extent(self, anchor: _Element) -> tuple[int, int]:
         """``(cx, cy)`` in EMU of the box between ``xdr:from`` and ``xdr:to``."""
         from_elm, to_elm = self._corners(anchor)
         col, col_off, row, row_off = _marker(from_elm)
         to_col, to_col_off, to_row, to_row_off = _marker(to_elm)
-        cx = sum(self.col_emu(i) for i in range(col, to_col)) - col_off + to_col_off
-        cy = sum(self.row_emu(i) for i in range(row, to_row)) - row_off + to_row_off
+        cx = self.cols.start(to_col) + to_col_off - self.cols.start(col) - col_off
+        cy = self.rows.start(to_row) + to_row_off - self.rows.start(row) - row_off
         return max(0, cx), max(0, cy)
 
 
