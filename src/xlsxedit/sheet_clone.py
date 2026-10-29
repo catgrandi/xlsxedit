@@ -19,6 +19,7 @@ _DIGITS_RE = re.compile(r"(\d+)(\.[^/]+)?$")
 _PLAIN_SHEET_NAME = re.compile(r"[^\W\d][\w.]*")
 # Unquoted, these would read as a cell, an R1C1 reference or a boolean.
 _READS_AS_REFERENCE = re.compile(r"[a-z]{1,3}\d+|r\d*c?\d*|c\d*|true|false", re.IGNORECASE)
+_DEFINED_NAME_TOKEN = re.compile(r"[^\W\d][\w.?\\]*|\\[\w.?\\]*")
 
 _SHARE_RELTYPES = {RT.IMAGE}
 _SHARE_CONTENT_TYPES = {CT.STYLES, CT.SHARED_STRINGS, CT.THEME, CT.WORKBOOK}
@@ -112,17 +113,24 @@ def sheet_prefix(name: str) -> str:
 
 
 def repoint_sheet_refs(text: str, old_name: str, new_name: str) -> str:
-    """``text`` with every reference qualified with sheet ``old_name`` qualified with
-    ``new_name`` instead; other sheets, 3D spans and other workbooks stay."""
-    out = []
-    after_bracket = False
-    for m in _FORMULA_TOKEN_RE.finditer(text):
-        token = m.group(0)
-        qref = m.group("qref")
-        if qref is not None and not after_bracket and _same_sheet(m.group("sheet"), old_name):
-            token = f"{sheet_prefix(new_name)}!{qref}"
-        out.append(token)
-        after_bracket = m.group("bracket") is not None
+    """``text`` with every reference and sheet-scoped name qualified with sheet
+    ``old_name`` qualified with ``new_name`` instead; other sheets, 3D spans and
+    other workbooks stay."""
+    tokens = list(_FORMULA_TOKEN_RE.finditer(text))
+    out = [m.group(0) for m in tokens]
+    for i, m in enumerate(tokens):
+        if i and tokens[i - 1].group("bracket") is not None:
+            continue  # a sheet of another workbook
+        if m.group("qref") is not None:
+            if _same_sheet(m.group("sheet"), old_name):
+                out[i] = f"{sheet_prefix(new_name)}!{m.group('qref')}"
+        elif (
+            i + 2 < len(tokens)
+            and out[i + 1] == "!"
+            and _DEFINED_NAME_TOKEN.fullmatch(out[i + 2])
+            and _same_sheet(out[i], old_name)
+        ):
+            out[i] = sheet_prefix(new_name)  # a name scoped to the sheet: Sheet1!Sales
     return "".join(out)
 
 
@@ -141,9 +149,13 @@ def refresh_cloned_drawings(cloned: list[Part], old_name: str, new_name: str) ->
                 creation_id.set("id", f"{{{str(uuid.uuid4()).upper()}}}")
 
 
-def local_defined_name_copies(workbook, source_index: int, dest_index: int) -> list:
+def local_defined_name_copies(
+    workbook, source_index: int, dest_index: int, source_name: str, dest_name: str
+) -> list:
     """Copies of the definedNames with ``localSheetId`` equal to ``source_index``,
-    scoped to ``dest_index``; :func:`append_defined_names` adds them to the workbook."""
+    scoped to ``dest_index``, their references to sheet ``source_name`` naming
+    ``dest_name`` instead, as Excel copies them; :func:`append_defined_names` adds
+    them to the workbook."""
     block = workbook._workbook_part.element.find(_DEFINED_NAMES)
     if block is None:
         return []
@@ -154,6 +166,8 @@ def local_defined_name_copies(workbook, source_index: int, dest_index: int) -> l
             continue
         clone = deepcopy(elm)
         clone.set("localSheetId", str(dest_index))
+        if clone.text:
+            clone.text = repoint_sheet_refs(clone.text, source_name, dest_name)
         copies.append(clone)
     return copies
 

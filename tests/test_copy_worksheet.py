@@ -5,9 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from lxml import etree
 
 from xlsxedit import DuplicateWorksheetError, Workbook, WorksheetNotFoundError
 from xlsxedit.drawing import A16_NS, chart_references, drawing_parts_for_worksheet
+from xlsxedit.opc.constants import SML_NS
 from xlsxedit.sheet_clone import repoint_sheet_refs, sheet_prefix
 from tests.conftest import INSPECT_FIXTURES
 from tests.schema_validate import assert_valid_package
@@ -122,6 +124,20 @@ def test_copy_worksheet_keeps_references_to_other_sheets():
     ]
 
 
+def test_copy_worksheet_points_its_names_and_named_series_at_the_copy():
+    wb = Workbook.open(INSPECT_FIXTURES["ChartsAndTables"])
+    names = wb._workbook_part.element.find(f"{{{SML_NS}}}definedNames")
+    for local_id, text in (("0", "'bar chart'!$B$3:$B$6"), ("1", "'line chart'!$B$3:$B$12")):
+        name = etree.SubElement(names, f"{{{SML_NS}}}definedName", name="Sales", localSheetId=local_id)
+        name.text = text
+    chart_references(wb["bar chart"].charts[0]._chart_root())[2].text = "'bar chart'!Sales"
+    wb.copy_worksheet("bar chart", "Copy")
+    assert _chart_refs(wb, "Copy")[2] == "Copy!Sales"
+    copied = [n for n in names.iterfind(f"{{{SML_NS}}}definedName") if n.get("localSheetId") == "3"]
+    assert [(n.get("name"), n.text) for n in copied] == [("Sales", "Copy!$B$3:$B$6")]
+    assert_valid_package(wb)
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
@@ -132,6 +148,11 @@ def test_copy_worksheet_keeps_references_to_other_sheets():
         ("'Sheet1:Sheet3'!$A$1", "'Sheet1:Sheet3'!$A$1"),
         ("[1]Sheet1!$A$1", "[1]Sheet1!$A$1"),
         ("(Sheet1!$A$1,Sheet10!$B$1)", "('Data 2'!$A$1,Sheet10!$B$1)"),
+        ("Sheet1!Sales", "'Data 2'!Sales"),
+        ("'Sheet1'!_Sales.2024", "'Data 2'!_Sales.2024"),
+        ("[1]Sheet1!Sales", "[1]Sheet1!Sales"),
+        ("Other!Sales", "Other!Sales"),
+        ('"Sheet1!Sales"&Sheet1!A1', """"Sheet1!Sales"&'Data 2'!A1"""),
     ],
 )
 def test_repoint_sheet_refs(text: str, expected: str):

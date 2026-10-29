@@ -637,10 +637,10 @@ class Workbook:
     def copy_worksheet(self, name: str, new_name: str) -> Worksheet:
         """Duplicate an existing worksheet (cells, styles, merges, sheet-owned parts).
 
-        The copy's charts plot the copy's cells where the source's charts plotted
-        the source's. The copy is built before the workbook refers to it: if
-        building it raises, the parts added so far are removed and nothing has
-        changed.
+        The copy's charts and its own defined names refer to the copy where the
+        source's referred to the source (see ``docs/features.md``). The copy is
+        built before the workbook refers to it: if building it raises, the parts
+        added so far are removed and nothing has changed.
         """
         from xlsxedit.sheet_clone import (
             append_defined_names,
@@ -657,7 +657,9 @@ class Workbook:
         source = self._sheets_by_name[name]
         source_index = list(self.sheetnames).index(name)
         sheet_id = self._workbook_part.next_sheet_id()
-        defined_names = local_defined_name_copies(self, source_index, len(self._sheets))
+        defined_names = local_defined_name_copies(
+            self, source_index, len(self._sheets), name, new_name
+        )
         element = deepcopy(source._part.element)
         partname = self._package.next_partname("/xl/worksheets/sheet%d.xml")
         part = WorksheetPart(partname, source._part.content_type, element, self._package)
