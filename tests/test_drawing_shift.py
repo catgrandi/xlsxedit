@@ -20,8 +20,8 @@ from tests.schema_validate import assert_valid_package
 from tests.test_drawing import _walker_workbook, png  # noqa: F401 (fixture)
 from tests.test_excel_reference import REFERENCE, assert_matches_excel
 from xlsxedit import Workbook
-from xlsxedit.drawing import XDR_NS, drawing_parts_for_worksheet, sheet_axis
-from xlsxedit.drawing_shift import DrawingShift, anchor_in_span
+from xlsxedit.drawing import XDR_NS, _Axis, drawing_parts_for_worksheet, sheet_axis
+from xlsxedit.drawing_shift import DrawingShift, anchor_extent
 from xlsxedit.exceptions import GridOverflowError, InvalidRangeError
 from xlsxedit.row_shift import _Shift
 
@@ -243,33 +243,85 @@ def test_an_anchor_that_names_no_cell_refuses_the_insert():
 # --- spans ------------------------------------------------------------------
 
 
-def test_anchor_in_span():
-    whole = _Shift(True, 3, 2)
-    assert all(anchor_in_span(whole, col, row) for col in (0, 5, 16383) for row in (0, 9))
-    rows_in_b_to_d = _Shift(True, 3, 2, span=(2, 4))
-    assert [anchor_in_span(rows_in_b_to_d, col, 0) for col in range(6)] == [
-        False, True, True, True, False, False,
-    ]  # fmt: skip
-    cols_in_rows_5_to_9 = _Shift(False, 3, 2, span=(5, 9))
-    assert [anchor_in_span(cols_in_rows_5_to_9, 0, row) for row in (3, 4, 8, 9)] == [
-        False, True, True, False,
-    ]  # fmt: skip
-
-
-def test_a_span_shift_moves_only_the_anchors_inside_it():
+def test_a_span_shift_moves_only_the_anchors_it_carries():
+    """Excel's *Insert Cells* moves an object only when every column it covers
+    lies in the span and it starts at or below the first new row (recorded
+    2026-10-29, see ``_Shift.carries``): one the new rows cut through stays."""
     wb = Workbook.open(INSPECT_FIXTURES["DrawingAnchors"])
     ws = wb["Anchors"]
     old = _anchors(wb, "Anchors")
     DrawingShift(ws, _Shift(True, 3, 2, span=(2, 4))).apply()  # cells B3:D down two rows
     new = _anchors(wb, "Anchors")
-    assert new["Move and size"].end[2] == old["Move and size"].end[2] + 2
+    assert new["Move and size"] == old["Move and size"]  # rows 2-4: the new rows cut it
+    assert new["Move"] == old["Move"]  # rows 2-4 as well
     assert new["Absolute"] == old["Absolute"]  # column E
-    assert new["Connector"] == old["Connector"]  # column E
-    assert new["Move"] == old["Move"]  # its top stays and the rows keep their heights
+    assert new["Connector"] == old["Connector"]  # columns E:G
+    for name in ("Text box", "Group", "Chart"):  # wholly in B:D, below row 3
+        assert new[name].start[2] == old[name].start[2] + 2, name
+        assert new[name].end[2] == old[name].end[2] + 2, name
     assert new["Picture"].start[2] == old["Picture"].start[2] + 2
     top, bottom = _span(wb, "Anchors", new["Picture"], rows=True)
     old_top, old_bottom = _span(wb, "Anchors", old["Picture"], rows=True)
     assert bottom - top == old_bottom - old_top  # the rows did not move, the picture did
+
+
+def test_a_one_cell_anchor_covers_the_cells_its_size_reaches():
+    wb = Workbook.open(INSPECT_FIXTURES["DrawingAnchors"])
+    ws = wb["Anchors"]
+    root = drawing_parts_for_worksheet(ws)[0].element
+    anchor = next(a for a in root if etree.QName(a).localname == "twoCellAnchor")
+    one_cell = etree.fromstring(
+        f'<xdr:oneCellAnchor xmlns:xdr="{XDR_NS}"><xdr:from><xdr:col>1</xdr:col>'
+        "<xdr:colOff>0</xdr:colOff><xdr:row>20</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>"
+        f'<xdr:ext cx="{3 * 609600}" cy="{2 * 190500}"/></xdr:oneCellAnchor>'
+    )
+    axes = {rows: sheet_axis(ws, rows=rows) for rows in (True, False)}
+    markers, cells = anchor_extent(one_cell, axes.__getitem__)
+    assert cells.min_col == 2 and cells.min_row == 21
+    assert cells.max_col > cells.min_col and cells.max_row > cells.min_row
+    assert anchor_extent(one_cell)[1] == anchor_extent(one_cell)[0]  # no axes: its from cell
+    assert anchor_extent(anchor) is not None
+
+
+
+def _one_cell_anchor(col: int, row: int, cx: int, cy: int) -> etree._Element:
+    return etree.fromstring(
+        f'<xdr:oneCellAnchor xmlns:xdr="{XDR_NS}"><xdr:from><xdr:col>{col}</xdr:col>'
+        f"<xdr:colOff>0</xdr:colOff><xdr:row>{row}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>"
+        f'<xdr:ext cx="{cx}" cy="{cy}"/></xdr:oneCellAnchor>'
+    )
+
+
+def test_a_one_cell_anchor_that_ends_on_a_gridline_covers_only_its_own_lines():
+    """Its far cell holds its last EMU: not the line past the gridline, nor a hidden
+    column there, and an object filling the last row stays on the grid."""
+    width, height = 609600, 190500
+    rows = _Axis([], height, 1_048_576)
+    cols_c_hidden = _Axis([(2, 2, 0)], width, 16_384)
+    axes = {True: rows, False: cols_c_hidden}.__getitem__
+    markers, cells = anchor_extent(_one_cell_anchor(1, 4, width, height), axes)
+    assert str(markers) == str(cells) == "B5"
+    markers, cells = anchor_extent(_one_cell_anchor(1, 1_048_574, width, height), axes)
+    assert str(cells) == "B1048575" and markers.max_row == 1_048_575
+
+@pytest.mark.parametrize(("name", "at_row"), [("Absolute", 1), ("Move", 3)])
+def test_rows_an_insert_writes_are_visible_on_a_sheet_that_hides_unused_rows(name, at_row):
+    """With ``zeroHeight``, a row the sheet does not list is hidden, but the rows an
+    insert writes are listed: an absolute object keeps its place on the page and
+    a move-only object keeps its size, measured over the rows as saved."""
+    wb = Workbook.open(INSPECT_FIXTURES["DrawingAnchors"])
+    ws = wb["Anchors"]
+    ws._part.element.find(f"{{{ws._part.element.nsmap[None]}}}sheetFormatPr").set("zeroHeight", "1")
+    for row in range(1, 35):
+        ws[f"A{row}"].value = 1
+    before = _span(wb, "Anchors", _anchors(wb, "Anchors")[name], rows=True)
+    ws.insert_rows([[1]], at_row=at_row)
+    after = _span(wb, "Anchors", _anchors(wb, "Anchors")[name], rows=True)
+    if name == "Absolute":
+        assert after == before
+    else:
+        assert after[1] - after[0] == before[1] - before[0]
+    assert_valid_package(wb)
 
 
 def test_bulk_inserts_take_shift_drawings(tmp_path: Path):

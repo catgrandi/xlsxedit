@@ -105,7 +105,7 @@ They refuse an insert, changing nothing, by raising:
 
 Values aimed at cells that a merge covers follow the rule in [large-data-export.md](large-data-export.md).
 
-Both methods move whole rows (columns), as Excel's *Insert Sheet Rows* does. Excel's *Insert Cells* and *Delete Cells*, which shift only the cells in some columns (rows) and leave the rest of the sheet in place, exist as an internal step, `xlsxedit.row_shift.shift_cells`, for table row inserts to build on. No public method runs it yet. Its docstring describes what it moves and the cases it refuses, which follow Excel's own refusals.
+Both methods move whole rows (columns), as Excel's *Insert Sheet Rows* does. Excel's *Insert Cells* and *Delete Cells*, which shift only the cells in some columns (rows) and leave the rest of the sheet in place, exist as an internal step, `xlsxedit.row_shift.shift_cells`, for table row inserts to build on. No public method runs it yet. Its docstring describes what it moves and the cases it refuses, which follow Excel's own refusals. Unlike the inserts below, it moves a drawing object only when every column (row) the object covers lies in the span and the object starts at or after the first new row (column), as Excel's *Insert Cells* does.
 
 #### Drawings on inserts
 
