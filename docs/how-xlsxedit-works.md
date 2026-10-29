@@ -240,7 +240,7 @@ Neither approach produces a byte-identical ZIP: the container itself (member ord
 | `conditional_formatting.py` | CF list and `cellIs` add |
 | `data_validation.py` | Data-validation list, add and remove; x14 rules read-only |
 | `drawing.py` | `Picture`, `Chart` and `DrawingObject` proxies; walks a drawing's anchors, groups and `mc:AlternateContent`; measures a sheet's rows and columns in EMU |
-| `drawing_shift.py` | Moves drawing anchors with an insert or a delete by their `editAs` placement; `InsertPlan` plans it with the rest of an insert |
+| `drawing_shift.py` | Moves drawing anchors with an insert or a delete by their `editAs` placement; `InsertPlan` plans it with the rest of an insert, and `shift_cells` for the objects a span shift carries |
 | `table.py` | `Table`, `TableColumn` and `TableStyle` over a live table part: resize, header and totals rows, and the name and range checks `add_table` and `write_dataframe` share |
 | `shared_strings.py` | SST display text + in-place `<t>` replace |
 | `parts.py` | Registers the typed parts: workbook, worksheet, SST, styles, core properties, drawing, chart, table |

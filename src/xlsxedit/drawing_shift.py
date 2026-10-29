@@ -11,13 +11,15 @@ A shift is a :class:`xlsxedit.row_shift._Shift`. A ``oneCell`` or
 ``absolute`` anchor keeps its size or place in EMU, measured over the sheet's
 row heights and column widths before the shift and placed over those after
 it, which the shift implies: lines keep their size as they move, and inserted
-lines take what the moved ``<col>`` spans (columns) or the default height
-(rows) give them. :class:`DrawingShift` computes every change, raising before
+lines take what the moved ``<col>`` spans give them (columns) or, for rows,
+the height of a row the sheet lists when the insert writes them, else the
+height of an unlisted row (none on a sheet that hides unused rows). :class:`DrawingShift` computes every change, raising before
 anything changes, and ``apply`` only assigns the result.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import cached_property
 from typing import TYPE_CHECKING
 
@@ -33,15 +35,18 @@ from xlsxedit.drawing import (
     _XDR_ROW,
     _XDR_ROWOFF,
     _XDR_TO,
+    _SHEET_FORMAT_PR,
     _Axis,
     _iter_anchors,
     _iter_cnvpr,
     _marker,
+    _row_defaults,
     drawing_parts_for_worksheet,
     sheet_axis,
 )
 from xlsxedit.exceptions import InvalidRangeError
 from xlsxedit.opc.constants import OFFICE_REL_NS
+from xlsxedit.range_set import CellRange
 
 if TYPE_CHECKING:
     from xlsxedit.row_shift import _Shift
@@ -50,15 +55,50 @@ _Marker = tuple[int, int]  # (line, offset in EMU) on the shifted axis
 _MARKER_TAGS = (_XDR_COL, _XDR_COLOFF, _XDR_ROW, _XDR_ROWOFF)
 
 
-def anchor_in_span(shift: _Shift, col: int, row: int) -> bool:
-    """Whether ``shift`` moves an anchor whose top-left cell is 0-based
-    ``(col, row)``: a shift restricted to a span of columns (rows) moves only
-    the anchors whose column (row) lies inside it. A whole-row or whole-column
-    shift moves every anchor."""
-    if shift.span is None:
-        return True
-    lo, hi = shift.span
-    return lo <= (col if shift.rows else row) + 1 <= hi
+def anchor_extent(
+    anchor: etree._Element, axis: Callable[[bool], _Axis] | None = None
+) -> tuple[CellRange, CellRange] | None:
+    """The cells a drawing anchor's corners name, and the cells it covers, which
+    leave out a last column (row) that its far corner reaches only at offset 0.
+
+    An ``xdr:oneCellAnchor`` has no ``xdr:to``: given ``axis``, which returns
+    the sheet's rows for ``True`` and its columns for ``False`` (see
+    :func:`xlsxedit.drawing.sheet_axis`), its far cell is the one holding the
+    object's last EMU, measured from its ``xdr:ext`` size, so an object that
+    ends on a gridline covers neither the line past it nor a hidden line
+    there; without ``axis`` or a readable size it is its ``xdr:from`` cell.
+    ``None`` for an absolute anchor or markers that cannot be read."""
+    first = anchor.find(_XDR_FROM)
+    if first is None:
+        return None
+    last = anchor.find(_XDR_TO)
+    try:
+        col, from_col_off, row, from_row_off = _marker(first)
+        if last is not None:
+            to_col, col_off, to_row, row_off = _marker(last)
+        else:
+            to_col, col_off, to_row, row_off = col, 1, row, 1
+            size = _one_cell_size(anchor)
+            if axis is not None and size is not None:
+                right = axis(False).advance(col, from_col_off + max(size[0] - 1, 0))
+                bottom = axis(True).advance(row, from_row_off + max(size[1] - 1, 0))
+                if right is not None and bottom is not None:
+                    (to_col, _), (to_row, _) = right, bottom  # lines that hold its last EMU
+        markers = CellRange.from_bounds(col + 1, row + 1, to_col + 1, to_row + 1)
+    except (ValueError, InvalidRangeError):
+        return None
+    cover_col = to_col if col_off or to_col == col else to_col - 1
+    cover_row = to_row if row_off or to_row == row else to_row - 1
+    return markers, CellRange.from_bounds(col + 1, row + 1, cover_col + 1, cover_row + 1)
+
+
+def _one_cell_size(anchor: etree._Element) -> tuple[int, int] | None:
+    """``(cx, cy)`` of an anchor's ``xdr:ext``, ``None`` when absent or unreadable."""
+    ext = anchor.find(_XDR_EXT)
+    try:
+        return int(ext.get("cx")), int(ext.get("cy"))
+    except (AttributeError, TypeError, ValueError):
+        return None
 
 
 def _shifted_runs(axis: _Axis, shift: _Shift) -> list[tuple[int, int, int]]:
@@ -89,11 +129,18 @@ class DrawingShift:
     cannot read. ``apply`` then sets the planned markers, removes the anchors a
     delete takes away with the relationships only they used, and marks the
     changed drawing parts.
+
+    A shift with a ``span`` (Excel's *Insert Cells* and *Delete Cells*) moves
+    only the objects it :meth:`~xlsxedit.row_shift._Shift.carries`, as Excel
+    does. ``new_lines_listed`` says an insert writes its new rows, so they
+    have the height of a row the sheet lists even where unlisted rows are
+    hidden (``sheetFormatPr/@zeroHeight``).
     """
 
-    def __init__(self, worksheet, shift: _Shift):
+    def __init__(self, worksheet, shift: _Shift, *, new_lines_listed: bool = False):
         self._worksheet = worksheet
         self._shift = shift
+        self._new_lines_listed = new_lines_listed
         self._at = shift.at - 1  # 0-based first line of the band
         self._end = shift.end - 1  # 0-based last line of the band
         self._sets: list[tuple[etree._Element, str]] = []
@@ -125,7 +172,20 @@ class DrawingShift:
         if self._shift.span is not None:
             return self._before
         before = self._before
-        return _Axis(_shifted_runs(before, self._shift), before.default, before.count)
+        runs = _shifted_runs(before, self._shift)
+        if self._new_lines_listed and self._shift.rows and self._shift.inserting:
+            listed, _ = _row_defaults(self._worksheet._part.element.find(_SHEET_FORMAT_PR))
+            if listed != before.default:
+                runs.append((self._at, self._end, listed))
+        return _Axis(runs, before.default, before.count)
+
+    @cached_property
+    def _across(self) -> _Axis:
+        """The sheet's lines across the shift: its columns for a row shift."""
+        return sheet_axis(self._worksheet, rows=not self._shift.rows)
+
+    def _sheet_axis(self, rows: bool) -> _Axis:
+        return self._before if rows == self._shift.rows else self._across
 
     def _place(self, position: int, what: str) -> _Marker:
         found = self._after.locate(position)
@@ -187,8 +247,10 @@ class DrawingShift:
             return False
         what = f"drawing object {_anchor_name(anchor)!r}"
         start = _read_marker(from_elm, what)
-        if not anchor_in_span(self._shift, start[0], start[2]):
-            return False
+        if self._shift.span is not None:
+            extent = anchor_extent(anchor, self._sheet_axis)
+            if extent is None or not self._shift.carries(extent[1]):
+                return False
         top = self._axis_part(start)
         if anchor.tag == _XDR_ONE_CELL:
             new_top = self._move(top, top=None, what=what)

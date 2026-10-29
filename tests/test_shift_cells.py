@@ -20,8 +20,10 @@ from xlsxedit.drawing import _iter_anchors, drawing_parts_for_worksheet
 from xlsxedit.opc.constants import SML_NS
 from xlsxedit.oxml.address import index_to_col
 from xlsxedit.range_set import CellRange
-from xlsxedit.row_shift import CellShiftPlan, _anchor_extent, _Shift, shift_cells
+from xlsxedit.drawing_shift import anchor_extent
+from xlsxedit.row_shift import CellShiftPlan, _Shift, shift_cells
 from xlsxedit.worksheet_order import insert_worksheet_child
+from tests import excel_facts as facts
 from tests.conftest import INSPECT_FIXTURES
 from tests.preservation import assert_preserved, check_consistency, read_pkg
 from tests.schema_validate import assert_valid_package
@@ -142,10 +144,25 @@ def test_the_fixture_chart_moves_only_with_a_band_over_every_column_it_covers():
     ``xdr:to`` marker reaches column F at offset 0, so it covers A:E."""
     ws = Workbook.open(INSPECT_FIXTURES["TableWithContentBelow"])["Report"]
     (anchor, _), = _iter_anchors(drawing_parts_for_worksheet(ws)[0].element, None)
-    markers, cells = _anchor_extent(anchor)
+    markers, cells = anchor_extent(anchor)
     assert (str(markers), str(cells)) == ("A10:F24", "A10:E23")
     assert not _cells("A7:D7", "down").carries(cells)
     assert _cells("A7:E7", "down").carries(cells)
+
+
+def test_shift_cells_moves_the_fixture_chart_as_excel_did():
+    """Insert cells A7:E7 moved the chart one row in Excel (2026-10-29); A7:D7 left it."""
+    for ref, moved in (("A7:D7", 0), ("A7:E7", 1)):
+        wb = Workbook.open(INSPECT_FIXTURES["TableWithContentBelow"])
+        ws = wb["Report"]
+        drawing = drawing_parts_for_worksheet(ws)[0]
+        (anchor, _), = _iter_anchors(drawing.element, None)
+        old = anchor_extent(anchor)[0]
+        shift_cells(ws, _cells(ref, "down"))
+        new = anchor_extent(anchor)[0]
+        assert (new.min_row, new.max_row) == (old.min_row + moved, old.max_row + moved), ref
+        assert (new.min_col, new.max_col) == (old.min_col, old.max_col)
+        assert check_consistency(read_pkg(wb)) == []
 
 
 # -- moving the cells ---------------------------------------------------------
@@ -376,15 +393,26 @@ def test_an_object_pushed_off_the_sheet_is_refused_as_in_excel_whatever_its_plac
 
 
 def test_an_absolute_object_in_the_shifted_region_does_not_block():
-    """Excel leaves it where it is on the page; its anchor is not touched here."""
+    """Excel leaves it where it is on the page (2026-10-29); the two-cell connector
+    below it, wholly in E:G, moves down with the cells."""
     wb = Workbook.open(INSPECT_FIXTURES["DrawingAnchors"])
     ws = wb["Anchors"]
     for address in ("E3", "F3", "G9"):
         ws[address].value = 1
     before = read_pkg(wb)
+    old = facts.drawings_by_name(facts.Book(before))["Anchors"]
     shift_cells(ws, _cells("E1:G1", "down"))
     assert ws["E4"].value == 1 and ws["G10"].value == 1
-    assert_preserved(before, read_pkg(wb), expected_changed={"xl/worksheets/sheet1.xml", "xl/workbook.xml"})
+    after = read_pkg(wb)
+    assert_preserved(
+        before,
+        after,
+        expected_changed={"xl/worksheets/sheet1.xml", "xl/workbook.xml", "xl/drawings/drawing1.xml"},
+    )
+    new = facts.drawings_by_name(facts.Book(after))["Anchors"]
+    assert new["Absolute"] == old["Absolute"]
+    assert new["Connector"].start[2] == old["Connector"].start[2] + 1
+    assert new["Connector"].end[2] == old["Connector"].end[2] + 1
 
 
 def test_notes_in_the_shifted_region_do_not_block():

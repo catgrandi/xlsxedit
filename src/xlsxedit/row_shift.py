@@ -39,15 +39,13 @@ from lxml import etree
 from xlsxedit.bulk_styles import normalize_style_spec
 from xlsxedit.cell import _refuse_range_formula_edit
 from xlsxedit.drawing import (
-    _XDR_FROM,
-    _XDR_TO,
     _iter_anchors,
-    _marker,
     chart_parts,
     chart_references,
     drawing_parts_for_worksheet,
+    sheet_axis,
 )
-from xlsxedit.drawing_shift import DrawingShift
+from xlsxedit.drawing_shift import DrawingShift, anchor_extent
 from xlsxedit.exceptions import (
     FormulaGroupError,
     GridOverflowError,
@@ -1201,6 +1199,7 @@ class InsertPlan:
         cells: tuple[list, int] | None = None,
         *,
         shift_drawings: bool = True,
+        rows_written: bool = False,
     ):
         if not ins.inserting or ins.span is not None:
             raise ValueError("InsertPlan carries out inserts of whole rows or columns only")
@@ -1227,7 +1226,8 @@ class InsertPlan:
         planner.defined_names(workbook)
         planner.charts(workbook)
         if shift_drawings:
-            planner.after(DrawingShift(worksheet, ins).apply)
+            drawings = DrawingShift(worksheet, ins, new_lines_listed=rows_written)
+            planner.after(drawings.apply)
         planner.after(workbook._invalidate_calc_chain)
         planner.after(workbook.set_full_calc_on_load)
         self._planner = planner
@@ -1307,10 +1307,17 @@ class InsertPlan:
 
 
 def plan_insert_rows(
-    worksheet, at_row: int, count: int, *, shift_drawings: bool = True
+    worksheet,
+    at_row: int,
+    count: int,
+    *,
+    shift_drawings: bool = True,
+    rows_written: bool = False,
 ) -> InsertPlan:
-    """Plan inserting ``count`` rows before row ``at_row`` (1-based)."""
-    return InsertPlan(worksheet, _Shift(True, at_row, count), shift_drawings=shift_drawings)
+    """Plan inserting ``count`` rows before row ``at_row`` (1-based);
+    ``rows_written`` says the insert then writes a ``<row>`` for each."""
+    shift = _Shift(True, at_row, count)
+    return InsertPlan(worksheet, shift, shift_drawings=shift_drawings, rows_written=rows_written)
 
 
 def plan_insert_columns(
@@ -1341,8 +1348,9 @@ class CellShiftPlan:
     and a row left with no cells and no attributes of its own goes, as in
     Excel. The sheet's other structures move as :class:`_Planner` moves them
     for a span, and its tables as Excel moves them (``_check_span_tables``).
-    Cell formulas, comments and drawing anchors stay, as for an
-    :class:`InsertPlan`.
+    Its drawing objects move as Excel moves them, which is only those the
+    shift :meth:`_Shift.carries` (see ``DrawingShift``). Cell formulas and
+    comments stay, as for an :class:`InsertPlan`.
 
     Building the plan reads what an ``InsertPlan`` reads and the sheet's
     drawings, and raises before anything changes: ``GridOverflowError`` for
@@ -1379,6 +1387,7 @@ class CellShiftPlan:
         tables = _check_span_tables(worksheet, shift)
         planner.after(partial(_move_span_tables, tables, shift))
         _check_span_drawings(worksheet, shift)
+        planner.after(DrawingShift(worksheet, shift).apply)
         planner.defined_names(workbook)
         planner.charts(workbook)
         planner.after(workbook._invalidate_calc_chain)
@@ -1620,36 +1629,21 @@ def _move_span_tables(tables: list, shift: _Shift) -> None:
         table._move(lambda ref: str(shift.area(CellRange.parse(ref))))
 
 
-def _anchor_extent(anchor: etree._Element) -> tuple[CellRange, CellRange] | None:
-    """The cells a drawing anchor's ``xdr:from`` and ``xdr:to`` markers name, and
-    the cells it covers, which leave out a last column (row) that ``xdr:to``
-    reaches only at offset 0. A one-cell anchor gives its ``xdr:from`` cell,
-    leaving its size (``xdr:ext``) out, since that needs the sheet's column
-    widths and row heights; ``None`` for an absolute anchor or markers that
-    cannot be read."""
-    first = anchor.find(_XDR_FROM)
-    if first is None:
-        return None
-    last = anchor.find(_XDR_TO)
-    try:
-        col, _, row, _ = _marker(first)
-        to_col, col_off, to_row, row_off = (col, 1, row, 1) if last is None else _marker(last)
-        markers = CellRange.from_bounds(col + 1, row + 1, to_col + 1, to_row + 1)
-    except (ValueError, InvalidRangeError):
-        return None
-    cover_col = to_col if col_off or to_col == col else to_col - 1
-    cover_row = to_row if row_off or to_row == row else to_row - 1
-    return markers, CellRange.from_bounds(col + 1, row + 1, cover_col + 1, cover_row + 1)
-
-
 def _check_span_drawings(worksheet, shift: _Shift) -> None:
     """Refuse an insert that would push a drawing object it :meth:`_Shift.carries`
     past the grid, whatever the object's placement, as Excel does."""
     if not shift.inserting:
         return
+    axes: dict[bool, object] = {}
+
+    def axis(rows: bool):
+        if rows not in axes:
+            axes[rows] = sheet_axis(worksheet, rows=rows)
+        return axes[rows]
+
     for part in drawing_parts_for_worksheet(worksheet):
         for anchor, _alternate in _iter_anchors(part.element, None):
-            extent = _anchor_extent(anchor)
+            extent = anchor_extent(anchor, axis)
             if extent is None:
                 continue
             markers, cells = extent

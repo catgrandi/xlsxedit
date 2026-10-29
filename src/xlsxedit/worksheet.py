@@ -870,7 +870,9 @@ class Worksheet:
             string_columns=string_columns,
             has_shared_strings=self.shared_strings is not None,
         )
-        plan = plan_insert_rows(self, at_row, count, shift_drawings=shift_drawings)
+        plan = plan_insert_rows(
+            self, at_row, count, shift_drawings=shift_drawings, rows_written=bool(width)
+        )
         template_maps = self._resolve_template_style_maps(
             template_rows=template_rows, start_col_idx=start_col_idx, row_list=row_list
         )
