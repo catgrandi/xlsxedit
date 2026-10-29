@@ -270,3 +270,35 @@ def test_a_span_shift_moves_only_the_anchors_inside_it():
     top, bottom = _span(wb, "Anchors", new["Picture"], rows=True)
     old_top, old_bottom = _span(wb, "Anchors", old["Picture"], rows=True)
     assert bottom - top == old_bottom - old_top  # the rows did not move, the picture did
+
+
+def test_bulk_inserts_take_shift_drawings(tmp_path: Path):
+    pd = pytest.importorskip("pandas")
+    import shutil
+
+    import xlsxedit.pandas_io as xpi
+
+    xpi.register()
+    source = INSPECT_FIXTURES["DrawingAnchors"]
+    frame = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+
+    wb = Workbook.open(source)
+    before = read_pkg(wb)
+    wb.write_dataframe(frame, sheet="Anchors", at_cell="A2", header=False, mode="insert", shift_drawings=False)
+    after = read_pkg(wb)
+    drawings = [m for m in before if m.startswith("xl/drawings/drawing")]
+    assert drawings and all(after[m] == before[m] for m in drawings)
+
+    path = tmp_path / "anchors.xlsx"
+    shutil.copy(source, path)
+    with pd.ExcelWriter(
+        path,
+        engine="xlsxedit",
+        mode="a",
+        if_sheet_exists="overlay",
+        engine_kwargs={"mode": "insert", "shift_drawings": False},
+    ) as writer:
+        frame.to_excel(writer, sheet_name="Anchors", startrow=1, header=False, index=False)
+    saved = read_pkg(path)
+    assert Workbook.open(path)["Anchors"]["A2"].value == 1
+    assert all(saved[m] == before[m] for m in drawings)

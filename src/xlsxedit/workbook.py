@@ -296,6 +296,7 @@ class Workbook:
         clear_range: str | None = None,
         expand_conditional_formatting: bool = False,
         string_columns: set[int] | None = None,
+        shift_drawings: bool = True,
     ) -> int:
         """Write a pandas-like DataFrame to a worksheet.
 
@@ -375,6 +376,7 @@ class Workbook:
             count = ws.insert_rows(
                 rows_to_write,
                 at_cell=join_address(start_col, start_row),
+                shift_drawings=shift_drawings,
                 **style_kwargs,
             )
         else:
