@@ -36,11 +36,11 @@ class Hyperlink:
         return f"<Hyperlink url={self.url!r} location={self.location!r}>"
 
     def _hyperlink_element(self) -> etree._Element | None:
+        addr = self._cell.address
         ws_elm = self._cell._worksheet._part.element
         block = ws_elm.find(_HYPERLINKS)
         if block is None:
             return None
-        addr = self._cell.address
         for hl in block.findall(_HYPERLINK):
             if hl.get("ref") == addr:
                 return hl
@@ -78,6 +78,7 @@ class Hyperlink:
         if value is None:
             self._remove()
             return
+        address = self._cell.address  # raises, changing nothing, for a cell that cannot have one
         ws_part = self._cell._worksheet._part
         ws_elm = ws_part.element
         block = _ensure_hyperlinks_block(ws_elm)
@@ -85,7 +86,7 @@ class Hyperlink:
         hl = self._hyperlink_element()
         if hl is None:
             hl = etree.SubElement(block, _HYPERLINK)
-            hl.set("ref", self._cell.address)
+            hl.set("ref", address)
         else:
             old_r_id = hl.get(f"{{{OFFICE_REL_NS}}}id")
             if old_r_id is not None:
@@ -109,6 +110,7 @@ class Hyperlink:
                 self._remove()
             return
 
+        address = self._cell.address  # raises, changing nothing, for a cell that cannot have one
         ws_part = self._cell._worksheet._part
         ws_elm = ws_part.element
         block = _ensure_hyperlinks_block(ws_elm)
@@ -116,7 +118,7 @@ class Hyperlink:
         hl = self._hyperlink_element()
         if hl is None:
             hl = etree.SubElement(block, _HYPERLINK)
-            hl.set("ref", self._cell.address)
+            hl.set("ref", address)
         else:
             old_r_id = hl.get(f"{{{OFFICE_REL_NS}}}id")
             if old_r_id is not None:
