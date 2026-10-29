@@ -837,12 +837,14 @@ class Worksheet:
         row_styles: list[dict[str, Any]] | None = None,
         column_styles: list[dict[str, Any]] | None = None,
         string_columns: set[int] | None = None,
+        shift_drawings: bool = True,
     ) -> int:
         """Insert rows at ``at_row``, shifting existing content down.
 
         What moves with the rows, and when the insert is refused without any
         change, is described under "Inserting rows and columns" in
-        ``docs/features.md``. Returns the number of rows inserted.
+        ``docs/features.md``; ``shift_drawings=False`` leaves the drawing
+        anchors where they are. Returns the number of rows inserted.
         """
         if at_cell is not None:
             start_col, at_row = split_address(at_cell)
@@ -868,7 +870,7 @@ class Worksheet:
             string_columns=string_columns,
             has_shared_strings=self.shared_strings is not None,
         )
-        plan = plan_insert_rows(self, at_row, count)
+        plan = plan_insert_rows(self, at_row, count, shift_drawings=shift_drawings)
         template_maps = self._resolve_template_style_maps(
             template_rows=template_rows, start_col_idx=start_col_idx, row_list=row_list
         )
@@ -916,6 +918,7 @@ class Worksheet:
         row_styles: list[dict[str, Any]] | None = None,
         column_styles: list[dict[str, Any]] | None = None,
         string_columns: set[int] | None = None,
+        shift_drawings: bool = True,
     ) -> int:
         """Insert columns at ``at_col``, shifting existing content right.
 
@@ -962,7 +965,9 @@ class Worksheet:
             string_columns=string_columns,
             has_shared_strings=self.shared_strings is not None,
         )
-        plan = plan_insert_columns(self, at_col_idx, count, (row_list, start_row))
+        plan = plan_insert_columns(
+            self, at_col_idx, count, (row_list, start_row), shift_drawings=shift_drawings
+        )
         template_maps = self._resolve_template_style_maps(
             template_rows=template_rows, start_col_idx=at_col_idx, row_list=row_list
         )

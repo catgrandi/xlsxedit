@@ -173,7 +173,8 @@ ROW_CASES = {
         _nothing,
         at={"header": 1, "body": 3, "last": 6, "below": 7},
         expect={"merges": (("A2:B2",), ("A1:B1",), ("A1:B1",), ("A1:B1",))},
-        changed=frozenset({"xl/workbook.xml"}),
+        # the chart's anchor spans rows 2 to 15, so it moves or grows at every position
+        changed=frozenset({"xl/workbook.xml", "xl/drawings/drawing1.xml"}),
         changed_unless_below=frozenset({"xl/charts/chart1.xml"}),  # the chart plots B2 and A3:B6
     ),
 }
@@ -244,7 +245,8 @@ COLUMN_CASES = {
         _nothing,
         at={"header": "A", "body": "B", "last": "D", "below": "E"},
         expect={"merges": (("B1:C1",), ("A1:C1",), ("A1:B1",), ("A1:B1",))},
-        changed=frozenset({"xl/workbook.xml"}),
+        # the chart's anchor spans columns C to I, so it moves or grows at every position
+        changed=frozenset({"xl/workbook.xml", "xl/drawings/drawing1.xml"}),
         changed_at={pos: frozenset({"xl/charts/chart1.xml"}) for pos in ("header", "body")},
     ),
 }

@@ -43,7 +43,12 @@ def test_a_chart_follows_the_cells_it_plots():
     assert_preserved(
         before,
         read_pkg(wb),
-        expected_changed={"xl/worksheets/sheet1.xml", "xl/charts/chart1.xml", "xl/workbook.xml"},
+        expected_changed={
+            "xl/worksheets/sheet1.xml",
+            "xl/charts/chart1.xml",
+            "xl/drawings/drawing1.xml",
+            "xl/workbook.xml",
+        },
     )
     assert_valid_package(wb)
 

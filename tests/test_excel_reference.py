@@ -133,7 +133,8 @@ OPERATIONS: dict[str, Operation] = {
         band="Drawings!A1:B35",
         changed=("drawings", "values", "rows"),
         known={
-            "drawings": "#21: drawing anchors do not move, grow or keep their size on insert",
+            "drawings": "#19: the inserted rows do not take the 30 pt height of row 6, so the "
+            "anchors that keep their size or place are measured over shorter rows",
             "rows": "#19: inserted rows do not take the height of the row above",
         },
     ),
@@ -155,7 +156,7 @@ OPERATIONS: dict[str, Operation] = {
         apply=lambda wb: wb["Edges"].insert_rows([[]] * 2, at_row=7),
         band="Edges!A1:B20",
         changed=("drawings",),
-        known={"drawings": "#21: drawing anchors do not move on insert"},
+        known={},
     ),
     "delete-rows-at-drawing-edges": Operation(
         apply=lambda wb: wb["Edges"].delete_rows(5, 3),
