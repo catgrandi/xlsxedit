@@ -7,6 +7,10 @@ from pathlib import Path
 import pytest
 
 from xlsxedit import DuplicateWorksheetError, Workbook, WorksheetNotFoundError
+from xlsxedit.drawing import A16_NS, chart_references, drawing_parts_for_worksheet
+from xlsxedit.sheet_clone import repoint_sheet_refs, sheet_prefix
+from tests.conftest import INSPECT_FIXTURES
+from tests.schema_validate import assert_valid_package
 
 
 def test_copy_worksheet_merges_styles_and_widths():
@@ -81,3 +85,63 @@ def test_copy_worksheet_duplicate_name():
     wb = Workbook.create()
     with pytest.raises(DuplicateWorksheetError):
         wb.copy_worksheet("Sheet1", "Sheet1")
+
+
+def _chart_refs(wb: Workbook, sheet: str) -> list[str]:
+    root = wb[sheet].charts[0]._chart_root()
+    return [elm.text for elm in chart_references(root)]
+
+
+def _creation_ids(wb: Workbook, sheet: str) -> list[str]:
+    root = drawing_parts_for_worksheet(wb[sheet])[0].element
+    return [elm.get("id") for elm in root.iter(f"{{{A16_NS}}}creationId")]
+
+
+def test_copy_worksheet_charts_plot_the_copy():
+    wb = Workbook.open(INSPECT_FIXTURES["ChartsAndTables"])
+    source_refs = _chart_refs(wb, "bar chart")
+    assert source_refs == ["'bar chart'!$B$2", "'bar chart'!$A$3:$A$6", "'bar chart'!$B$3:$B$6"]
+    wb.copy_worksheet("bar chart", "Summary")
+    assert _chart_refs(wb, "Summary") == ["Summary!$B$2", "Summary!$A$3:$A$6", "Summary!$B$3:$B$6"]
+    assert _chart_refs(wb, "bar chart") == source_refs
+    ids = [obj.id for obj in wb["bar chart"].drawing_objects]
+    assert [obj.id for obj in wb["Summary"].drawing_objects] == ids
+    assert set(_creation_ids(wb, "Summary")).isdisjoint(_creation_ids(wb, "bar chart"))
+    assert_valid_package(wb)
+
+
+def test_copy_worksheet_keeps_references_to_other_sheets():
+    wb = Workbook.open(INSPECT_FIXTURES["ChartsAndTables"])
+    root = wb["bar chart"].charts[0]._chart_root()
+    chart_references(root)[1].text = "'line chart'!$A$3:$A$12"
+    wb.copy_worksheet("bar chart", "bar chart (2)")
+    assert _chart_refs(wb, "bar chart (2)") == [
+        "'bar chart (2)'!$B$2",
+        "'line chart'!$A$3:$A$12",
+        "'bar chart (2)'!$B$3:$B$6",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Sheet1!$A$1:$A$5", "'Data 2'!$A$1:$A$5"),
+        ("'Sheet1'!$A$1", "'Data 2'!$A$1"),
+        ("sheet1!#REF!", "'Data 2'!#REF!"),
+        ("Other!$A$1", "Other!$A$1"),
+        ("'Sheet1:Sheet3'!$A$1", "'Sheet1:Sheet3'!$A$1"),
+        ("[1]Sheet1!$A$1", "[1]Sheet1!$A$1"),
+        ("(Sheet1!$A$1,Sheet10!$B$1)", "('Data 2'!$A$1,Sheet10!$B$1)"),
+    ],
+)
+def test_repoint_sheet_refs(text: str, expected: str):
+    assert repoint_sheet_refs(text, "Sheet1", "Data 2") == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "prefix"),
+    [("Sales", "Sales"), ("Q1_2024.v2", "Q1_2024.v2"), ("A1", "'A1'"), ("R1C1", "'R1C1'"),
+     ("TRUE", "'TRUE'"), ("2024", "'2024'"), ("Bob's", "'Bob''s'")],
+)  # fmt: skip
+def test_sheet_prefix_quotes_what_would_not_read_as_a_name(name: str, prefix: str):
+    assert sheet_prefix(name) == prefix
