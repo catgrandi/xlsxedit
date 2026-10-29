@@ -252,8 +252,7 @@ def _move_anchor(
     if to_elm is not None and worksheet is not None and _keeps_size(anchor):
         grid = _SheetGrid(worksheet)
         cx, cy = grid.extent(anchor)
-        to_col = grid.cols.locate(grid.cols.start(col) + col_off + cx)
-        to_row = grid.rows.locate(grid.rows.start(row) + row_off + cy)
+        to_col, to_row = grid.cols.advance(col, col_off + cx), grid.rows.advance(row, row_off + cy)
         if to_col is None or to_row is None:
             raise off_sheet
         moves.append((to_elm, *to_col, *to_row))
@@ -278,7 +277,9 @@ class _Axis:
     lines ``(lo, hi, size)`` with their own size, ``default`` elsewhere.
 
     A position is a distance in EMU from the sheet's top (left) edge. A line of
-    size zero, such as a hidden row, takes no room, so no position lies in it.
+    size zero, such as a hidden row, takes no room, so no position lies in it,
+    except past the last line with a size: a sheet that hides every unused
+    column (row) still has those lines to anchor an object in.
     """
 
     def __init__(self, runs: Iterable[tuple[int, int, int]], default: int, count: int):
@@ -300,10 +301,14 @@ class _Axis:
             line = hi + 1
         if line < count:
             segments.append((line, count - line, default, position))
+            position += (count - line) * default
         self._segments = segments
         self._firsts = [segment[0] for segment in segments]
         self._sized = [segment for segment in segments if segment[2] > 0]
         self._starts = [segment[3] for segment in self._sized]
+        self._total = position
+        last = self._sized[-1] if self._sized else (0, 0, 0, 0)
+        self._trailing = last[0] + last[1]  # the first of the zero-size lines that end the axis
 
     def start(self, index: int) -> int:
         """Position of the top (left) edge of line ``index``."""
@@ -312,13 +317,55 @@ class _Axis:
 
     def locate(self, position: int) -> tuple[int, int] | None:
         """``(line, offset)`` of ``position``: a position on a gridline is the start of
-        the line below it, as Excel writes it. ``None`` past the last line."""
+        the line below it, as Excel writes it. A position past the last line with
+        a size lies in the first of the zero-size lines that end the axis, if any;
+        ``None`` past the last line."""
         k = bisect_right(self._starts, position) - 1
-        if k < 0:
-            return None
-        first, lines, size, start = self._sized[k]
-        n, offset = divmod(position - start, size)
-        return (first + n, offset) if n < lines else None
+        if k >= 0:
+            first, lines, size, start = self._sized[k]
+            n, offset = divmod(position - start, size)
+            if n < lines:
+                return first + n, offset
+        if position >= self._total and self._trailing < self.count:
+            return self._trailing, position - self._total
+        return None
+
+    def advance(self, index: int, distance: int) -> tuple[int, int] | None:
+        """:meth:`locate` ``distance`` EMU on from the start of line ``index``, never
+        in a line above ``index``."""
+        found = self.locate(self.start(index) + distance)
+        if found is not None and found[0] < index:
+            return index, distance  # index lies in the zero-size lines that end the axis
+        return found
+
+    def between(self, a: int, a_off: int, b: int, b_off: int) -> int:
+        """EMU from offset ``a_off`` in line ``a`` to offset ``b_off`` in line ``b``."""
+        return self.start(b) + b_off - self.start(a) - a_off
+
+
+def _size_value(text: str | None) -> float | None:
+    """A height or width attribute as a number, ``None`` when absent or unreadable."""
+    try:
+        value = float(text)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) and value >= 0 else None
+
+
+def _row_defaults(fmt: _Element | None) -> tuple[int, int]:
+    """EMU heights of a row listed without ``ht`` (``defaultRowHeight``) and of a row
+    the sheet does not list: the same, or zero when ``zeroHeight`` hides them."""
+    height = _size_value(fmt.get("defaultRowHeight") if fmt is not None else None)
+    listed = round((15 if height is None else height) * _EMU_PER_POINT)
+    unlisted = 0 if fmt is not None and fmt.get("zeroHeight") in ("1", "true") else listed
+    return listed, unlisted
+
+
+def _row_height(row: _Element, listed: int) -> int:
+    if row.get("hidden") in ("1", "true"):
+        return 0
+    height = _size_value(row.get("ht"))
+    return listed if height is None else round(height * _EMU_PER_POINT)
 
 
 def sheet_axis(worksheet: Worksheet, *, rows: bool) -> _Axis:
@@ -330,31 +377,31 @@ def sheet_axis(worksheet: Worksheet, *, rows: bool) -> _Axis:
     fmt = root.find(_SHEET_FORMAT_PR)
     runs = []
     if rows:
-        default_height = fmt.get("defaultRowHeight") if fmt is not None else None
-        default = round(float(default_height or 15) * _EMU_PER_POINT)
+        listed, unlisted = _row_defaults(fmt)
         sheet_data = root.find(_SHEET_DATA)
         number = 0
         for row in sheet_data.iterchildren(_ROW) if sheet_data is not None else ():
             number = int(row.get("r") or number + 1)
-            if row.get("hidden") in ("1", "true"):
-                runs.append((number - 1, number - 1, 0))
-            elif row.get("ht") is not None:
-                runs.append((number - 1, number - 1, round(float(row.get("ht")) * _EMU_PER_POINT)))
-        return _Axis(runs, default, _MAX_ROW)
+            height = _row_height(row, listed)
+            if height != unlisted:
+                runs.append((number - 1, number - 1, height))
+        return _Axis(runs, unlisted, _MAX_ROW)
 
-    default_width = fmt.get("defaultColWidth") if fmt is not None else None
+    default_width = _size_value(fmt.get("defaultColWidth") if fmt is not None else None)
     if default_width is not None:
-        default = _col_width_emu(float(default_width))
+        default = _col_width_emu(default_width)
     else:
-        base = float(fmt.get("baseColWidth", "8")) if fmt is not None else 8.0
+        base = _size_value(fmt.get("baseColWidth") if fmt is not None else None)
         # Excel rounds a default column up to a multiple of 8 pixels.
-        default = math.ceil((base * _MAX_DIGIT_WIDTH_PX + 5) / 8) * 8 * EMU_PER_PIXEL
+        px = ((8 if base is None else base) * _MAX_DIGIT_WIDTH_PX + 5) / 8
+        default = math.ceil(px) * 8 * EMU_PER_PIXEL
     cols = root.find(_COLS)
     for col in cols.iterchildren(_COL) if cols is not None else ():
+        width = _size_value(col.get("width"))
         if col.get("hidden") in ("1", "true"):
             emu = 0
-        elif col.get("width") is not None:
-            emu = _col_width_emu(float(col.get("width")))
+        elif width is not None:
+            emu = _col_width_emu(width)
         else:
             emu = default
         runs.append((int(col.get("min", "1")) - 1, int(col.get("max", "1")) - 1, emu))
@@ -380,8 +427,8 @@ class _SheetGrid:
         """Set ``xdr:to`` of a two-cell ``anchor`` to ``cx`` by ``cy`` EMU from ``xdr:from``."""
         from_elm, to_elm = self._corners(anchor)
         col, col_off, row, row_off = _marker(from_elm)
-        to_col = self.cols.locate(self.cols.start(col) + col_off + cx)
-        to_row = self.rows.locate(self.rows.start(row) + row_off + cy)
+        to_col = self.cols.advance(col, col_off + cx)
+        to_row = self.rows.advance(row, row_off + cy)
         if to_col is None or to_row is None:
             raise ValueError("the resized object would extend beyond the sheet")
         _set_marker(to_elm, *to_col, *to_row)
@@ -391,8 +438,8 @@ class _SheetGrid:
         from_elm, to_elm = self._corners(anchor)
         col, col_off, row, row_off = _marker(from_elm)
         to_col, to_col_off, to_row, to_row_off = _marker(to_elm)
-        cx = self.cols.start(to_col) + to_col_off - self.cols.start(col) - col_off
-        cy = self.rows.start(to_row) + to_row_off - self.rows.start(row) - row_off
+        cx = self.cols.between(col, col_off, to_col, to_col_off)
+        cy = self.rows.between(row, row_off, to_row, to_row_off)
         return max(0, cx), max(0, cy)
 
 
