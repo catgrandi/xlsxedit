@@ -266,10 +266,19 @@ def test_a_held_missing_cell_pushed_off_the_grid_raises_on_use():
     held = ws["A1048576"]
     ws.insert_rows([["new"]], at_row=1)
     assert repr(held) == "<Cell 'A1048576'>"
-    for use in (lambda: held.value, lambda: held.address, lambda: setattr(held, "value", 1)):
+    before = _saved(wb)
+    for use in (
+        lambda: held.value,
+        lambda: held.address,
+        lambda: setattr(held, "value", 1),
+        lambda: held.hyperlink.url,
+        lambda: setattr(held.hyperlink, "url", "https://example.com"),
+        lambda: setattr(held.hyperlink, "location", "Sheet1!A1"),
+    ):
         with pytest.raises(GridOverflowError, match="moved cell A1048576 past the grid"):
             use()
     assert ws._find_row_element(1048576) is None
+    assert read_pkg(_saved(wb)) == read_pkg(before)
 
 
 def test_a_malformed_col_does_not_stop_first_writes(unchecked_workbooks):
