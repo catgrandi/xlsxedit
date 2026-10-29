@@ -10,6 +10,7 @@ from typing import BinaryIO, Callable
 
 from lxml import etree
 
+from xlsxedit._ooxml_ns import A_NS as _A_NS, CHART_NS as _CHART_NS, XDR_NS as _XDR_NS
 from xlsxedit.api import _default_xlsx_path
 from xlsxedit.exceptions import (
     DuplicateWorksheetError,
@@ -57,12 +58,10 @@ from xlsxedit.worksheet import Worksheet
 
 register_part_types()
 
-_XDR_NS = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
-_A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 _XDR_TWO_CELL = f"{{{_XDR_NS}}}twoCellAnchor"
 _XDR_ONE_CELL = f"{{{_XDR_NS}}}oneCellAnchor"
 _XDR_GRAPHIC_FRAME = f"{{{_XDR_NS}}}graphicFrame"
-_C_CHART = f"{{http://schemas.openxmlformats.org/drawingml/2006/chart}}chart"
+_C_CHART = f"{{{_CHART_NS}}}chart"
 _TABLE_PARTS = f"{{{SML_NS}}}tableParts"
 _TABLE_PART = f"{{{SML_NS}}}tablePart"
 _XDR_FROM = f"{{{_XDR_NS}}}from"

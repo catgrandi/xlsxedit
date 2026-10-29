@@ -7,10 +7,12 @@ from datetime import datetime, timezone
 from lxml import etree
 from lxml.etree import _Element
 
-_CP_NS = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
-_DC_NS = "http://purl.org/dc/elements/1.1/"
-_DCTERMS_NS = "http://purl.org/dc/terms/"
-_XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
+from xlsxedit._ooxml_ns import (
+    CP_NS as _CP_NS,
+    DC_NS as _DC_NS,
+    DCTERMS_NS as _DCTERMS_NS,
+    XSI_NS as _XSI_NS,
+)
 
 CORE_PROPS_NSMAP = {
     "cp": _CP_NS,

@@ -15,9 +15,12 @@ Three tools use them:
 
 - [`scripts/gen_ooxml_order.py`](../scripts/gen_ooxml_order.py) generates
   the child-element order tables in `src/xlsxedit/_ooxml_order.py`: `ORDER`
-  from `transitional/`, `EXTENSION_ORDER` from `microsoft/ms-xlsx/`. Run it
-  again after changing a schema; `tests/test_ooxml_order.py` fails until the
-  generated module matches.
+  from `transitional/`, `EXTENSION_ORDER` from `microsoft/ms-xlsx/`. It also
+  generates `src/xlsxedit/_ooxml_ns.py`, which names every namespace a schema
+  here declares or imports, and
+  [`docs/ooxml-schema-notes.md`](../docs/ooxml-schema-notes.md). Run it again
+  after changing a schema; `tests/test_ooxml_order.py` and
+  `tests/test_ooxml_ns.py` fail until the generated files match.
 - [`tests/schema_validate.py`](../tests/schema_validate.py) validates the
   parts of saved workbooks during the test suite against
   `transitional/sml.xsd`, and the extension payloads inside their `extLst`
@@ -33,10 +36,9 @@ the schemas never ship in the wheel or the source distribution.
 
 ### Why the transitional set
 
-Workbooks that Excel writes use the transitional namespaces, such as
-`http://schemas.openxmlformats.org/spreadsheetml/2006/main`. The strict
-schemas target `http://purl.oclc.org/ooxml/` namespaces and cannot validate
-those workbooks.
+Workbooks that Excel writes use the transitional namespaces, and the strict
+schemas cannot validate them: see
+[Transitional, not strict](../docs/ooxml-schema-notes.md#transitional-not-strict).
 
 ### Source
 

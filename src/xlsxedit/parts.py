@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from lxml import etree
 
+from xlsxedit._ooxml_ns import OFFICE_REL_NS as _OFFICE_REL_NS
 from xlsxedit.exceptions import MissingPartError
 from xlsxedit.opc.constants import CT, RT, SML_NS
 from xlsxedit.opc.part import XmlPart
 from xlsxedit.oxml.parser import parse_xml
 
-_OFFICE_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 _SHEET = f"{{{SML_NS}}}sheet"
 _SHEETS = f"{{{SML_NS}}}sheets"
 
