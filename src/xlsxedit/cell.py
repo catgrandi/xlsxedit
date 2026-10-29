@@ -13,8 +13,6 @@ from xlsxedit.exceptions import FormulaGroupError, GridOverflowError, InvalidRan
 from xlsxedit.merge import address_in_range, parse_range
 from xlsxedit.opc.constants import SML_NS
 from xlsxedit.oxml.address import (
-    MAX_COL,
-    MAX_ROW,
     col_to_index,
     index_to_col,
     join_address,
@@ -28,6 +26,8 @@ if TYPE_CHECKING:
     from xlsxedit.worksheet import Worksheet
 
 _C = f"{{{SML_NS}}}c"
+# Cell._shifts_seen once a shift has pushed the cell off the grid or deleted it
+_PUSHED_OFF, _DELETED = -1, -2
 _V = f"{{{SML_NS}}}v"
 _F = f"{{{SML_NS}}}f"
 _IS = f"{{{SML_NS}}}is"
@@ -185,7 +185,8 @@ class Cell:
     ``element=None`` and the ``address``. Reading it changes nothing: it reads
     as an empty cell until a write, through it or any other way, creates the
     element, which it then proxies. Until then it moves with the cells around
-    it when rows or columns are inserted, as a cell's element does.
+    it when rows or columns are inserted or cells shifted, as a cell's element
+    does, and raises on use once a shift deletes it or pushes it off the grid.
     """
 
     def __init__(self, element: _Element | None, worksheet: Worksheet, address: str | None = None):
@@ -204,28 +205,31 @@ class Cell:
         return etree.Element(_C, r=self._where()) if element is None else element
 
     def _where(self) -> str:
-        """The address of a cell made without its element, moved by the inserts since.
+        """The address of a cell made without its element, moved by the shifts since.
 
-        Raises ``GridOverflowError`` once an insert has pushed it off the grid.
+        Replays the inserts and cell shifts applied to the sheet since the
+        ``Cell`` was made (``Worksheet._shifts``). Raises ``GridOverflowError``
+        once one has pushed the cell off the grid, and ``InvalidRangeError``
+        once one has deleted it.
         """
         shifts = self._worksheet._shifts
         seen = self._shifts_seen
         if 0 <= seen < len(shifts):
             col, row = split_address(self._address)
-            column = col_to_index(col) + 1
-            for rows, at, count in shifts[seen:]:
-                if rows and row >= at:
-                    row += count
-                elif not rows and column >= at:
-                    column += count
-            if row > MAX_ROW or column > MAX_COL:
-                seen = -1
+            place: tuple[int, int] | None = (col_to_index(col) + 1, row)
+            for shift in shifts[seen:]:
+                place = shift.cell(*place)
+                if place is None:
+                    seen = _PUSHED_OFF if shift.inserting else _DELETED
+                    break
             else:
-                self._address = join_address(index_to_col(column - 1), row)
+                self._address = join_address(index_to_col(place[0] - 1), place[1])
                 seen = len(shifts)
             self._shifts_seen = seen
-        if seen < 0:
+        if seen == _PUSHED_OFF:
             raise GridOverflowError(f"an insert moved cell {self._address} past the grid")
+        if seen == _DELETED:
+            raise InvalidRangeError(f"cell {self._address} was deleted")
         return self._address
 
     def _bind(self) -> _Element | None:
@@ -245,6 +249,8 @@ class Cell:
             return f"<Cell {self._where()!r}>"
         except GridOverflowError:
             return f"<Cell {self._address!r}, moved past the grid>"
+        except InvalidRangeError:
+            return f"<Cell {self._address!r}, deleted>"
 
     @property
     def address(self) -> str:

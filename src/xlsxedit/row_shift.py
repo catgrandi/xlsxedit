@@ -1304,6 +1304,7 @@ class InsertPlan:
     def apply(self) -> None:
         _walk_sheet_data(self._worksheet._part.element.find(_SHEET_DATA), self._insert, apply=True)
         self._planner.apply()
+        self._worksheet._shifts.append(self._insert)
 
 
 def plan_insert_rows(
@@ -1370,6 +1371,7 @@ class CellShiftPlan:
         if shift.span is None:
             raise ValueError("CellShiftPlan shifts the cells of a span; whole lines need an InsertPlan")
         self._worksheet = worksheet
+        self._shift = shift
         root = worksheet._part.element
         sheet_data = root.find(_SHEET_DATA)
         self._cells = _CellMoves(sheet_data, shift)
@@ -1400,6 +1402,7 @@ class CellShiftPlan:
         if self._cells.apply():
             worksheet._part.mark_dirty()
         self._planner.apply()
+        worksheet._shifts.append(self._shift)
         worksheet._invalidate_merge_map()
         worksheet._invalidate_bulk_indexes()
         worksheet.update_dimension()

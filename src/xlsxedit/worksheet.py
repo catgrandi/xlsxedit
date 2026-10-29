@@ -70,6 +70,7 @@ from xlsxedit.table import Table, table_parts_for_worksheet
 
 if TYPE_CHECKING:
     from xlsxedit.parts import TablePart, WorksheetPart
+    from xlsxedit.row_shift import _Shift
     from xlsxedit.workbook import Workbook
 
 _ROW = f"{{{SML_NS}}}row"
@@ -136,9 +137,9 @@ class Worksheet:
         self._row_numbers: list[int] | None = None  # sorted _row_index keys, built on demand
         self._bulk_max_row_num = 0
         self._table_proxies: dict[TablePart, Table] = {}
-        # (rows?, first 1-based row or column moved, count) per insert, which a
-        # Cell for a missing cell replays to follow the cells around it
-        self._shifts: list[tuple[bool, int, int]] = []
+        # every insert and cell shift applied to the sheet, in order, which a Cell
+        # for a missing cell replays to follow the cells around it (Cell._where)
+        self._shifts: list[_Shift] = []
         self._column_styles: tuple | None = None  # see _column_style
 
     def __repr__(self) -> str:
@@ -1030,7 +1031,6 @@ class Worksheet:
             new_rows=True,
         )
         plan.apply()
-        self._shifts.append((True, at_row, count))
         # Merge first, so the write treats the cells the new merges cover like any other.
         append_merges(self._part.element, new_merges)
         if new_merges:
@@ -1124,7 +1124,6 @@ class Worksheet:
             new_rows=False,
         )
         plan.apply()
-        self._shifts.append((False, at_col_idx + 1, count))
         self._invalidate_merge_map()
         self._invalidate_bulk_indexes()
 
