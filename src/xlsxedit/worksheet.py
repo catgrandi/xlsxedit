@@ -475,8 +475,7 @@ class Worksheet:
 
     def _cell_for_write(self, address: str) -> tuple[etree._Element, Callable[[], None] | None]:
         """The ``<c>`` at uppercase ``address`` for a write, created when the sheet has
-        none, in the style Excel gives a cell typed there: its row's when the row
-        is formatted as a whole, else its column's (see
+        none, in the style Excel gives a cell typed there (see
         :meth:`Styles.effective_xf_index`).
 
         Returns the cell and, for a created one, a function that takes it back

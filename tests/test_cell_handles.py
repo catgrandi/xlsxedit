@@ -272,6 +272,20 @@ def test_a_held_missing_cell_pushed_off_the_grid_raises_on_use():
     assert ws._find_row_element(1048576) is None
 
 
+def test_a_formatted_row_without_a_style_puts_its_new_cells_in_style_zero():
+    """Recorded in Excel 16.0.20527.20088 on 2026-10-29: in a row that sets
+    ``customFormat`` without ``s``, a cell with no ``<c>`` shows in style 0, not
+    in its column's style, and typing into it writes a ``<c>`` without ``s``."""
+    wb, column, _ = _styled_book()
+    ws = wb[SHEET]
+    ws._ensure_row(8).set("customFormat", "1")
+    assert ws["D8"].style.style_index == "0"
+    assert wb.styles.effective_xf_index(ws, "D8") == 0
+    ws["D8"].value = 1
+    ws["D9"].value = 2
+    assert (ws["D8"].style_index, ws["D9"].style_index) == (None, str(column))
+
+
 def _fresh_style(wb: Workbook, address: str) -> int:
     """The style a cache-free copy of ``wb`` gives ``address``."""
     copy = Workbook.open(io.BytesIO(_saved(wb)))

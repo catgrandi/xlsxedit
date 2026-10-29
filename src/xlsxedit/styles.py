@@ -359,9 +359,10 @@ class Styles:
 
         A cell's ``<c>`` element decides: its ``s``, or style 0 without one,
         whether or not it holds a value, as Excel shows it. A cell with no
-        ``<c>`` takes the row's ``s`` when the row sets ``customFormat``, then
-        the ``style`` of the ``<col>`` covering its column, then 0; its first
-        write through ``ws[address]`` gives it that style, as Excel does.
+        ``<c>`` takes its row's ``s`` (0 without one) when the row sets
+        ``customFormat``, else the ``style`` of the ``<col>`` covering its
+        column, else 0; its first write through ``ws[address]`` gives it that
+        style, as Excel does.
         """
         col, row_num = split_address(address)
         cell = worksheet._find_cell_element(join_address(col, row_num))
@@ -387,15 +388,15 @@ class Styles:
         ``cell`` are the cell's ``<row>`` and ``<c>`` in ``worksheet`` (either
         may be absent) and ``column`` its 1-based column number. Returns
         ``None`` for style 0 when nothing sets another: a ``<c>`` without
-        ``s``, or a cell that neither its row nor a ``<col>`` styles.
+        ``s``, a row that sets ``customFormat`` without ``s``, or a cell that
+        neither its row nor a ``<col>`` styles.
         """
         if cell is not None:
             s = cell.get("s")
             return None if s is None else int(s)
         if row is not None and row.get("customFormat") in _TRUE:
             s = row.get("s")
-            if s is not None:
-                return int(s)
+            return None if s is None else int(s)
         return worksheet._column_style(column)
 
     def num_format_id(self, style_index: int | str | None) -> int | None:

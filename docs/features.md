@@ -50,7 +50,7 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | API | Summary | Notes |
 |-----|---------|-------|
 | `ws.name` | Sheet name | Read-only; rename via `wb.rename_worksheet` |
-| `ws[address]` | Get `Cell` at address | e.g. `"A1"`, `"BC100"`; a cell inside a merge gives the merge's top-left cell. Reading changes nothing: a cell the sheet does not have reads as empty, and its first write creates it, and its row, in the style Excel gives a cell typed there (the row's when the row is formatted as a whole, else the column's). A write that is refused, or that writes nothing such as `None`, creates no cell. Until then, a `Cell` you hold for it moves with inserted rows and columns, as cells do |
+| `ws[address]` | Get `Cell` at address | e.g. `"A1"`, `"BC100"`; a cell inside a merge gives the merge's top-left cell. Reading changes nothing: a cell the sheet does not have reads as empty, and its first write creates it, and its row, in the style Excel gives a cell typed there, which `cell.style` reads for it beforehand. A write that is refused, or that writes nothing such as `None`, creates no cell. Until then, a `Cell` you hold for it moves with inserted rows and columns, as cells do |
 | `ws.cells` | All populated cells | |
 | `ws.iter_cells()` | Iterate cells | |
 | `ws.iter_rows()` | Iterate `(row_num, [cells])` | |
@@ -137,7 +137,7 @@ An insert that would push a drawing object past row 1,048,576 or column XFD is r
 | `cell.address` | Cell address | |
 | `cell.worksheet` | Owning worksheet | |
 | `cell.offset(cols=0, rows=0)` | Neighbor cell | e.g. `offset(cols=1, rows=1)` is one right and one down |
-| `cell.style` | `CellStyle` read proxy | Effective style, as Excel shows it: the cell's own, or the default when the cell has none, even when empty; a cell the sheet does not have takes its row's (row formatted as a whole), else its column's, else the default |
+| `cell.style` | `CellStyle` read proxy | Effective style, as Excel shows it: the cell's own, or the default when the cell has none, even when empty; a cell the sheet does not have takes its row's when the row is formatted as a whole (the default if the row names no style), else its column's, else the default |
 | `cell.apply_style(**kwargs)` | Change only the passed style properties | `bold`, `font_color`, `bg_color`, `font_size`, …; a colour is six or eight hex digits (`#` optional) or a `Color` with an `rgb` value; builds on the effective style and keeps the current font's other properties; `False` turns bold/italic/underline off; reuses an identical existing format |
 | `cell.apply_date_format()` | Apply standard date format | Builds on the effective style |
 | `cell.apply_number_format(code)` | Apply custom number format | e.g. `"$#,##0.00"`; builds on the effective style |

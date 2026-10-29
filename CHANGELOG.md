@@ -23,7 +23,7 @@ Several changes below are breaking, so the next release is a major one.
 - **Inserts** — `insert_rows` and `insert_columns` refuse an insert they cannot complete, changing nothing, including `insert_columns` inside a table when the value for a new column's header cell cannot name the column: see [Inserting rows and columns](docs/features.md#inserting-rows-and-columns) for each case.
 - **Tables** — `Table.resize` raises `TableError`, changing nothing, when the header row would move, the new range does not overlap the current one, leaves no data row or overlaps another table, or adds or drops columns without the new `columns=` option or of a table bound to a query. See [Resizing a table](docs/features.md#resizing-a-table).
 - **Tables** — `Table` lives in `xlsxedit.table` (still importable from `xlsxedit` and `xlsxedit.drawing`), and its constructor takes the table part and its worksheet.
-- **Cells** — the first write to a cell the sheet does not have gives it the style Excel gives a cell typed there: its row's when the row is formatted as a whole, else its column's. It used to get none, which Excel shows as the default style. A number written into an empty cell of a date-formatted column therefore reads back as a `datetime`.
+- **Cells** — the first write to a cell the sheet does not have gives it the style Excel gives a cell typed there: its row's when the row is formatted as a whole (the default if the row names none), else its column's. It used to get none, which Excel shows as the default style. A number written into an empty cell of a date-formatted column therefore reads back as a `datetime`.
 
 ### Added
 
