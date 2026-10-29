@@ -352,7 +352,25 @@ def test_a_picture_past_the_edge_of_the_sheet_adds_nothing(png: Path):
     before = read_pkg(wb)
     with pytest.raises(ValueError, match="would pass the edge of the sheet"):
         wb["Sheet1"].add_image(png, anchor="A1048576", width=40, height=40)
+    for anchor in ("A0", "XFE1", "B1048577"):
+        with pytest.raises(ValueError, match="puts a corner outside the sheet"):
+            wb["Sheet1"].add_image(png, anchor=anchor)
     assert read_pkg(wb) == before
+
+
+def test_placeholders_are_all_placed_before_any_is_replaced(png: Path):
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["B2"].value = "{logo}"
+    ws["C1048576"].value = "{logo}"
+    before = read_pkg(wb)
+    with pytest.raises(ValueError, match="'C1048576' would pass the edge of the sheet"):
+        wb.insert_image_at_placeholder("{logo}", png, width=50, height=50)
+    assert read_pkg(wb) == before
+    ws["C1048576"].value = None
+    assert wb.insert_image_at_placeholder("{logo}", png, width=50, height=50) == 1
+    assert ws["B2"].value is None
+    assert [(pic.name, pic.anchor) for pic in ws.images] == [("logo", "B2")]
 
 
 def _box(ws, anchor: etree._Element) -> tuple[int, int, int, int]:

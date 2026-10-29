@@ -31,7 +31,7 @@ Docs: [xlsxedit.jonasruilong.com](https://xlsxedit.jonasruilong.com)
 | `wb.find(value, *, sheet=None)` | First cell with exact ``value`` | All sheets if ``sheet`` omitted; skips formulas |
 | `wb.findall(value, *, sheet=None)` | All matching cells as `list[Cell]` | Sheet order, then row-major; `[]` if none |
 | `wb.replace_image(name, image_path)` | Replace picture by drawing name | |
-| `wb.insert_image_at_placeholder(placeholder, image_path, *, width, height, max_width, max_height)` | Clear `{placeholder}` cell, insert image | Size kwargs (px) forwarded to `add_image`; width-only keeps aspect |
+| `wb.insert_image_at_placeholder(placeholder, image_path, *, width, height, max_width, max_height)` | Clear `{placeholder}` cell, insert image | Size kwargs (px) forwarded to `add_image`; width-only keeps aspect; places every image before it clears any cell, so an image that would pass the edge of its sheet raises `ValueError` and replaces nothing |
 | `wb.write_dataframe(df, *, sheet, at_cell, header, mode, …)` | Bulk write rows | See [large-data-export.md](large-data-export.md) |
 | `Workbook.export_to_template(template, df, save_path, **kwargs)` | Open template + `write_dataframe` + save | Class convenience |
 | `wb.properties` | Core document metadata (`docProps/core.xml`) | `title`, `author`, `subject`, `keywords`, `comments`, `category`, `last_modified_by`, `created`, `modified` |
@@ -178,7 +178,7 @@ Setting `anchor`, `offset_x` or `offset_y` keeps the offsets that are not set. A
 
 A picture inside a group cannot be moved, offset, or resized, and one with an absolute anchor cannot be moved or offset: those setters raise `ValueError`, as does a move that would put a corner outside the sheet.
 
-`add_image` anchors a picture as Excel anchors one it inserts: a two-cell anchor placed `oneCell`, whose bottom-right corner is computed from the picture's size over the sheet's column widths and row heights. A picture that would pass the edge of the sheet raises `ValueError` and adds nothing. Each picture `add_image` creates gets a `cNvPr/@id` unique within the drawing part and a fresh `a16:creationId`.
+`add_image` anchors a picture as Excel anchors one it inserts: a two-cell anchor placed `oneCell`, whose bottom-right corner is computed from the picture's size over the sheet's column widths and row heights. A picture that would pass the edge of the sheet, or an `anchor` off the sheet, raises `ValueError` and adds nothing. Each picture `add_image` creates gets a `cNvPr/@id` unique within the drawing part and a fresh `a16:creationId`.
 
 ---
 
