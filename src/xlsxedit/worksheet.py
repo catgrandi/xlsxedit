@@ -76,6 +76,8 @@ _ROW = f"{{{SML_NS}}}row"
 _C = f"{{{SML_NS}}}c"
 _F = f"{{{SML_NS}}}f"
 _SHEET_DATA = f"{{{SML_NS}}}sheetData"
+_COLS = f"{{{SML_NS}}}cols"
+_COL = f"{{{SML_NS}}}col"
 _MERGE_CELLS = f"{{{SML_NS}}}mergeCells"
 _MERGE_CELL = f"{{{SML_NS}}}mergeCell"
 _DIMENSION = f"{{{SML_NS}}}dimension"
@@ -129,6 +131,7 @@ class Worksheet:
         # (rows?, first 1-based row or column moved, count) per insert, which a
         # Cell for a missing cell replays to follow the cells around it
         self._shifts: list[tuple[bool, int, int]] = []
+        self._column_styles: tuple | None = None  # see _column_style
 
     def __repr__(self) -> str:
         return f"<Worksheet {self._name!r}>"
@@ -188,6 +191,7 @@ class Worksheet:
         self._merge_map = None
 
     def _invalidate_bulk_indexes(self) -> None:
+        self._column_styles = None
         self._bulk_indexes_built = False
         self._row_index.clear()
         self._cell_index.clear()
@@ -297,14 +301,44 @@ class Worksheet:
                 if addr is not None:
                     col, _ = split_address(addr)
                     cells[col_to_index(col)] = c_elm
-        sheet_data = self._part.element.find(_SHEET_DATA)
         resolve = self._workbook.styles.resolve_xf_index
         styles: dict[int, int] = {}
         for col_idx in columns:
-            xf = resolve(sheet_data, row_elm, cells.get(col_idx), col_idx + 1)
+            xf = resolve(self, row_elm, cells.get(col_idx), col_idx + 1)
             if xf is not None:
                 styles[col_idx] = xf
         return styles
+
+    def _column_style(self, column: int) -> int | None:
+        """The ``style`` of the first ``<col>`` covering 1-based ``column`` that has one.
+
+        Looked up in the styled ``<col>`` ranges, read once and again when a
+        ``<cols>`` block is replaced or its last ``<col>`` changes, as when a
+        column width is set, and after the edits that clear the row index,
+        inserts among them. A ``<col>`` edited in place by other means after a
+        first write is not seen.
+        """
+        blocks = tuple(self._part.element.iterchildren(_COLS))
+        key = tuple([(b, next(b.iterchildren(reversed=True), None)) for b in blocks]) if blocks else ()
+        cache = self._column_styles
+        if cache is None or cache[0] != key:
+            ranges = [
+                (int(col.get("min", "0")), int(col.get("max", "0")), int(style))
+                for block in blocks
+                for col in block.iterchildren(_COL)
+                if (style := col.get("style")) is not None
+            ]
+            ordered = sorted(ranges)
+            if all(a[1] < b[0] for a, b in zip(ordered, ordered[1:])):
+                cache = (key, [low for low, _, _ in ordered], ordered)
+            else:  # overlapping ranges: the first in document order wins
+                cache = (key, None, ranges)
+            self._column_styles = cache
+        _, lows, ranges = cache
+        if lows is not None:
+            i = bisect.bisect_right(lows, column) - 1
+            return ranges[i][2] if i >= 0 and column <= ranges[i][1] else None
+        return next((style for low, high, style in ranges if low <= column <= high), None)
 
     def _resolve_write_address(self, address: str) -> str:
         anchor = self._merge_index.anchor_for(address)
@@ -313,7 +347,7 @@ class Worksheet:
         return address
 
     def _sheet_data(self) -> etree._Element:
-        sheet_data = self._part.element.find(_SHEET_DATA)
+        sheet_data = next(self._part.element.iterchildren(_SHEET_DATA), None)
         if sheet_data is None:
             sheet_data = etree.SubElement(self._part.element, _SHEET_DATA)
         return sheet_data
@@ -461,9 +495,7 @@ class Worksheet:
         c_elm = self._bulk_get_or_create_cell(address, row_elm)
         if len(row_elm) == cells:
             return c_elm, None
-        xf = self._workbook.styles.resolve_xf_index(
-            row_elm.getparent(), row_elm, None, col_to_index(col) + 1
-        )
+        xf = self._workbook.styles.resolve_xf_index(self, row_elm, None, col_to_index(col) + 1)
         if xf:
             c_elm.set("s", str(xf))
 
