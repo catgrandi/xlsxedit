@@ -78,7 +78,7 @@ To use xlsxedit as a pandas `ExcelWriter` / `read_excel` engine (`engine="xlsxed
 
 ### A. Template sample rows (copy from Excel)
 
-Put formatted sample cells on template rows (e.g. 7–8 for zebra). Bulk write copies each template cell's style to the same column of the written rows. Where the template row has no cell in a column, the style of the row (a row formatted as a whole) or of the column is copied instead. An empty cell without its own style copies the default style, as Excel shows it:
+Put formatted sample cells on template rows (e.g. 7–8 for zebra). Bulk write copies each template cell's style to the same column of the written rows. Where the template row has no cell in a column, the style of the row (a row formatted as a whole) or of the column is copied instead. A template cell in the default style copies nothing, so the written cell keeps its style; an empty cell without its own style is in the default style, as Excel shows it:
 
 ```python
 wb.write_dataframe(df, at_cell="A7", header=False, template_rows=[7, 8])

@@ -418,6 +418,10 @@ def test_an_empty_cell_without_its_own_style_is_in_style_zero():
     assert ws["C9"].style.bg_color is None
     ws.write_rows([("a", "b")], at_row=12, template_rows=5)
     assert (ws["A12"].style_index, ws["B12"].style_index) == (str(yellow), None)
+    ws["B14"].apply_style(bg_color="FF0000FF")
+    kept = ws["B14"].style_index
+    ws.write_rows([("a", "b")], at_row=14, template_rows=5)
+    assert ws["B14"].style_index == kept  # a default-style template cell copies nothing
     ws["C9"].apply_style(bold=True)
     assert ws["C9"].style.bold and ws["C9"].style.bg_color is None
 
