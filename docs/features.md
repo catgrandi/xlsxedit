@@ -50,7 +50,7 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | API | Summary | Notes |
 |-----|---------|-------|
 | `ws.name` | Sheet name | Read-only; rename via `wb.rename_worksheet` |
-| `ws[address]` | Get `Cell` at address | e.g. `"A1"`, `"BC100"`; a cell inside a merge gives the merge's top-left cell. Reading changes nothing: a cell the sheet does not have reads as empty, and its first write creates it, and its row, in the style Excel gives a cell typed there (the row's when the row is formatted as a whole, else the column's). A write that is refused, or that writes nothing such as `None`, creates no cell |
+| `ws[address]` | Get `Cell` at address | e.g. `"A1"`, `"BC100"`; a cell inside a merge gives the merge's top-left cell. Reading changes nothing: a cell the sheet does not have reads as empty, and its first write creates it, and its row, in the style Excel gives a cell typed there (the row's when the row is formatted as a whole, else the column's). A write that is refused, or that writes nothing such as `None`, creates no cell. Until then, a `Cell` you hold for it moves with inserted rows and columns, as cells do |
 | `ws.cells` | All populated cells | |
 | `ws.iter_cells()` | Iterate cells | |
 | `ws.iter_rows()` | Iterate `(row_num, [cells])` | |
