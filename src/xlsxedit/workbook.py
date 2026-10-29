@@ -34,7 +34,14 @@ from xlsxedit.opc.constants import CT, OFFICE_REL_NS, RT, SML_NS
 from xlsxedit.opc.package import OpcPackage
 from xlsxedit.opc.part import Part
 from xlsxedit.opc.packuri import PackURI
-from xlsxedit.oxml.address import col_to_index, index_to_col, join_address, split_address
+from xlsxedit.oxml.address import (
+    MAX_COL,
+    MAX_ROW,
+    col_to_index,
+    index_to_col,
+    join_address,
+    split_address,
+)
 from xlsxedit.oxml.parser import parse_template_xml
 from xlsxedit.parts import ChartPart, TablePart, WorkbookPart, WorksheetPart, register_part_types
 from xlsxedit.shared_strings import SharedStringTable
@@ -473,27 +480,21 @@ class Workbook:
 
         Size kwargs are forwarded to :meth:`Worksheet.add_image` (pixels).
         With only ``width`` or only ``height``, aspect ratio is preserved.
+        Every image is placed before any cell changes, so an image that would
+        pass the edge of its sheet raises ``ValueError`` and replaces nothing.
         """
-        total = 0
-        for ws in self._sheets:
-            for cell in ws.iter_cells():
-                if cell.has_formula or not cell.is_string:
-                    continue
-                if cell.value != placeholder:
-                    continue
-                addr = cell.address
-                cell.value = None
-                ws.add_image(
-                    image_path,
-                    anchor=addr,
-                    name=placeholder.strip("{}"),
-                    width=width,
-                    height=height,
-                    max_width=max_width,
-                    max_height=max_height,
-                )
-                total += 1
-        return total
+        found = [
+            (ws, cell)
+            for ws in self._sheets
+            for cell in ws.iter_cells()
+            if not cell.has_formula and cell.is_string and cell.value == placeholder
+        ]
+        size = {"width": width, "height": height, "max_width": max_width, "max_height": max_height}
+        anchors = [self._image_anchor(ws, image_path, cell.address, **size) for ws, cell in found]
+        for (ws, cell), anchor_elm in zip(found, anchors):
+            cell.value = None
+            self._attach_image(ws, image_path, anchor_elm, placeholder.strip("{}"))
+        return len(found)
 
     def _replace_on_sheet(
         self, ws: Worksheet, old: str, new, *, value_type: str | None = None
@@ -690,27 +691,55 @@ class Workbook:
         offset_x: int = 0,
         offset_y: int = 0,
     ) -> Picture:
+        anchor_elm = self._image_anchor(
+            ws,
+            image_path,
+            anchor,
+            width=width,
+            height=height,
+            max_width=max_width,
+            max_height=max_height,
+            offset_x=offset_x,
+            offset_y=offset_y,
+        )
+        return self._attach_image(ws, image_path, anchor_elm, name)
+
+    def _image_anchor(
+        self,
+        ws: Worksheet,
+        image_path: str | Path,
+        anchor: str,
+        *,
+        width: int | None,
+        height: int | None,
+        max_width: int,
+        max_height: int,
+        offset_x: int = 0,
+        offset_y: int = 0,
+    ) -> etree._Element:
+        """The anchor of a picture ``add_image`` adds at ``anchor``, placed on ``ws``
+        without changing anything: Excel's own anchor for an inserted picture, two
+        cells, moving with them but keeping its size. Raises ``ValueError`` for a
+        picture that would leave the sheet."""
         offset_x = _validate_offset_px(offset_x)
         offset_y = _validate_offset_px(offset_y)
-        path = Path(image_path)
         display_w, display_h = resolve_display_size(
-            path,
+            Path(image_path),
             width=width,
             height=height,
             max_width=max_width,
             max_height=max_height,
         )
         col, row = split_address(anchor)
-
-        # Excel's own anchor for an inserted picture: two cells, moving with them
-        # but keeping its size. Placed before the package changes, so a picture
-        # that would pass the edge of the sheet changes nothing.
+        col_idx = col_to_index(col)
+        if not (0 <= col_idx < MAX_COL and 1 <= row <= MAX_ROW):
+            raise ValueError(f"a picture anchored at {anchor!r} puts a corner outside the sheet")
         template_path = _default_xlsx_path().parent / "default-picture-anchor.xml"
         anchor_elm = parse_template_xml(template_path.read_bytes()).find(_XDR_TWO_CELL)
         if anchor_elm is None:
             raise ValueError("picture anchor template missing")
         from_elm = anchor_elm.find(_XDR_FROM)
-        from_elm.find(_XDR_COL).text = str(col_to_index(col))
+        from_elm.find(_XDR_COL).text = str(col_idx)
         from_elm.find(_XDR_ROW).text = str(row - 1)
         _set_from_offset_emu(anchor_elm, _px_to_emu(offset_x), _px_to_emu(offset_y))
         cx, cy = int(display_w * EMU_PER_PIXEL), int(display_h * EMU_PER_PIXEL)
@@ -726,7 +755,13 @@ class Workbook:
             if a_ext is not None:
                 a_ext.set("cx", str(cx))
                 a_ext.set("cy", str(cy))
+        return anchor_elm
 
+    def _attach_image(
+        self, ws: Worksheet, image_path: str | Path, anchor_elm: etree._Element, name: str | None
+    ) -> Picture:
+        """Add the media and ``anchor_elm`` from :meth:`_image_anchor` to ``ws``'s drawing."""
+        path = Path(image_path)
         data = path.read_bytes()
         ext = path.suffix.lower().lstrip(".") or "jpeg"
         ct = mimetypes.types_map.get(f".{ext}", CT.JPEG)
