@@ -558,10 +558,12 @@ def rewrite_anchored_refs(
     format where cells would need different formulas; here one formula keeps
     serving every area.
 
-    When the new top-left cell is itself inserted, the format spans every row
-    (column) and stays where it is: its relative references stay and only the
-    absolute ones move. Excel does the same for most such formulas, but moves
-    some ranges that mix relative and absolute bounds as a whole.
+    When the new top-left cell is itself inserted, because the format spans
+    every row (column) and stays where it is, or because a shift restricted
+    to a span split the format's areas, its relative references stay and only
+    the absolute ones move. Excel does the same for most formulas over every
+    row, but moves some ranges that mix relative and absolute bounds as a
+    whole.
     """
     old, new = before.top_left, after.top_left
     if old is None or new is None:

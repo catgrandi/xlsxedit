@@ -272,6 +272,48 @@ def test_a_span_delete_trims_an_area_inside_the_deleted_rows():
     assert CellRange.parse("B5:C5").shift(True, 5, -2, (2, 3)) is None
 
 
+# Recorded from Excel for Microsoft 365 on Windows (2026-10-29): the range of a
+# conditional format (and, alike, a data validation) after "insert cells" or
+# "delete cells" over part of its columns (rows).
+_SPAN_PIECES_TABLE = [
+    ("A5:F10", (True, 7, 1, (1, 4)), "A5:F6 E7:F10 A7:D11"),
+    ("A5:F10", (True, 7, 1, (3, 4)), "A5:F6 A7:B10 E7:F10 C7:D11"),
+    ("C9:F12", (True, 7, 1, (1, 4)), "E9:F12 C10:D13"),
+    ("A5:F10", (True, 7, -1, (1, 4)), "A5:F6 E7:F10 A7:D9"),
+    ("C3:H10", (False, 5, 1, (5, 8)), "C3:H4 C9:H10 C5:I8"),
+    ("A5:D10", (True, 7, 1, (1, 4)), "A5:D11"),
+    ("A5:F6", (True, 7, 1, (1, 4)), "A5:F6"),
+    ("C:F", (True, 7, 1, (1, 4)), "C:F"),
+]
+
+
+@pytest.mark.parametrize(("ref", "op", "expected"), _SPAN_PIECES_TABLE)
+def test_an_area_of_a_range_list_across_a_span_splits_as_in_excel(ref: str, op, expected: str):
+    pieces = CellRange.parse(ref).shift_pieces(*op)
+    assert " ".join(str(p) for p in pieces) == expected
+    assert str(SheetRangeSet.parse(ref).shift(*op)) == expected
+
+
+def test_a_span_delete_of_all_the_cells_in_the_span_leaves_the_rest():
+    assert CellRange.parse("B5:C6").shift_pieces(True, 5, -2, (2, 3)) == ()
+    pieces = CellRange.parse("A5:D6").shift_pieces(True, 5, -2, (2, 3))
+    assert [str(p) for p in pieces] == ["A5:A6", "D5:D6"]
+
+
+def test_a_range_list_the_shift_does_not_change_is_returned_as_it_is():
+    ranges = SheetRangeSet.parse("A1:F6 H1:H20")
+    assert ranges.shift(True, 7, 1, (1, 4)) is ranges
+    reaching = SheetRangeSet.parse("A2:F1048576")  # its part in A:D still reaches the last row
+    assert reaching.shift(True, 10, 1, (1, 4)) is reaching
+    assert reaching.shift(True, 5, -2, (1, 4)) is reaching
+
+
+def test_the_part_in_the_span_of_an_area_on_the_last_row_keeps_reaching_it():
+    """As a range on the last row does when cells are deleted (``_SPANS_TABLE``)."""
+    pieces = CellRange.parse("A1048576:C1048576").shift_pieces(True, 5, -2, (2, 2))
+    assert [str(p) for p in pieces] == ["A1048576", "C1048576", "B1048574:B1048576"]
+
+
 @pytest.mark.parametrize(
     ("text", "cols", "rows", "expected"),
     [
