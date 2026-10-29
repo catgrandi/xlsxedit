@@ -33,10 +33,14 @@ twin and the range it covers.
 | `TableWithContentBelow.xlsx` | 1 | 1 | 0 | 0 | 1 | 10 |
 | `TestBook.xlsx` | 2 | 0 | 0 | 0 | 0 | 0 |
 | `TextSytle.xlsx` | 1 | 0 | 0 | 0 | 0 | 0 |
+| `excel-reference/delete-rows-at-drawing-edges/after.xlsx` | 1 | 0 | 0 | 0 | 14 | 0 |
+| `excel-reference/delete-rows-at-drawing-edges/before.xlsx` | 1 | 0 | 0 | 0 | 15 | 0 |
 | `excel-reference/delete-rows-under-cf/after.xlsx` | 2 | 0 | 6 | 2 | 6 | 0 |
 | `excel-reference/delete-rows-under-cf/before.xlsx` | 2 | 0 | 7 | 2 | 7 | 0 |
 | `excel-reference/insert-rows-above-table/after.xlsx` | 2 | 1 | 2 | 2 | 0 | 1 |
 | `excel-reference/insert-rows-above-table/before.xlsx` | 2 | 1 | 2 | 2 | 0 | 1 |
+| `excel-reference/insert-rows-at-drawing-edges/after.xlsx` | 1 | 0 | 0 | 0 | 9 | 0 |
+| `excel-reference/insert-rows-at-drawing-edges/before.xlsx` | 1 | 0 | 0 | 0 | 9 | 0 |
 | `excel-reference/insert-rows-through-drawings/after.xlsx` | 1 | 0 | 0 | 0 | 8 | 0 |
 | `excel-reference/insert-rows-through-drawings/before.xlsx` | 1 | 0 | 0 | 0 | 8 | 0 |
 | `excel-reference/table-append-row/after.xlsx` | 1 | 1 | 1 | 1 | 0 | 6 |
@@ -309,6 +313,51 @@ twin and the range it covers.
 
 - custom row heights: 6=60
 
+## `excel-reference/delete-rows-at-drawing-edges/after.xlsx`
+
+- Parts: drawing 1
+
+### `Edges`
+
+- Drawing anchors:
+  - twoCellAnchor B2 (+38100, +0) to B5 (+601980, +0): shape 'Ends at delete two-cell'
+  - twoCellAnchor F3 (+38100, +0) to F5 (+601980, +0): shape 'Ends inside delete two-cell'
+  - twoCellAnchor H5 (+38100, +0) to H7 (+601980, +0): shape 'Starts inside delete two-cell'
+  - twoCellAnchor J5 (+38100, +0) to J8 (+601980, +0): shape 'Starts after delete two-cell'
+  - twoCellAnchor editAs="oneCell" L2 (+38100, +0) to L5 (+601981, +0): shape 'Ends at delete one-cell'
+  - twoCellAnchor editAs="oneCell" N5 (+38100, +0) to N8 (+601980, +0): shape 'Exactly deleted one-cell'
+  - twoCellAnchor editAs="oneCell" P3 (+38100, +0) to P7 (+601980, +0): shape 'Ends inside delete one-cell'
+  - twoCellAnchor editAs="oneCell" R5 (+38100, +0) to R9 (+601980, +0): shape 'Starts inside delete one-cell'
+  - twoCellAnchor editAs="oneCell" T5 (+38100, +0) to T8 (+601980, +0): shape 'Starts after delete one-cell'
+  - twoCellAnchor editAs="absolute" V2 (+38100, +0) to V5 (+601981, +0): shape 'Ends at delete absolute'
+  - twoCellAnchor editAs="absolute" X5 (+38099, +0) to X8 (+601980, +0): shape 'Exactly deleted absolute'
+  - twoCellAnchor editAs="absolute" Z3 (+38100, +0) to Z7 (+601980, +0): shape 'Ends inside delete absolute'
+  - twoCellAnchor editAs="absolute" AB6 (+38101, +0) to AB10 (+601981, +0): shape 'Starts inside delete absolute'
+  - twoCellAnchor editAs="absolute" AD8 (+38100, +0) to AD11 (+601980, +0): shape 'Starts after delete absolute'
+
+## `excel-reference/delete-rows-at-drawing-edges/before.xlsx`
+
+- Parts: drawing 1
+
+### `Edges`
+
+- Drawing anchors:
+  - twoCellAnchor B2 (+38100, +0) to B5 (+601980, +0): shape 'Ends at delete two-cell'
+  - twoCellAnchor D5 (+38100, +0) to D8 (+601980, +0): shape 'Exactly deleted two-cell'
+  - twoCellAnchor F3 (+38100, +0) to F7 (+601980, +0): shape 'Ends inside delete two-cell'
+  - twoCellAnchor H6 (+38100, +0) to H10 (+601980, +0): shape 'Starts inside delete two-cell'
+  - twoCellAnchor J8 (+38100, +0) to J11 (+601980, +0): shape 'Starts after delete two-cell'
+  - twoCellAnchor editAs="oneCell" L2 (+38100, +0) to L5 (+601981, +0): shape 'Ends at delete one-cell'
+  - twoCellAnchor editAs="oneCell" N5 (+38100, +0) to N8 (+601980, +0): shape 'Exactly deleted one-cell'
+  - twoCellAnchor editAs="oneCell" P3 (+38100, +0) to P7 (+601980, +0): shape 'Ends inside delete one-cell'
+  - twoCellAnchor editAs="oneCell" R6 (+38100, +0) to R10 (+601980, +0): shape 'Starts inside delete one-cell'
+  - twoCellAnchor editAs="oneCell" T8 (+38100, +0) to T11 (+601980, +0): shape 'Starts after delete one-cell'
+  - twoCellAnchor editAs="absolute" V2 (+38100, +0) to V5 (+601981, +0): shape 'Ends at delete absolute'
+  - twoCellAnchor editAs="absolute" X5 (+38099, +0) to X8 (+601980, +0): shape 'Exactly deleted absolute'
+  - twoCellAnchor editAs="absolute" Z3 (+38100, +0) to Z7 (+601980, +0): shape 'Ends inside delete absolute'
+  - twoCellAnchor editAs="absolute" AB6 (+38101, +0) to AB10 (+601981, +0): shape 'Starts inside delete absolute'
+  - twoCellAnchor editAs="absolute" AD8 (+38100, +0) to AD11 (+601980, +0): shape 'Starts after delete absolute'
+
 ## `excel-reference/delete-rows-under-cf/after.xlsx`
 
 - Parts: drawing 1, sharedStrings 1
@@ -418,6 +467,40 @@ twin and the range it covers.
 ### `Lists`
 
 - No tables, formats, validations, drawings, merges or formulas.
+
+## `excel-reference/insert-rows-at-drawing-edges/after.xlsx`
+
+- Parts: drawing 1
+
+### `Edges`
+
+- Drawing anchors:
+  - twoCellAnchor B3 (+38100, +0) to B7 (+601980, +0): shape 'Ends at insert two-cell'
+  - twoCellAnchor D9 (+38100, +0) to D13 (+601980, +0): shape 'Starts at insert two-cell'
+  - twoCellAnchor F5 (+38100, +0) to F13 (+601980, +0): shape 'Across insert two-cell'
+  - twoCellAnchor editAs="oneCell" H3 (+38100, +0) to H7 (+601980, +0): shape 'Ends at insert one-cell'
+  - twoCellAnchor editAs="oneCell" J9 (+38100, +0) to J13 (+601980, +0): shape 'Starts at insert one-cell'
+  - twoCellAnchor editAs="oneCell" L5 (+38100, +0) to L11 (+601981, +0): shape 'Across insert one-cell'
+  - twoCellAnchor editAs="absolute" N3 (+38100, +0) to N7 (+601980, +0): shape 'Ends at insert absolute'
+  - twoCellAnchor editAs="absolute" P7 (+38100, +0) to P11 (+601980, +0): shape 'Starts at insert absolute'
+  - twoCellAnchor editAs="absolute" R5 (+38100, +0) to R11 (+601980, +0): shape 'Across insert absolute'
+
+## `excel-reference/insert-rows-at-drawing-edges/before.xlsx`
+
+- Parts: drawing 1
+
+### `Edges`
+
+- Drawing anchors:
+  - twoCellAnchor B3 (+38100, +0) to B7 (+601980, +0): shape 'Ends at insert two-cell'
+  - twoCellAnchor D7 (+38100, +0) to D11 (+601980, +0): shape 'Starts at insert two-cell'
+  - twoCellAnchor F5 (+38100, +0) to F11 (+601980, +0): shape 'Across insert two-cell'
+  - twoCellAnchor editAs="oneCell" H3 (+38100, +0) to H7 (+601980, +0): shape 'Ends at insert one-cell'
+  - twoCellAnchor editAs="oneCell" J7 (+38100, +0) to J11 (+601980, +0): shape 'Starts at insert one-cell'
+  - twoCellAnchor editAs="oneCell" L5 (+38100, +0) to L11 (+601981, +0): shape 'Across insert one-cell'
+  - twoCellAnchor editAs="absolute" N3 (+38100, +0) to N7 (+601980, +0): shape 'Ends at insert absolute'
+  - twoCellAnchor editAs="absolute" P7 (+38100, +0) to P11 (+601980, +0): shape 'Starts at insert absolute'
+  - twoCellAnchor editAs="absolute" R5 (+38100, +0) to R11 (+601980, +0): shape 'Across insert absolute'
 
 ## `excel-reference/insert-rows-through-drawings/after.xlsx`
 

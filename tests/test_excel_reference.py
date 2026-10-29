@@ -151,6 +151,19 @@ OPERATIONS: dict[str, Operation] = {
         known=dict.fromkeys(ASPECTS, _NO_DELETE),
         raises=AttributeError,
     ),
+    "insert-rows-at-drawing-edges": Operation(
+        apply=lambda wb: wb["Edges"].insert_rows([[]] * 2, at_row=7),
+        band="Edges!A1:B20",
+        changed=("drawings",),
+        known={"drawings": "#21: drawing anchors do not move on insert"},
+    ),
+    "delete-rows-at-drawing-edges": Operation(
+        apply=lambda wb: wb["Edges"].delete_rows(5, 3),
+        band="Edges!A1:B20",
+        changed=("drawings",),
+        known=dict.fromkeys(ASPECTS, _NO_DELETE),
+        raises=AttributeError,
+    ),
 }
 
 
