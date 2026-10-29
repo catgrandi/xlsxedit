@@ -27,6 +27,7 @@ from xlsxedit.drawing import (
     _XDR_ABSOLUTE,
     _XDR_COL,
     _XDR_COLOFF,
+    _XDR_EXT,
     _XDR_FROM,
     _XDR_ONE_CELL,
     _XDR_ROW,
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
     from xlsxedit.row_shift import _Shift
 
 _Marker = tuple[int, int]  # (line, offset in EMU) on the shifted axis
+_MARKER_TAGS = (_XDR_COL, _XDR_COLOFF, _XDR_ROW, _XDR_ROWOFF)
 
 
 def anchor_in_span(shift: _Shift, col: int, row: int) -> bool:
@@ -189,7 +191,10 @@ class DrawingShift:
             return False
         top = self._axis_part(start)
         if anchor.tag == _XDR_ONE_CELL:
-            return self._plan_corner(from_elm, top, self._move(top, top=None, what=what), what)
+            new_top = self._move(top, top=None, what=what)
+            if new_top != top:
+                self._check_extent(anchor, new_top, what)
+            return self._plan_corner(from_elm, top, new_top, what)
         to_elm = anchor.find(_XDR_TO)
         if to_elm is None:
             return False
@@ -207,6 +212,17 @@ class DrawingShift:
             new_bottom = self._move(bottom, top=top[0], what=what)
         changed = self._plan_corner(from_elm, top, new_top, what)
         return self._plan_corner(to_elm, bottom, new_bottom, what) or changed
+
+    def _check_extent(self, anchor: etree._Element, top: _Marker, what: str) -> None:
+        """Refuse to move a one-cell anchor whose object, ``xdr:ext`` in size, would
+        then pass the last row (column)."""
+        ext = anchor.find(_XDR_EXT)
+        try:
+            size = int(ext.get("cy" if self._shift.rows else "cx"))
+        except (AttributeError, TypeError, ValueError):
+            return  # no size to keep on the grid
+        if self._after.advance(top[0], top[1] + max(size - 1, 0)) is None:
+            raise self._shift.overflow(what)
 
     def _deletes(self, top: _Marker, bottom: _Marker) -> bool:
         """Whether a delete takes away a two-cell anchor: both its corners lie in
@@ -256,6 +272,8 @@ def _read_marker(marker_elm: etree._Element, what: str) -> tuple[int, int, int, 
     try:
         marker = _marker(marker_elm)
     except ValueError:
+        marker = None
+    if any(marker_elm.find(tag) is None for tag in _MARKER_TAGS):
         marker = None
     if marker is None or marker[0] < 0 or marker[2] < 0:
         raise InvalidRangeError(

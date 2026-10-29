@@ -206,6 +206,30 @@ def test_an_anchor_pushed_off_the_grid_refuses_the_insert():
     assert read_pkg(wb) == before
 
 
+def test_a_one_cell_anchor_whose_extent_would_pass_the_last_row_refuses_the_insert(png):  # noqa: F811
+    wb = _walker_workbook(png)
+    ws = wb["Sheet1"]
+    one = drawing_parts_for_worksheet(ws)[0].element.find(f"{_XDR}oneCellAnchor")
+    one.find(f"{_XDR}from/{_XDR}row").text = "1048570"  # five 20 px rows: one row to spare
+    before = read_pkg(wb)
+    with pytest.raises(GridOverflowError, match="drawing object 'one'"):
+        ws.insert_rows([[]] * 2, at_row=1048000)
+    assert read_pkg(wb) == before
+    ws.insert_rows([[]], at_row=1048000)  # now it ends in the last row
+    assert one.find(f"{_XDR}from/{_XDR}row").text == "1048571"
+
+
+def test_a_corner_without_its_row_refuses_the_insert():
+    wb = Workbook.open(INSPECT_FIXTURES["DrawingAnchors"])
+    root = drawing_parts_for_worksheet(wb["Anchors"])[0].element
+    marker = root.find(f".//{_XDR}from")
+    marker.remove(marker.find(f"{_XDR}row"))
+    before = read_pkg(wb)
+    with pytest.raises(InvalidRangeError, match="xdr:from does not name a cell"):
+        wb["Anchors"].insert_rows([[]], at_row=1)
+    assert read_pkg(wb) == before
+
+
 def test_an_anchor_that_names_no_cell_refuses_the_insert():
     wb = Workbook.open(INSPECT_FIXTURES["DrawingAnchors"])
     root = drawing_parts_for_worksheet(wb["Anchors"])[0].element
