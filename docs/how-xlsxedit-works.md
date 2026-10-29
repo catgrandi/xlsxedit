@@ -243,7 +243,7 @@ Neither approach produces a byte-identical ZIP: the container itself (member ord
 | `table.py` | `Table`, `TableColumn` and `TableStyle` over a live table part: resize, header and totals rows, and the name and range checks `add_table` and `write_dataframe` share |
 | `shared_strings.py` | SST display text + in-place `<t>` replace |
 | `parts.py` | Registers the typed parts: workbook, worksheet, SST, styles, core properties, drawing, chart, table |
-| `row_shift.py` | Plans and applies `insert_rows` / `insert_columns`; the planner also describes deletes and shifts restricted to a span of columns or rows |
+| `row_shift.py` | Plans and applies `insert_rows` / `insert_columns`; the planner also describes deletes and shifts restricted to a span of columns or rows, and `shift_cells` carries out those shifts, moving only the span's cells as Excel's *Insert Cells* and *Delete Cells* do (no public method runs it yet) |
 | `range_set.py` | `ST_Ref` / `ST_Sqref` ranges and how they shift when rows or columns are inserted or deleted; an `ST_Sqref` area across a span's edge splits |
 | `opc/package.py` | Load/save orchestration |
 | `opc/pkgreader.py` | Relationship-graph walk |
