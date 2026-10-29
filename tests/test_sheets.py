@@ -6,6 +6,7 @@ import pytest
 
 from xlsxedit import Workbook, WorksheetNotFoundError
 from tests.preservation import assert_preserved, read_pkg
+from tests.smoke_workbook import SMOKE_IMAGE
 
 
 def test_add_worksheet():
@@ -85,7 +86,7 @@ def test_a_removed_sheets_worksheet_raises_on_use():
     gone = wb.add_worksheet("Gone")
     gone.write_rows([[1, 2], [3, 4]], at_row=1)
     gone.merge_cells("A3:B3")
-    cell = gone["A1"]
+    cell, missing = gone["A1"], gone["C9"]
     assert gone.row_dimensions[1].height is None  # builds the row index
     assert gone.merged_ranges == ["A3:B3"]
     wb.remove_worksheet("Gone")
@@ -105,9 +106,14 @@ def test_a_removed_sheets_worksheet_raises_on_use():
         lambda: gone.clear_range("A1:B2"),
         lambda: setattr(cell, "value", 5),
         lambda: cell.apply_style(bold=True),
+        lambda: missing.value,
+        lambda: setattr(missing, "value", 5),
+        lambda: gone.add_image(SMOKE_IMAGE, anchor="B2"),
+        lambda: gone.add_chart(anchor="E2", data_range="A1:B2"),
     ):
         with pytest.raises(WorksheetNotFoundError, match="'Gone' was removed"):
             use()
     assert gone.name == "Gone"
+    assert (repr(missing), missing.address) == ("<Cell 'C9'>", "C9")
     assert wb["Gone"] is replacement
     assert_preserved(before, read_pkg(wb))
