@@ -101,6 +101,7 @@ Passed through to xlsxedit (not to pandas):
 engine_kwargs={
     "large": True,                 # lighter open for huge templates
     "mode": "overwrite",           # or "insert" (shifts rows down)
+    "shift_drawings": True,        # insert mode: False leaves drawing anchors where they are
     "template_rows": [7, 8],       # copy template sample-row styles
     "clear_range": "A5:D1000",     # clear before overwrite
     "row_styles": [...],

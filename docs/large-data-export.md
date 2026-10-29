@@ -27,7 +27,7 @@ Rows 5-7   Data from DataFrame          ← written at at_cell="A5" in the tutor
 | Mode | API | Behavior |
 |------|-----|----------|
 | **overwrite** (default) | `write_rows` / `write_dataframe(mode="overwrite")` | Writes at fixed rows; overwrites cells in that range |
-| **insert** | `insert_rows` / `write_dataframe(mode="insert")` | Inserts rows at `at_cell`; shifts footer and content below down |
+| **insert** | `insert_rows` / `write_dataframe(mode="insert")` | Inserts rows at `at_cell`; shifts footer and content below down, and moves drawing anchors unless `shift_drawings=False` |
 
 Insert is **not** faster than overwrite — choose insert when rows below `at_cell` must move down. What insert moves, what it leaves alone, and when it refuses are listed in [features.md](features.md#inserting-rows-and-columns).
 

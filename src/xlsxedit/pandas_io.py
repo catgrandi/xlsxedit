@@ -126,6 +126,7 @@ class XlsxeditWriter(ExcelWriter):
         self._column_styles = engine_kwargs.pop("column_styles", None)
         self._clear_range = engine_kwargs.pop("clear_range", None)
         self._string_columns = engine_kwargs.pop("string_columns", None)
+        self._shift_drawings = bool(engine_kwargs.pop("shift_drawings", True))
         self._pending_default_replace = False
 
         super().__init__(
@@ -269,6 +270,7 @@ class XlsxeditWriter(ExcelWriter):
             ws.insert_rows(
                 row_list,
                 at_cell=join_address(index_to_col(min_col), min_row),
+                shift_drawings=self._shift_drawings,
                 **style_kwargs,
             )
         else:
