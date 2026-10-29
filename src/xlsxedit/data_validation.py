@@ -229,7 +229,7 @@ class DataValidation:
 def _sheet_name(worksheet: Worksheet) -> str | None:
     """The sheet's name in its workbook now; ``None`` once the sheet was removed."""
     for name, part in worksheet._workbook._workbook_part.worksheet_parts():
-        if part is worksheet._part:
+        if part is worksheet._live_part:
             return name
     return None
 
@@ -240,8 +240,8 @@ def _is_listed(worksheet: Worksheet, element: etree._Element) -> bool:
         element.tag == _DATA_VALIDATION
         and block is not None
         and block.tag == _DATA_VALIDATIONS
-        and block.getparent() is worksheet._part.element
         and _sheet_name(worksheet) is not None
+        and block.getparent() is worksheet._part.element
     )
 
 

@@ -19,13 +19,13 @@ Docs: [xlsxedit.jonasruilong.com](https://xlsxedit.jonasruilong.com)
 | `Workbook()` | New workbook from bundled template | Same as `Workbook.create()` |
 | `Workbook.create()` | New workbook from bundled template | Same as `Workbook()` |
 | `wb.save(path, *, include_orphans=False)` | Write package to a path or binary file-like | Raises `ValueError`, writing nothing, if two parts would share a name (ignoring case) |
-| `wb[sheet_name]` | Get worksheet by name | `KeyError` if missing |
+| `wb[sheet_name]` | Get worksheet by name | `KeyError` if missing. The same `Worksheet` for a sheet on every call, before and after sheets are added, copied, renamed or removed |
 | `wb.sheetnames` | List of sheet names | |
 | `wb.worksheets` | List of `Worksheet` objects | |
 | `wb.add_worksheet(name)` | Add a sheet | Blank template |
 | `wb.copy_worksheet(name, new_name)` | Duplicate an existing sheet | Cells, styles, merges, drawings/tables; images shared; the copy's charts and the defined names scoped to it refer to the copy where the source's referred to the source, though a chartEx chart, which reads its data through workbook-level names, still plots the source; its drawing objects get fresh `a16:creationId`s and keep their `cNvPr` ids; drops `calcChain.xml`. A copy that fails changes nothing |
-| `wb.rename_worksheet(old, new)` | Rename a sheet | |
-| `wb.remove_worksheet(name, *, keep_unreachable=False)` | Remove a sheet | Cannot remove last sheet; also drops `calcChain.xml`, the sheet's own defined names and the parts only that sheet reached (drawings, charts, tables) unless `keep_unreachable=True`; renumbers later `localSheetId`s and the workbook view's `activeTab`/`firstSheet` |
+| `wb.rename_worksheet(old, new)` | Rename a sheet | Returns the sheet's `Worksheet`, whose `name` changes in place |
+| `wb.remove_worksheet(name, *, keep_unreachable=False)` | Remove a sheet | Cannot remove last sheet; also drops `calcChain.xml`, the sheet's own defined names and the parts only that sheet reached (drawings, charts, tables) unless `keep_unreachable=True`; renumbers later `localSheetId`s and the workbook view's `activeTab`/`firstSheet`. The removed sheet's `Worksheet`, and writes through its cells, raise `WorksheetNotFoundError` |
 | `wb.replace(old, new, *, value_type=None)` | SAR on all sheets | Substring or whole-cell typed; sets `fullCalcOnLoad` when any cell changes |
 | `wb.set_full_calc_on_load()` | Request Excel full recalc on open | Sets `calcPr/@fullCalcOnLoad`; `replace`, `cell.formula`, `insert_rows` and `insert_columns` already set it |
 | `wb.find(value, *, sheet=None)` | First cell with exact ``value`` | All sheets if ``sheet`` omitted; skips formulas |
