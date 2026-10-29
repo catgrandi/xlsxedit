@@ -2,7 +2,8 @@
 
 Where a rule was not obvious, the expected result was recorded from Excel for
 Microsoft 365 on Windows (2026-10-19): page breaks, frozen panes and the
-references in ``test_range_shift.py``.
+references in ``test_range_shift.py``; and on 2026-10-29 the drawing objects
+"insert cells" moves and Excel's prompt before it unmerges cells.
 """
 
 from __future__ import annotations
@@ -83,6 +84,37 @@ def test_a_span_moves_only_the_cells_inside_it():
     assert not shift.splits(CellRange.parse("B1:C9"))
     assert shift.splits(CellRange.parse("A1:D9"))
     assert _Shift(True, 5, 1, (1, 16_384)).span is None
+
+
+def test_tears_tells_which_areas_a_shift_moves_only_part_of():
+    rows_7 = _Shift(True, 7, 1, (1, 4))
+    assert rows_7.tears(CellRange.parse("A6:A8"))  # the inserted row cuts through it
+    assert not rows_7.tears(CellRange.parse("A7:A8"))
+    assert rows_7.tears(CellRange.parse("A9:F9"))  # across the span's edge
+    assert not rows_7.tears(CellRange.parse("A1:F6"))  # above the inserted row
+    assert rows_7.tears(CellRange.parse("C:F"))  # over every row, but its cells in C:D move
+    assert rows_7.tears(CellRange.parse("A:A"))  # the inserted row cuts through it
+    assert _Shift(True, 7, -1, (1, 4)).tears(CellRange.parse("A6:A8"))
+    assert not _Shift(True, 7, -2, (1, 4)).tears(CellRange.parse("A7:A8"))  # deleted whole
+    assert _Shift(True, 7, -2, (1, 4)).tears(CellRange.parse("A8:A9"))
+    assert _Shift(True, 7, 1).tears(CellRange.parse("A6:A8"))
+
+
+@pytest.mark.parametrize(
+    ("cells", "shift", "moves"),
+    [
+        ("A12:B14", _Shift(True, 7, 1, (1, 4)), True),
+        ("C12:F14", _Shift(True, 7, 1, (1, 4)), False),  # across the span's edge
+        ("A12:B14", _Shift(True, 7, 1, (2, 4)), False),  # starts left of the span
+        ("A5:B9", _Shift(True, 7, 1, (1, 4)), False),  # the inserted row cuts through it
+        ("A7:B9", _Shift(True, 7, 1, (1, 4)), True),
+        ("A9:B9", _Shift(True, 7, -1, (1, 4)), True),
+        ("A7:B9", _Shift(True, 7, -1, (1, 4)), False),
+    ],
+)
+def test_carries_holds_for_the_drawing_objects_excel_moves(cells, shift, moves):
+    """Recorded 2026-10-29: shapes over these cells, "insert cells A7:D7" (B7:D7)."""
+    assert shift.carries(CellRange.parse(cells)) is moves
 
 
 @pytest.mark.parametrize(
@@ -297,9 +329,18 @@ def test_selection_areas_that_merge_keep_the_active_area():
 
 def test_a_span_shift_that_would_split_a_merge_is_refused():
     _, ws = _sheet('<mergeCells count="2"><mergeCell ref="B7:C8"/><mergeCell ref="A5:C6"/></mergeCells>')
-    with pytest.raises(InvalidRangeError, match="in columns B:C would move only part of merged cells A5:C6"):
+    with pytest.raises(
+        InvalidRangeError, match="in columns B:C would move only part of merged cells A5:C6"
+    ) as err:
         _shift(ws, _Shift(True, 5, 1, (2, 3)))
+    assert "(Excel: This operation will cause some merged cells to unmerge." in str(err.value)
     assert ws.merged_ranges == ["B7:C8", "A5:C6"]
+
+
+def test_a_merge_over_every_row_across_the_span_edge_is_refused_too():
+    _, ws = _sheet('<mergeCells count="1"><mergeCell ref="A1:B1048576"/></mergeCells>')
+    with pytest.raises(InvalidRangeError, match="would move only part of merged cells A1:B1048576"):
+        _shift(ws, _Shift(True, 5, 1, (1, 1)))
 
 
 def test_deleted_frozen_columns_shrink_the_split():
