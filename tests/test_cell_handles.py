@@ -362,7 +362,8 @@ def test_new_cells_take_column_styles_as_the_columns_change():
     green = wb.styles.allocate_cell_style(bg_color="FF00FF00")
     ws.column_dimensions["B"].width = 10
     cols = ws._part.element.find(f"{{{SML_NS}}}cols")
-    etree.SubElement(cols, f"{{{SML_NS}}}col", min="3", max="5", width="9", style=str(green))
+    for low, high in (("3", "5"), ("8", "8")):  # as a template brings them; no API styles a column
+        etree.SubElement(cols, f"{{{SML_NS}}}col", min=low, max=high, width="9", style=str(green))
     ws["C1"].value = 1
     cache = ws._column_styles
     for row in range(2, 50):
@@ -375,7 +376,6 @@ def test_new_cells_take_column_styles_as_the_columns_change():
         ws[address].value = 1
         assert int(ws[address].style_index or 0) == expected, address
 
-    etree.SubElement(cols, f"{{{SML_NS}}}col", min="8", max="8", width="9", style=str(green))
     write("H1")
     ws.insert_columns([["new"]], at_col="A")  # C:E moves to D:F, H to I
     write("F2")
