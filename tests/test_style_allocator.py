@@ -422,6 +422,16 @@ def test_an_empty_cell_without_its_own_style_is_in_style_zero():
     assert ws["C9"].style.bold and ws["C9"].style.bg_color is None
 
 
+def test_a_row_style_written_with_spaces_still_styles_new_cells():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    yellow, _, _ = _styled_xfs(wb)
+    ws._ensure_row(5).attrib.update({"s": f" {yellow} ", "customFormat": "1"})
+    assert wb.styles.effective_xf_index(ws, "B5") == yellow
+    ws["B5"].value = 1
+    assert ws["B5"].style_index == str(yellow)
+
+
 def test_typed_date_replace_formats_a_cell_in_a_date_column():
     wb = Workbook.create()
     ws = wb["Sheet1"]
