@@ -270,3 +270,39 @@ def test_a_held_missing_cell_pushed_off_the_grid_raises_on_use():
         with pytest.raises(GridOverflowError, match="moved cell A1048576 past the grid"):
             use()
     assert ws._find_row_element(1048576) is None
+
+
+def _fresh_style(wb: Workbook, address: str) -> int:
+    """The style a cache-free copy of ``wb`` gives ``address``."""
+    copy = Workbook.open(io.BytesIO(_saved(wb)))
+    return copy.styles.effective_xf_index(copy[SHEET], address)
+
+
+def test_new_cells_take_column_styles_as_the_columns_change():
+    wb = Workbook.create()
+    ws = wb[SHEET]
+    green = wb.styles.allocate_cell_style(bg_color="FF00FF00")
+    ws.column_dimensions["B"].width = 10
+    cols = ws._part.element.find(f"{{{SML_NS}}}cols")
+    etree.SubElement(cols, f"{{{SML_NS}}}col", min="3", max="5", width="9", style=str(green))
+    ws["C1"].value = 1
+    cache = ws._column_styles
+    for row in range(2, 50):
+        ws[f"D{row}"].value = row
+    assert ws._column_styles is cache  # read once for all of them
+    assert ws["D49"].style_index == str(green)
+
+    def write(address: str) -> None:
+        expected = _fresh_style(wb, address)
+        ws[address].value = 1
+        assert int(ws[address].style_index or 0) == expected, address
+
+    etree.SubElement(cols, f"{{{SML_NS}}}col", min="8", max="8", width="9", style=str(green))
+    write("H1")
+    ws.insert_columns([["new"]], at_col="A")  # C:E moves to D:F, H to I
+    write("F2")
+    write("I2")
+    ws.column_dimensions["E"].width = 20  # rewrites the <col> covering E
+    write("E3")
+    write("G3")
+    assert (ws["I1"].style_index, ws["I2"].style_index) == (str(green), str(green))

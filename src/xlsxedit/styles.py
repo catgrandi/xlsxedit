@@ -44,9 +44,6 @@ _SCHEME = f"{{{SML_NS}}}scheme"
 _PATTERN_FILL = f"{{{SML_NS}}}patternFill"
 _FG_COLOR = f"{{{SML_NS}}}fgColor"
 _BG_COLOR = f"{{{SML_NS}}}bgColor"
-_COLS = f"{{{SML_NS}}}cols"
-_COL = f"{{{SML_NS}}}col"
-_SHEET_DATA = f"{{{SML_NS}}}sheetData"
 
 _STYLESHEET_ORDER = ORDER["CT_Stylesheet"]
 _XF_ORDER = ORDER["CT_Xf"]
@@ -368,11 +365,8 @@ class Styles:
         """
         col, row_num = split_address(address)
         cell = worksheet._find_cell_element(join_address(col, row_num))
-        if cell is not None:
-            return self._cell_xf_index(cell)
-        sheet_data = worksheet._part.element.find(_SHEET_DATA)
-        row = worksheet._find_row_element(row_num)
-        xf = self.resolve_xf_index(sheet_data, row, None, col_to_index(col) + 1)
+        row = None if cell is not None else worksheet._find_row_element(row_num)
+        xf = self.resolve_xf_index(worksheet, row, cell, col_to_index(col) + 1)
         return 0 if xf is None else xf
 
     def _cell_xf_index(self, cell_element: _Element) -> int:
@@ -382,19 +376,18 @@ class Styles:
 
     def resolve_xf_index(
         self,
-        sheet_data: _Element | None,
+        worksheet: Worksheet,
         row: _Element | None,
         cell: _Element | None,
-        column: int | None = None,
+        column: int,
     ) -> int | None:
         """Return the ``cellXfs`` index a cell takes from itself, its row or its column.
 
-        The element-level form of :meth:`effective_xf_index`. ``sheet_data`` is
-        the worksheet's ``<sheetData>``, ``row`` and ``cell`` the ``<row>`` and
-        ``<c>`` elements (either may be absent) and ``column`` the 1-based
-        column number, which only a cell without ``<c>`` needs. Returns
-        ``None`` when nothing sets a style, including for a ``<c>`` without
-        ``s``.
+        The element-level form of :meth:`effective_xf_index`: ``row`` and
+        ``cell`` are the cell's ``<row>`` and ``<c>`` in ``worksheet`` (either
+        may be absent) and ``column`` its 1-based column number. Returns
+        ``None`` for style 0 when nothing sets another: a ``<c>`` without
+        ``s``, or a cell that neither its row nor a ``<col>`` styles.
         """
         if cell is not None:
             s = cell.get("s")
@@ -403,17 +396,7 @@ class Styles:
             s = row.get("s")
             if s is not None:
                 return int(s)
-        if sheet_data is None or column is None:
-            return None
-        # CT_Worksheet places every <cols> before <sheetData>.
-        for cols in sheet_data.itersiblings(_COLS, preceding=True):
-            for col in cols.iterchildren(_COL):
-                style = col.get("style")
-                if style is None:
-                    continue
-                if int(col.get("min", "0")) <= column <= int(col.get("max", "0")):
-                    return int(style)
-        return None
+        return worksheet._column_style(column)
 
     def num_format_id(self, style_index: int | str | None) -> int | None:
         xf = self._xf(style_index)
