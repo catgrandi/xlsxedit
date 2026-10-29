@@ -116,7 +116,7 @@ Only these content types are registered as live XML:
 | sharedStrings | `SharedStringsPart` | Yes — `<t>` text mutated in place |
 | styles | `StylesPart` | Live element; serves original bytes until a style is mutated |
 | core properties (`docProps/core.xml`) | `CorePropertiesPart` | Via `wb.properties` |
-| drawing (`xl/drawings/drawingN.xml`) | `DrawingPart` | No; parsed when first read or edited (`ws.images`, `ws.charts`, `ws.drawing_objects`, `add_image`, `add_chart`, `copy_worksheet`, …) |
+| drawing (`xl/drawings/drawingN.xml`) | `DrawingPart` | No; parsed when first read or edited (`ws.images`, `ws.charts`, `ws.drawing_objects`, `add_image`, `add_chart`, `insert_rows`, `insert_columns`, `copy_worksheet`, …) |
 | chart (`xl/charts/chartN.xml`) | `ChartPart` | No; parsed when first read or edited |
 | table (`xl/tables/tableN.xml`) | `TablePart` | No; parsed when first read or edited (`ws.tables`, `add_table`, `insert_rows`, `insert_columns`, `copy_worksheet`, …) |
 
@@ -239,7 +239,8 @@ Neither approach produces a byte-identical ZIP: the container itself (member ord
 | `hyperlinks.py` | Cell hyperlink get/set |
 | `conditional_formatting.py` | CF list and `cellIs` add |
 | `data_validation.py` | Data-validation list, add and remove; x14 rules read-only |
-| `drawing.py` | `Picture`, `Chart` and `DrawingObject` proxies; walks a drawing's anchors, groups and `mc:AlternateContent` |
+| `drawing.py` | `Picture`, `Chart` and `DrawingObject` proxies; walks a drawing's anchors, groups and `mc:AlternateContent`; measures a sheet's rows and columns in EMU |
+| `drawing_shift.py` | Moves drawing anchors with an insert or a delete by their `editAs` placement; `InsertPlan` plans it with the rest of an insert |
 | `table.py` | `Table`, `TableColumn` and `TableStyle` over a live table part: resize, header and totals rows, and the name and range checks `add_table` and `write_dataframe` share |
 | `shared_strings.py` | SST display text + in-place `<t>` replace |
 | `parts.py` | Registers the typed parts: workbook, worksheet, SST, styles, core properties, drawing, chart, table |

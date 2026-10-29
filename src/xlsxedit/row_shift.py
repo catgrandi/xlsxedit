@@ -47,6 +47,7 @@ from xlsxedit.drawing import (
     chart_references,
     drawing_parts_for_worksheet,
 )
+from xlsxedit.drawing_shift import DrawingShift
 from xlsxedit.exceptions import (
     FormulaGroupError,
     GridOverflowError,
@@ -1183,16 +1184,24 @@ class InsertPlan:
     """Every change that inserting rows or columns into one worksheet makes.
 
     Building the plan reads the worksheet, its table parts, the workbook's
-    defined names and charts and the other sheets' references to it, and raises
-    ``InvalidRangeError``, ``GridOverflowError``, ``TableError`` or ``ValueError``
-    before anything changes.
+    defined names and charts, the other sheets' references to it and, with
+    ``shift_drawings``, the anchors of its drawings (see ``DrawingShift``), and
+    raises ``InvalidRangeError``, ``GridOverflowError``, ``TableError`` or
+    ``ValueError`` before anything changes.
     ``apply`` then only assigns precomputed values. ``merges`` lists the
     sheet's merge ranges as they will be after ``apply``; ``header_cells``
     the header cells of new table columns to write after it (see
     ``_check_tables``, which reads ``cells``).
     """
 
-    def __init__(self, worksheet, ins: _Shift, cells: tuple[list, int] | None = None):
+    def __init__(
+        self,
+        worksheet,
+        ins: _Shift,
+        cells: tuple[list, int] | None = None,
+        *,
+        shift_drawings: bool = True,
+    ):
         if not ins.inserting or ins.span is not None:
             raise ValueError("InsertPlan carries out inserts of whole rows or columns only")
         self._worksheet = worksheet
@@ -1217,6 +1226,8 @@ class InsertPlan:
             planner.after(partial(shift_table_parts_cols, worksheet, ins.at - 1, ins.delta, names))
         planner.defined_names(workbook)
         planner.charts(workbook)
+        if shift_drawings:
+            planner.after(DrawingShift(worksheet, ins).apply)
         planner.after(workbook._invalidate_calc_chain)
         planner.after(workbook.set_full_calc_on_load)
         self._planner = planner
@@ -1295,20 +1306,28 @@ class InsertPlan:
         self._planner.apply()
 
 
-def plan_insert_rows(worksheet, at_row: int, count: int) -> InsertPlan:
+def plan_insert_rows(
+    worksheet, at_row: int, count: int, *, shift_drawings: bool = True
+) -> InsertPlan:
     """Plan inserting ``count`` rows before row ``at_row`` (1-based)."""
-    return InsertPlan(worksheet, _Shift(True, at_row, count))
+    return InsertPlan(worksheet, _Shift(True, at_row, count), shift_drawings=shift_drawings)
 
 
 def plan_insert_columns(
-    worksheet, at_col: int, count: int, cells: tuple[list, int] | None = None
+    worksheet,
+    at_col: int,
+    count: int,
+    cells: tuple[list, int] | None = None,
+    *,
+    shift_drawings: bool = True,
 ) -> InsertPlan:
     """Plan inserting ``count`` columns before 0-based column ``at_col``.
 
     ``cells`` is ``(rows, first_row)``: the values written into the new
     columns, which name the columns that join a table (see ``InsertPlan``).
     """
-    return InsertPlan(worksheet, _Shift(False, at_col + 1, count), cells)
+    shift = _Shift(False, at_col + 1, count)
+    return InsertPlan(worksheet, shift, cells, shift_drawings=shift_drawings)
 
 
 class CellShiftPlan:
