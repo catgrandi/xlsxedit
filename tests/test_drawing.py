@@ -15,7 +15,15 @@ from tests.conftest import INSPECT_FIXTURES
 from tests.preservation import assert_preserved, read_pkg, worksheet_members
 from tests.schema_validate import SchemaWarning, assert_valid_package
 from xlsxedit import Workbook
-from xlsxedit.drawing import A_NS, CHART_NS, EMU_PER_PIXEL, XDR_NS, drawing_parts_for_worksheet
+from xlsxedit.drawing import (
+    A_NS,
+    CHART_NS,
+    EMU_PER_PIXEL,
+    XDR_NS,
+    _Axis,
+    drawing_parts_for_worksheet,
+    sheet_axis,
+)
 from xlsxedit.opc.constants import RT
 from xlsxedit.parts import ChartPart, DrawingPart
 
@@ -312,6 +320,34 @@ def test_one_cell_picture_resize_sets_anchor_ext_and_xfrm(png: Path):
     assert anchor.find(f"{_XDR}ext").get("cx") == cx
     assert anchor.find(f"{_XDR}pic/{_XDR}spPr/{_A}xfrm/{_A}ext").get("cx") == cx
     assert _reopen(wb)["Sheet1"].images[0].width == 120
+
+
+def test_axis_measures_runs_and_defaults():
+    axis = _Axis([(2, 3, 50), (6, 6, 0)], 10, 10)
+    assert [axis.start(i) for i in range(8)] == [0, 10, 20, 70, 120, 130, 140, 140]
+    assert axis.locate(25) == (2, 5)
+    assert axis.locate(70) == (3, 0)  # a gridline starts the line below it
+    assert axis.locate(140) == (7, 0)  # the hidden line 6 takes no room
+    assert axis.locate(170) is None  # past line 9
+
+
+def test_axis_keeps_the_first_of_overlapping_runs():
+    axis = _Axis([(1, 4, 20), (3, 5, 30)], 10, 8)
+    assert axis.runs == [(1, 4, 20), (5, 5, 30)]
+    assert axis.start(6) == 10 + 4 * 20 + 30
+
+
+def test_sheet_axis_reads_heights_widths_and_hidden_lines():
+    wb = Workbook.open(INSPECT_FIXTURES["DrawingAnchors"])
+    ws = wb["Anchors"]
+    rows, cols = sheet_axis(ws, rows=True), sheet_axis(ws, rows=False)
+    assert rows.default == 182880  # 14.4 pt
+    assert rows.start(2) == 182880 + 30 * 12700
+    assert cols.default == 64 * EMU_PER_PIXEL
+    assert cols.start(2) == (64 + 144) * EMU_PER_PIXEL  # B is 20.578125 wide: 144 px
+    ws.row_dimensions[3].height = 20
+    ws._find_row_element(3).set("hidden", "1")
+    assert sheet_axis(ws, rows=True).start(3) == 182880 + 30 * 12700
 
 
 @pytest.mark.parametrize("value", [0, -5])
