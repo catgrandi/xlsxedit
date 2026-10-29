@@ -198,7 +198,7 @@ def test_a_planned_delete_releases_what_only_the_deleted_anchor_used():
 def test_an_anchor_pushed_off_the_grid_refuses_the_insert():
     wb = Workbook.open(INSPECT_FIXTURES["DrawingAnchors"])
     ws = wb["Anchors"]
-    ws.images[0].anchor = "B1048574"
+    ws.images[0].anchor = "B1048573"  # three rows and a third tall: it ends in the last row
     before = read_pkg(wb)
     with pytest.raises(GridOverflowError, match="drawing object 'Picture'"):
         ws.insert_rows([[]], at_row=1)

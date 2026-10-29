@@ -840,7 +840,7 @@ class Workbook:
             f"{c2}{r1 + 1}:{c2}{r2}",
         )
 
-        chart = Chart(anchor_elm, drawing_part, chart_part)
+        chart = Chart(anchor_elm, drawing_part, chart_part, worksheet=ws)
         chart.set_series_formula(0, name_ref, ws)
         chart.set_series_formula(1, cat_ref, ws)
         chart.set_series_formula(2, val_ref, ws)

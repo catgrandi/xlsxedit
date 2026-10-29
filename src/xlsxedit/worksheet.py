@@ -1148,7 +1148,7 @@ class Worksheet:
     def charts(self) -> list[Chart]:
         charts: list[Chart] = []
         for dp in drawing_parts_for_worksheet(self):
-            charts.extend(iter_charts(dp))
+            charts.extend(iter_charts(dp, self))
         return charts
 
     @property
