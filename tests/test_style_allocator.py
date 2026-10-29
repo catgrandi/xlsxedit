@@ -432,6 +432,18 @@ def test_a_row_style_written_with_spaces_still_styles_new_cells():
     assert ws["B5"].style_index == str(yellow)
 
 
+def test_a_number_past_the_last_date_in_a_date_column_reads_as_the_number():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    _style_column(ws, 2, wb.styles.allocate_cell_style(num_format="yyyy-mm-dd"))
+    ws["B2"].value = 45292
+    ws["B3"].value = 3_000_000  # past 9999-12-31, which Excel shows as ####
+    assert ws["B2"].value.year == 2024
+    assert ws["B3"].value == 3_000_000
+    assert 3_000_000 in [value for row in ws.values() for value in row]
+    assert ws.find(3_000_000) is not None
+
+
 def test_typed_date_replace_formats_a_cell_in_a_date_column():
     wb = Workbook.create()
     ws = wb["Sheet1"]
