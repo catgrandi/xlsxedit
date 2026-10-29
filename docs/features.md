@@ -23,7 +23,7 @@ Docs: [xlsxedit.jonasruilong.com](https://xlsxedit.jonasruilong.com)
 | `wb.sheetnames` | List of sheet names | |
 | `wb.worksheets` | List of `Worksheet` objects | |
 | `wb.add_worksheet(name)` | Add a sheet | Blank template |
-| `wb.copy_worksheet(name, new_name)` | Duplicate an existing sheet | Cells, styles, merges, drawings/tables; images shared; the copy's charts plot the copy's cells where the source's plotted the source's, and its drawing objects get fresh `a16:creationId`s; drops `calcChain.xml`. A copy that fails changes nothing |
+| `wb.copy_worksheet(name, new_name)` | Duplicate an existing sheet | Cells, styles, merges, drawings/tables; images shared; the copy's charts and the defined names scoped to it refer to the copy where the source's referred to the source, though a chartEx chart, which reads its data through workbook-level names, still plots the source; its drawing objects get fresh `a16:creationId`s and keep their `cNvPr` ids; drops `calcChain.xml`. A copy that fails changes nothing |
 | `wb.rename_worksheet(old, new)` | Rename a sheet | |
 | `wb.remove_worksheet(name, *, keep_unreachable=False)` | Remove a sheet | Cannot remove last sheet; also drops `calcChain.xml`, the sheet's own defined names and the parts only that sheet reached (drawings, charts, tables) unless `keep_unreachable=True`; renumbers later `localSheetId`s and the workbook view's `activeTab`/`firstSheet` |
 | `wb.replace(old, new, *, value_type=None)` | SAR on all sheets | Substring or whole-cell typed; sets `fullCalcOnLoad` when any cell changes |
