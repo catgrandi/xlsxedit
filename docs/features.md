@@ -401,7 +401,7 @@ Round-trip tests in `tests/test_fidelity.py` run on every workbook at the top of
 | All chart types | Add: bar template; read: existing charts |
 | All CF rule types | Read most; write `cellIs` and color scale |
 | Data validation in x14 form | Read only; formulas that refer to another sheet cannot be written yet |
-| Byte-identical ZIP | The ZIP container is rewritten; parts an edit does not change keep their exact bytes ([how](how-xlsxedit-works.md)) |
+| Byte-identical ZIP | The ZIP container is rewritten; parts an edit does not change keep their exact bytes, and reading changes none ([how](how-xlsxedit-works.md)) |
 | Style authoring from scratch | Clone/apply xf; not full theme designer |
 
 See roadmap in [how-xlsxedit-works.md](how-xlsxedit-works.md) §9.
