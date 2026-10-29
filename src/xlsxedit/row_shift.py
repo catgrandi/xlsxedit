@@ -266,6 +266,35 @@ class _Shift:
         crosses = lo_x < lo_s <= hi_x or lo_x <= hi_s < hi_x
         return crosses and hi >= self.at
 
+    def tears(self, area: CellRange) -> bool:
+        """Whether the shift would move or delete some of ``area``'s cells and
+        keep others where they are: it :meth:`splits` the area, the area
+        straddles the inserted lines, or a delete takes only some of its lines."""
+        if self.splits(area):
+            return True
+        lo, hi, lo_x, hi_x = self._extents(area)
+        if self.span is not None and not self.span[0] <= lo_x <= hi_x <= self.span[1]:
+            return False
+        if self.inserting:
+            return lo < self.at <= hi
+        return lo <= self.end and hi >= self.at and not self.at <= lo <= hi <= self.end
+
+    def carries(self, cells: CellRange) -> bool:
+        """Whether the shift moves a drawing object over ``cells`` whole, without
+        resizing it: every column (row) of it lies in ``span``, and it starts
+        past the shifted lines, at or after an insert's first new line or after
+        a delete's last deleted one.
+
+        Excel's "insert cells" moves only such objects (recorded 2026-10-29); an
+        object across an edge of the span, or one the inserted lines cut
+        through, stays where it is. Its placement (``editAs``) still decides
+        how the anchor follows: an absolute object keeps its place on the page.
+        """
+        lo, _, lo_x, hi_x = self._extents(cells)
+        if self.span is not None and not self.span[0] <= lo_x <= hi_x <= self.span[1]:
+            return False
+        return lo >= self.at if self.inserting else lo > self.end
+
     def pinned(self, area: CellRange) -> CellRange:
         """``area`` moved or, for view state, pinned where it went: the last
         line when an insert pushes it off, the band's first line when deleted."""
@@ -313,8 +342,17 @@ class _Shift:
             return self.overflow(what)
         return InvalidRangeError(f"{self.describe()} would delete {what}")
 
-    def split_error(self, what: str) -> InvalidRangeError:
-        return InvalidRangeError(f"{self.describe()} would move only part of {what}")
+    def split_error(self, what: str, *, excel: str | None = None) -> InvalidRangeError:
+        return InvalidRangeError(_excel_says(f"{self.describe()} would move only part of {what}", excel))
+
+
+# What Excel asks before an "insert cells" or "delete cells" that would split a
+# merge (Excel 16.0.20527 for Microsoft 365, recorded 2026-10-29).
+_EXCEL_MERGE = "This operation will cause some merged cells to unmerge.  Do you wish to continue?"
+
+
+def _excel_says(message: str, excel: str | None) -> str:
+    return message if excel is None else f"{message} (Excel: {excel})"
 
 
 def _area(text: str, where: str) -> CellRange:
@@ -777,7 +815,7 @@ class _Planner:
                 continue
             area = _area(ref, "mergeCell/@ref")
             if self.ins.splits(area):
-                raise self.ins.split_error(f"merged cells {ref}")
+                raise self.ins.split_error(f"merged cells {ref}", excel=_EXCEL_MERGE)
             moved = self.ins.area(area)
             if moved is None or moved.is_cell:
                 self.remove(merge)  # pushed off, or clamped to one cell
