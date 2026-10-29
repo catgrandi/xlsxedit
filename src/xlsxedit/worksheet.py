@@ -145,10 +145,11 @@ class Worksheet:
     def _part(self) -> WorksheetPart:
         part = self._live_part
         if part is None:
-            raise WorksheetNotFoundError(
-                f"worksheet {self._name!r} was removed from its workbook"
-            )
+            raise self._removed()
         return part
+
+    def _removed(self) -> WorksheetNotFoundError:
+        return WorksheetNotFoundError(f"worksheet {self._name!r} was removed from its workbook")
 
     def _detach(self) -> None:
         """Called when the sheet leaves its workbook: every later use raises.
@@ -1450,6 +1451,8 @@ class Worksheet:
 
         ``offset_x`` / ``offset_y`` are pixel insets within the anchor cell (default 0 = flush).
         """
+        if self._live_part is None:  # before the image part is added
+            raise self._removed()
         return self._workbook._add_image_to_sheet(
             self,
             image_path,
@@ -1478,6 +1481,8 @@ class Worksheet:
         Placement is cell-based (``anchor``, optional ``to_anchor``). Offsets come from
         the template (flush). Tweak later via ``chart.offset_x`` / ``chart.offset_y`` if needed.
         """
+        if self._live_part is None:  # before the chart part is added
+            raise self._removed()
         return self._workbook._add_chart_to_sheet(
             self,
             chart_type,
