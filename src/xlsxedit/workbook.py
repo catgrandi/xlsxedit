@@ -636,13 +636,16 @@ class Workbook:
     def copy_worksheet(self, name: str, new_name: str) -> Worksheet:
         """Duplicate an existing worksheet (cells, styles, merges, sheet-owned parts).
 
-        The copy is built before the workbook refers to it: if building it
-        raises, the parts added so far are removed and nothing has changed.
+        The copy's charts plot the copy's cells where the source's charts plotted
+        the source's. The copy is built before the workbook refers to it: if
+        building it raises, the parts added so far are removed and nothing has
+        changed.
         """
         from xlsxedit.sheet_clone import (
             append_defined_names,
             clone_sheet_relationships,
             local_defined_name_copies,
+            refresh_cloned_drawings,
         )
 
         if new_name in self._sheets_by_name:
@@ -660,7 +663,8 @@ class Workbook:
         parts_before = set(self._package.iter_parts())
         try:
             self._package._add_part(part)
-            clone_sheet_relationships(source._part, part, self)
+            cloned = clone_sheet_relationships(source._part, part, self)
+            refresh_cloned_drawings(cloned, name, new_name)
         except BaseException:
             for added in set(self._package.iter_parts()) - parts_before:
                 self._package._remove_part(added)

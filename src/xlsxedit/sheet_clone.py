@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import re
+import uuid
 from copy import deepcopy
 
+from xlsxedit.drawing import _A16_CREATION_ID, chart_references
 from xlsxedit.opc.constants import CT, RT, SML_NS
 from xlsxedit.opc.packuri import PackURI
 from xlsxedit.opc.part import Part, XmlPart
-from xlsxedit.parts import WorksheetPart
+from xlsxedit.parts import ChartPart, DrawingPart, WorksheetPart
+from xlsxedit.row_shift import _FORMULA_TOKEN_RE, _same_sheet
 
 _DEFINED_NAMES = f"{{{SML_NS}}}definedNames"
 _DEFINED_NAME = f"{{{SML_NS}}}definedName"
 _DIGITS_RE = re.compile(r"(\d+)(\.[^/]+)?$")
+_PLAIN_SHEET_NAME = re.compile(r"[^\W\d][\w.]*")
+# Unquoted, these would read as a cell, an R1C1 reference or a boolean.
+_READS_AS_REFERENCE = re.compile(r"[a-z]{1,3}\d+|r\d*c?\d*|c\d*|true|false", re.IGNORECASE)
 
 _SHARE_RELTYPES = {RT.IMAGE}
 _SHARE_CONTENT_TYPES = {CT.STYLES, CT.SHARED_STRINGS, CT.THEME, CT.WORKBOOK}
@@ -87,10 +93,52 @@ def _uniquify_table(part: XmlPart, workbook) -> None:
     _refresh_revision_uids(elm)
 
 
-def clone_sheet_relationships(source_part: WorksheetPart, dest_part: WorksheetPart, workbook) -> None:
-    """Copy sheet rels onto ``dest_part`` (same rIds; share images, clone the rest)."""
+def clone_sheet_relationships(
+    source_part: WorksheetPart, dest_part: WorksheetPart, workbook
+) -> list[Part]:
+    """Copy sheet rels onto ``dest_part`` (same rIds; share images, clone the rest);
+    return the parts cloned."""
     cloned: dict[int, Part] = {}
     _copy_relationships(source_part, dest_part, workbook._package, cloned, workbook)
+    return list(cloned.values())
+
+
+def sheet_prefix(name: str) -> str:
+    """``name`` as a formula writes it before ``!``: quoted unless it is a plain name
+    that cannot read as a reference."""
+    if _PLAIN_SHEET_NAME.fullmatch(name) and not _READS_AS_REFERENCE.fullmatch(name):
+        return name
+    return "'" + name.replace("'", "''") + "'"
+
+
+def repoint_sheet_refs(text: str, old_name: str, new_name: str) -> str:
+    """``text`` with every reference qualified with sheet ``old_name`` qualified with
+    ``new_name`` instead; other sheets, 3D spans and other workbooks stay."""
+    out = []
+    after_bracket = False
+    for m in _FORMULA_TOKEN_RE.finditer(text):
+        token = m.group(0)
+        qref = m.group("qref")
+        if qref is not None and not after_bracket and _same_sheet(m.group("sheet"), old_name):
+            token = f"{sheet_prefix(new_name)}!{qref}"
+        out.append(token)
+        after_bracket = m.group("bracket") is not None
+    return "".join(out)
+
+
+def refresh_cloned_drawings(cloned: list[Part], old_name: str, new_name: str) -> None:
+    """Make the drawings and charts cloned for a copy of sheet ``old_name`` its own:
+    a chart's references to ``old_name`` name ``new_name``, as Excel's copy plots
+    the copy's cells, and every drawing object gets a fresh ``a16:creationId``.
+    ``cNvPr/@id`` stays: it is unique within its drawing part, and connectors
+    and form controls refer to it."""
+    for part in cloned:
+        if isinstance(part, ChartPart):
+            for elm in chart_references(part.element):
+                elm.text = repoint_sheet_refs(elm.text, old_name, new_name)
+        elif isinstance(part, DrawingPart):
+            for creation_id in part.element.iter(_A16_CREATION_ID):
+                creation_id.set("id", f"{{{str(uuid.uuid4()).upper()}}}")
 
 
 def local_defined_name_copies(workbook, source_index: int, dest_index: int) -> list:
