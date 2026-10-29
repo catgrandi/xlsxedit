@@ -246,6 +246,8 @@ Neither approach produces a byte-identical ZIP: the container itself (member ord
 | `parts.py` | Registers the typed parts: workbook, worksheet, SST, styles, core properties, drawing, chart, table |
 | `row_shift.py` | Plans and applies `insert_rows` / `insert_columns`; the planner also describes deletes and shifts restricted to a span of columns or rows, and `shift_cells` carries out those shifts, moving only the span's cells as Excel's *Insert Cells* and *Delete Cells* do (no public method runs it yet) |
 | `range_set.py` | `ST_Ref` / `ST_Sqref` ranges and how they shift when rows or columns are inserted or deleted; an `ST_Sqref` area across a span's edge splits |
+| `_ooxml_order.py`, `_ooxml_ns.py` | Generated from the vendored schemas by `scripts/gen_ooxml_order.py`: child order, attribute defaults and enumerations; namespaces and the prefixes Excel writes |
+| `_ooxml_ext.py` | Registry of the extension URIs Excel writes, maintained by hand and checked against the fixtures |
 | `opc/package.py` | Load/save orchestration |
 | `opc/pkgreader.py` | Relationship-graph walk |
 | `opc/pkgwriter.py` | ZIP write + content types |
