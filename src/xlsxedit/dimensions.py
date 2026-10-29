@@ -75,6 +75,7 @@ class ColumnDimension:
                     return
                 cols.remove(col_elm)
 
+        self._worksheet._column_styles = None  # the styled <col> ranges first writes read
         col_elm = etree.SubElement(cols, _COL)
         col_elm.set("min", str(col_idx))
         col_elm.set("max", str(col_idx))

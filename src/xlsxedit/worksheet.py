@@ -322,20 +322,17 @@ class Worksheet:
     def _column_style(self, column: int) -> int | None:
         """The ``style`` of the first ``<col>`` covering 1-based ``column`` that has one.
 
-        Looked up in the styled ``<col>`` ranges, read once and again when a
-        ``<cols>`` block is replaced or its last ``<col>`` changes, as when a
-        column width is set, and after the edits that clear the row index,
-        inserts among them. A ``<col>`` edited in place by other means after a
-        first write is not seen, and one whose ``min``, ``max`` or ``style`` is
-        not a number is left out.
+        Looked up in the styled ``<col>`` ranges, read once and again after a
+        column width is set and after the edits that clear the row index,
+        inserts among them. A ``<col>`` edited by other means after a first
+        write is not seen, and one whose ``min``, ``max`` or ``style`` is not a
+        number is left out.
         """
-        blocks = tuple(self._part.element.iterchildren(_COLS))
-        key = tuple([(b, next(b.iterchildren(reversed=True), None)) for b in blocks]) if blocks else ()
         cache = self._column_styles
-        if cache is None or cache[0] != key:
+        if cache is None:
             ranges = [
                 (low, high, style)
-                for block in blocks
+                for block in self._part.element.iterchildren(_COLS)
                 for col in block.iterchildren(_COL)
                 if col.get("style") is not None
                 for low, high, style in [_ints(col.get("min", "0"), col.get("max", "0"), col.get("style"))]
@@ -343,11 +340,13 @@ class Worksheet:
             ]
             ordered = sorted(ranges)
             if all(a[1] < b[0] for a, b in zip(ordered, ordered[1:])):
-                cache = (key, [low for low, _, _ in ordered], ordered)
+                cache = ([low for low, _, _ in ordered], ordered)
             else:  # overlapping ranges: the first in document order wins
-                cache = (key, None, ranges)
+                cache = (None, ranges)
             self._column_styles = cache
-        _, lows, ranges = cache
+        lows, ranges = cache
+        if not ranges:
+            return None
         if lows is not None:
             i = bisect.bisect_right(lows, column) - 1
             return ranges[i][2] if i >= 0 and column <= ranges[i][1] else None
