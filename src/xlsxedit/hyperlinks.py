@@ -79,6 +79,7 @@ class Hyperlink:
             self._remove()
             return
         address = self._cell.address  # raises, changing nothing, for a cell that cannot have one
+        etree.Element(_HYPERLINK).set("location", value)  # lxml refuses text XML cannot store
         ws_part = self._cell._worksheet._part
         ws_elm = ws_part.element
         block = _ensure_hyperlinks_block(ws_elm)
@@ -111,6 +112,7 @@ class Hyperlink:
             return
 
         address = self._cell.address  # raises, changing nothing, for a cell that cannot have one
+        etree.Element(_HYPERLINK).set("location", value)  # lxml refuses text XML cannot store
         ws_part = self._cell._worksheet._part
         ws_elm = ws_part.element
         block = _ensure_hyperlinks_block(ws_elm)
