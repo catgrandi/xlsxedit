@@ -408,13 +408,51 @@ def sheet_axis(worksheet: Worksheet, *, rows: bool) -> _Axis:
     return _Axis(runs, default, _MAX_COL)
 
 
+class _RowWalker:
+    """A worksheet's row heights read one row at a time through its row index, to
+    measure an object over the rows it spans where :func:`sheet_axis` reads every
+    row of the sheet. It answers :meth:`_Axis.advance` and :meth:`_Axis.between`
+    as that axis would."""
+
+    def __init__(self, worksheet: Worksheet):
+        self._worksheet = worksheet
+        self._listed, self._unlisted = _row_defaults(worksheet._part.element.find(_SHEET_FORMAT_PR))
+        worksheet._build_bulk_indexes()
+        self._last = worksheet._bulk_max_row_num - 1  # the last row the sheet lists, 0-based
+
+    def _size(self, index: int) -> int:
+        row = self._worksheet._find_row_element(index + 1)
+        return self._unlisted if row is None else _row_height(row, self._listed)
+
+    def advance(self, index: int, distance: int) -> tuple[int, int] | None:
+        line, remaining, trailing = index, distance, index
+        while line <= self._last:
+            size = self._size(line)
+            if remaining < size:
+                return line, remaining
+            remaining -= size
+            line += 1
+            if size:
+                trailing = line
+        if self._unlisted:
+            n, offset = divmod(remaining, self._unlisted)
+            return (line + n, offset) if line + n < _MAX_ROW else None
+        return (trailing, remaining) if trailing < _MAX_ROW else None
+
+    def between(self, a: int, a_off: int, b: int, b_off: int) -> int:
+        lo, hi = sorted((a, b))
+        span = sum(self._size(i) for i in range(lo, min(hi, self._last + 1)))
+        span += max(0, hi - max(lo, self._last + 1)) * self._unlisted
+        return (span if b >= a else -span) + b_off - a_off
+
+
 class _SheetGrid:
     """Column widths and row heights of a worksheet, in EMU, for two-cell anchors
-    (see :func:`sheet_axis`)."""
+    (see :func:`sheet_axis`); rows are read only where an object spans them."""
 
     def __init__(self, worksheet: Worksheet):
         self.cols = sheet_axis(worksheet, rows=False)
-        self.rows = sheet_axis(worksheet, rows=True)
+        self.rows = _RowWalker(worksheet)
 
     @staticmethod
     def _corners(anchor: _Element) -> tuple[_Element, _Element]:

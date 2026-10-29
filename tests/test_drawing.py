@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import random
 import re
 import warnings
 from datetime import date
@@ -21,6 +22,7 @@ from xlsxedit.drawing import (
     EMU_PER_PIXEL,
     XDR_NS,
     _Axis,
+    _RowWalker,
     drawing_parts_for_worksheet,
     sheet_axis,
 )
@@ -470,6 +472,20 @@ def _sheet_with_rows(rows: list[tuple[int, str | None, bool]], *, zero_height: b
             row.set("hidden", "1")
     ws._invalidate_bulk_indexes()
     return wb, ws
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_row_walker_measures_as_the_whole_axis_does(seed: int):
+    rng = random.Random(seed)
+    numbers = sorted(rng.sample(range(1, 60), rng.randint(0, 25)))
+    rows = [(n, rng.choice([None, "30", "6", "0", "x"]), rng.random() < 0.2) for n in numbers]
+    _, ws = _sheet_with_rows(rows, zero_height=rng.random() < 0.3)
+    axis, walker = sheet_axis(ws, rows=True), _RowWalker(ws)
+    for _ in range(25):
+        a, b = rng.randrange(70), rng.randrange(70)
+        a_off, b_off, distance = rng.randrange(400000), rng.randrange(400000), rng.randrange(6000000)
+        assert walker.advance(a, distance) == axis.advance(a, distance)
+        assert walker.between(a, a_off, b, b_off) == axis.between(a, a_off, b, b_off)
 
 
 def test_an_unreadable_height_counts_as_the_default():
