@@ -214,25 +214,55 @@ def _set_marker(marker: _Element, col: int, col_off: int, row: int, row_off: int
         child.text = str(value)
 
 
-def _move_anchor(anchor: _Element, address: str) -> None:
-    """Move ``anchor``'s top-left cell to ``address`` and ``xdr:to`` by the same delta.
+_PLACEMENTS = ("twoCell", "oneCell", "absolute")
 
-    Offsets within the cells stay, so a two-cell anchor keeps its span of cells.
+
+def _keeps_size(anchor: _Element) -> bool:
+    """Whether a cell anchor keeps its object's size when its corner moves."""
+    return anchor.tag == _XDR_TWO_CELL and anchor.get("editAs") in ("oneCell", "absolute")
+
+
+def _move_anchor(
+    anchor: _Element,
+    col: int,
+    col_off: int,
+    row: int,
+    row_off: int,
+    *,
+    worksheet: Worksheet | None,
+    what: str,
+) -> None:
+    """Put ``anchor``'s top-left corner in 0-based column ``col`` and row ``row``,
+    ``col_off`` and ``row_off`` EMU into the cell.
+
+    A two-cell anchor that moves and sizes with cells keeps its span of cells:
+    ``xdr:to`` moves by as many columns and rows, with its offsets. One placed
+    ``oneCell`` or ``absolute`` keeps its size instead, measured over the
+    columns and rows of ``worksheet`` (see :func:`sheet_axis`). Raises
+    ``ValueError``, changing nothing, when ``what`` would put a corner off the
+    sheet.
     """
-    col, row = split_address(address)
-    new_col, new_row = col_to_index(col), row - 1
     from_elm = anchor.find(_XDR_FROM)
-    old_col, col_off, old_row, row_off = _marker(from_elm)
-    moves = [(from_elm, new_col, col_off, new_row, row_off)]
+    old_col, _, old_row, _ = _marker(from_elm)
+    moves = [(from_elm, col, col_off, row, row_off)]
     to_elm = anchor.find(_XDR_TO)
-    if to_elm is not None:
+    off_sheet = ValueError(f"{what} puts a corner outside the sheet")
+    if not (0 <= col < _MAX_COL and 0 <= row < _MAX_ROW):
+        raise off_sheet
+    if to_elm is not None and worksheet is not None and _keeps_size(anchor):
+        grid = _SheetGrid(worksheet)
+        cx, cy = grid.extent(anchor)
+        to_col = grid.cols.locate(grid.cols.start(col) + col_off + cx)
+        to_row = grid.rows.locate(grid.rows.start(row) + row_off + cy)
+        if to_col is None or to_row is None:
+            raise off_sheet
+        moves.append((to_elm, *to_col, *to_row))
+    elif to_elm is not None:
         to_col, to_col_off, to_row, to_row_off = _marker(to_elm)
-        moves.append(
-            (to_elm, to_col + new_col - old_col, to_col_off, to_row + new_row - old_row, to_row_off)
-        )
+        moves.append((to_elm, to_col + col - old_col, to_col_off, to_row + row - old_row, to_row_off))
     for _marker_elm, marker_col, _col_off, marker_row, _row_off in moves:
         if not (0 <= marker_col < _MAX_COL and 0 <= marker_row < _MAX_ROW):
-            raise ValueError(f"anchoring at {address!r} puts a corner outside the sheet")
+            raise off_sheet
     for marker_elm, *position in moves:
         _set_marker(marker_elm, *position)
 
@@ -729,10 +759,17 @@ class _AnchoredObject:
 
     _kind = "object"
 
-    def __init__(self, anchor_elm: _Element, element: _Element, drawing_part: DrawingPart):
+    def __init__(
+        self,
+        anchor_elm: _Element,
+        element: _Element,
+        drawing_part: DrawingPart,
+        worksheet: Worksheet | None = None,
+    ):
         self._anchor = anchor_elm
         self._element = element
         self._drawing_part = drawing_part
+        self._worksheet = worksheet
         self._grouped = _in_group(element, anchor_elm)
 
     def _changed(self) -> None:
@@ -779,8 +816,50 @@ class _AnchoredObject:
 
     @anchor.setter
     def anchor(self, address: str) -> None:
-        """Move the top-left cell; keep the offsets and the span of cells to ``xdr:to``."""
-        _move_anchor(self._cell_anchor("move"), address)
+        """Move the top-left cell, keeping the offsets in it (see :func:`_move_anchor`)."""
+        anchor = self._cell_anchor("move")
+        col, row = split_address(address)
+        _, col_off, _, row_off = _marker(anchor.find(_XDR_FROM))
+        what = f"anchoring at {address!r}"
+        _move_anchor(
+            anchor, col_to_index(col), col_off, row - 1, row_off, worksheet=self._worksheet, what=what
+        )
+        self._changed()
+
+    @property
+    def placement(self) -> str:
+        """How the object follows the cells under it: ``"twoCell"`` (move and size
+        with cells), ``"oneCell"`` (move but don't size) or ``"absolute"`` (don't
+        move or size), from the anchor's ``editAs``. A ``oneCellAnchor`` is
+        ``"oneCell"`` and an ``absoluteAnchor`` ``"absolute"``."""
+        if self._anchor.tag == _XDR_ONE_CELL:
+            return "oneCell"
+        if self._anchor.tag == _XDR_ABSOLUTE:
+            return "absolute"
+        value = self._anchor.get("editAs", "twoCell")
+        return value if value in _PLACEMENTS else "twoCell"
+
+    @placement.setter
+    def placement(self, value: str) -> None:
+        """Set ``editAs`` on a two-cell anchor; ``"twoCell"``, the default, removes it.
+        The corners stay where they are."""
+        if not isinstance(value, str):
+            raise TypeError(f"placement must be a str, got {type(value)!r}")
+        if value not in _PLACEMENTS:
+            choices = ", ".join(map(repr, _PLACEMENTS))
+            raise ValueError(f"placement must be one of {choices}, got {value!r}")
+        anchor = self._own_anchor("change the placement of")
+        if value == self.placement:
+            return
+        if anchor.tag != _XDR_TWO_CELL:
+            raise ValueError(
+                f"cannot change the placement of {self._kind} {self.name!r}: "
+                f"a {_ANCHOR_TYPES[anchor.tag]} is always {self.placement!r}"
+            )
+        if value == "twoCell":
+            del anchor.attrib["editAs"]
+        else:
+            anchor.set("editAs", value)
         self._changed()
 
     @property
@@ -790,11 +869,7 @@ class _AnchoredObject:
 
     @offset_x.setter
     def offset_x(self, pixels: int) -> None:
-        pixels = _validate_offset_px(pixels)
-        anchor = self._cell_anchor("offset")
-        _, row_off = _get_from_offset_emu(anchor)
-        _set_from_offset_emu(anchor, _px_to_emu(pixels), row_off)
-        self._changed()
+        self._set_offset(_validate_offset_px(pixels), None)
 
     @property
     def offset_y(self) -> int:
@@ -803,10 +878,20 @@ class _AnchoredObject:
 
     @offset_y.setter
     def offset_y(self, pixels: int) -> None:
-        pixels = _validate_offset_px(pixels)
+        self._set_offset(None, _validate_offset_px(pixels))
+
+    def _set_offset(self, x: int | None, y: int | None) -> None:
+        """Move the top-left corner within its cell; an object placed ``oneCell`` or
+        ``absolute`` keeps its size (see :func:`_move_anchor`)."""
         anchor = self._cell_anchor("offset")
-        col_off, _ = _get_from_offset_emu(anchor)
-        _set_from_offset_emu(anchor, col_off, _px_to_emu(pixels))
+        col, col_off, row, row_off = _marker(anchor.find(_XDR_FROM))
+        col_off = col_off if x is None else _px_to_emu(x)
+        row_off = row_off if y is None else _px_to_emu(y)
+        if _keeps_size(anchor):
+            what = f"an offset of {x if y is None else y} px"
+            _move_anchor(anchor, col, col_off, row, row_off, worksheet=self._worksheet, what=what)
+        else:
+            _set_from_offset_emu(anchor, col_off, row_off)
         self._changed()
 
 
@@ -825,8 +910,7 @@ class Picture(_AnchoredObject):
         pic = pic_elm if pic_elm is not None else anchor_elm.find(_XDR_PIC)
         if pic is None:
             raise ValueError("anchor has no picture")
-        super().__init__(anchor_elm, pic, drawing_part)
-        self._worksheet = worksheet
+        super().__init__(anchor_elm, pic, drawing_part, worksheet)
         self._pic = pic
 
     def __repr__(self) -> str:
@@ -942,11 +1026,12 @@ class Chart(_AnchoredObject):
         drawing_part: DrawingPart,
         chart_part: Part | None = None,
         frame_elm: _Element | None = None,
+        worksheet: Worksheet | None = None,
     ):
         frame = frame_elm if frame_elm is not None else anchor_elm.find(_XDR_GRAPHIC_FRAME)
         if frame is None:
             raise ValueError("not a chart frame")
-        super().__init__(anchor_elm, frame, drawing_part)
+        super().__init__(anchor_elm, frame, drawing_part, worksheet)
         self._chart_part = chart_part
         self._frame = frame
 
@@ -1116,7 +1201,7 @@ def iter_pictures(drawing_part: DrawingPart, worksheet: Worksheet) -> Iterator[P
         yield Picture(obj._anchor, drawing_part, worksheet, obj.element)
 
 
-def iter_charts(drawing_part: DrawingPart) -> Iterator[Chart]:
+def iter_charts(drawing_part: DrawingPart, worksheet: Worksheet | None = None) -> Iterator[Chart]:
     """Charts of a drawing part, except ``mc:Fallback`` content.
 
     Charts that sit directly in a top-level two-cell anchor come first, then the
@@ -1130,7 +1215,8 @@ def iter_charts(drawing_part: DrawingPart) -> Iterator[Chart]:
     ]
     objects.sort(key=lambda obj: _legacy_rank(obj, (_XDR_TWO_CELL,)))
     for obj in objects:
-        yield Chart(obj._anchor, drawing_part, _chart_part_for(obj.element, drawing_part), obj.element)
+        chart_part = _chart_part_for(obj.element, drawing_part)
+        yield Chart(obj._anchor, drawing_part, chart_part, obj.element, worksheet)
 
 
 def drawing_parts_for_worksheet(worksheet: Worksheet) -> list[DrawingPart]:

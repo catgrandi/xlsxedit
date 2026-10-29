@@ -30,6 +30,7 @@ Several changes below are breaking, so the next release is a major one.
 - **Exceptions** — `GridOverflowError`, `FormulaGroupError`, `DTDForbiddenError`, `TableError` and `DataValidationError`.
 - **Formulas** — `Cell.formula_type`: `"normal"`, `"shared"`, `"array"`, `"dataTable"` or `None`.
 - **Drawings** — `ws.drawing_objects` lists every object of a sheet's drawing as a `DrawingObject`: pictures, charts, shapes, connectors, groups and their members, slicers, timelines and other graphic frames.
+- **Drawings** — `Picture.placement` and `Chart.placement` read and set how an object follows its cells: `"twoCell"` (move and size), `"oneCell"` (move only) or `"absolute"` (neither), stored as `editAs` on a two-cell anchor.
 - **Tables** — `write_dataframe(..., table=...)` names the table to resize; `add_table(..., write_header=True)` writes the header cells.
 - **Styles** — `Color`, and `Styles.effective_xf_index(worksheet, address)`.
 - **Data validation** — `ws.data_validations` lists a sheet's validations as `DataValidation` objects, x14 ones read-only. `ws.add_data_validation(...)` and `ws.remove_data_validation(dv)` add and remove them, and `dv.sqref` is settable; a refused edit raises the new `DataValidationError`, `InvalidRangeError` or `TypeError` and changes nothing. `SheetRangeSet` and `CellRange`, the types of `dv.sqref` and its areas, are exported.
@@ -46,6 +47,7 @@ Several changes below are breaking, so the next release is a major one.
 - **Bulk writes** — a value aimed at a cell that a merge covers goes to the merge's top-left cell, unless it is `None` or the same write fills that cell.
 - **Styles** — `apply_style` changes only the properties passed and builds on the cell's current style. Identical styles reuse existing `cellXfs`, font, fill and dxf entries. An empty cell without its own style takes its row's or column's style.
 - **Drawings** — `ws.charts` lists only chart frames. Geometry setters that cannot apply, such as moving a grouped object, raise `ValueError`.
+- **Drawings** — moving or offsetting a picture or chart placed `oneCell` or `absolute` keeps its size, computing its bottom-right corner again over the sheet's column widths and row heights, instead of keeping its span of cells.
 - **Saving** — parts, `.rels` items and `[Content_Types].xml` that an edit does not change keep their exact bytes, so saving an unedited workbook changes no member. Rewritten parts use Excel's XML declaration. The source's `Default` content types are kept.
 - **Saving** — cell, bulk-write, merge, `clear_range`, row-height, column-width, shared-string, table and data-validation edits mark the parts they change, so saving them no longer parses their source a second time, and a changed part releases its source bytes. A part an edit changed is rewritten even if a later edit restores it.
 - **Bulk writes** — the cells of rows a bulk write appends join the cell index only when a single-cell access reaches their row, which cuts peak memory for writing 100,000 × 8 cells by about a fifth.

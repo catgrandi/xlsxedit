@@ -161,8 +161,9 @@ From `ws.images` or `ws.add_image(...)`.
 | API | Summary |
 |-----|---------|
 | `pic.name` | Drawing name get/set |
-| `pic.anchor` | Top-left anchor cell get/set; a two-cell anchor's bottom-right corner moves by the same number of cells |
+| `pic.anchor` | Top-left anchor cell get/set; see below for the bottom-right corner |
 | `pic.offset_x`, `pic.offset_y` | Inset within anchor cell (pixels; default 0 = flush) |
+| `pic.placement` | `"twoCell"` (move and size with cells), `"oneCell"` (move but don't size) or `"absolute"` (don't move or size) get/set |
 | `pic.width`, `pic.height` | Size in pixels get/set (positive) |
 | `pic.media_path` | Path inside package, e.g. `xl/media/image1.jpeg` |
 | `pic.replace(image_path)` | Swap image bytes |
@@ -170,6 +171,10 @@ From `ws.images` or `ws.add_image(...)`.
 `ws.images` lists the pictures that sit directly in top-level two-cell anchors, then those in one-cell anchors, then the rest in document order: pictures inside groups, inside the `mc:Choice` branch of `mc:AlternateContent`, or in absolute anchors. Pictures in an `mc:Fallback` branch are left out; `ws.drawing_objects` has them.
 
 Setting `width` or `height` writes `xdr:spPr/a:xfrm/a:ext` and resizes the anchor. A one-cell or absolute anchor takes the size in `xdr:ext`. A two-cell anchor gets a new bottom-right corner (`xdr:to`), computed from the sheet's column widths and row heights for Excel's default 11-point body font; hidden columns and rows count as zero. Reading the size uses `a:xfrm/a:ext`, then `xdr:ext`, then the two-cell anchor box. Resizing also removes a bare `a:ext` that earlier releases wrote directly under `xdr:spPr`.
+
+Setting `anchor`, `offset_x` or `offset_y` keeps the offsets that are not set. A two-cell anchor placed `twoCell` keeps its span of cells: its bottom-right corner moves by as many columns and rows. One placed `oneCell` or `absolute` keeps its size, so its bottom-right corner is computed again over the sheet's column widths and row heights, as for a resize. A one-cell anchor keeps its size in `xdr:ext`.
+
+`placement` reads the anchor's `editAs` (`"twoCell"` when it has none), what the anchor kind implies for a one-cell (`"oneCell"`) or absolute (`"absolute"`) anchor, and for a picture inside a group, its group's anchor. Setting it on a two-cell anchor writes `editAs`, or removes it for `"twoCell"`, and leaves the corners where they are; it decides what [inserts](#drawings-on-inserts) do to the picture. Setting a one-cell or absolute anchor to another placement raises `ValueError`, and so does setting any placement of a picture inside a group.
 
 A picture inside a group cannot be moved, offset, or resized, and one with an absolute anchor cannot be moved or offset: those setters raise `ValueError`, as does a move that would put a corner outside the sheet.
 
@@ -184,16 +189,17 @@ From `ws.charts` or `ws.add_chart(...)`.
 | API | Summary |
 |-----|---------|
 | `chart.name` | Drawing name get/set |
-| `chart.anchor` | Top-left anchor cell get/set (preserves size span) |
+| `chart.anchor` | Top-left anchor cell get/set (keeps the span of cells, or the size; see [Picture](#picture)) |
 | `chart.to_anchor` | Bottom-right corner cell get/set |
 | `chart.offset_x`, `chart.offset_y` | Pixel inset within anchor cell (post-create tweak; add is flush) |
+| `chart.placement` | `"twoCell"`, `"oneCell"` or `"absolute"` get/set, as for a picture |
 | `chart.title` | Chart title get/set; `None` removes the title text |
 | `chart.partname` | Chart part path |
 | `chart.set_series_formula(index, formula, worksheet=None)` | Update series range; with `worksheet`, rebuild the series cache from its cells |
 
 `ws.charts` lists the charts that sit directly in top-level two-cell anchors, then the rest in document order: charts in absolute or one-cell anchors, inside groups, or in an `mc:Choice` branch. Other graphic frames, such as chartEx charts, slicers, and timelines, are not in `ws.charts`; `ws.drawing_objects` has them.
 
-`chart.anchor` and the offsets follow the same rules as a picture's. Setting `chart.to_anchor` raises `ValueError` for a chart inside a group or one whose anchor has no `xdr:to`.
+`chart.anchor`, the offsets and `chart.placement` follow the same rules as a picture's. Setting `chart.to_anchor` raises `ValueError` for a chart inside a group or one whose anchor has no `xdr:to`.
 
 A rebuilt series cache has `c:ptCount` equal to the size of the range. A numeric cache (`c:numCache`) holds only numeric cells: blank, text, boolean, and error cells get no `c:pt`, so point indexes can skip. Its `c:formatCode` is the number format of the first numeric cell, and a point whose cell has another format carries that format. A string cache (`c:strCache`) leaves out blank cells.
 

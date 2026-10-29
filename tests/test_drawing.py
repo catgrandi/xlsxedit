@@ -322,6 +322,89 @@ def test_one_cell_picture_resize_sets_anchor_ext_and_xfrm(png: Path):
     assert _reopen(wb)["Sheet1"].images[0].width == 120
 
 
+def _box(ws, anchor: etree._Element) -> tuple[int, int, int, int]:
+    """Left, top, right and bottom of a two-cell anchor, in EMU from the sheet's corner."""
+    cols, rows = sheet_axis(ws, rows=False), sheet_axis(ws, rows=True)
+    (c1, co1, r1, ro1), (c2, co2, r2, ro2) = _marker(anchor, "from"), _marker(anchor, "to")
+    return cols.start(c1) + co1, rows.start(r1) + ro1, cols.start(c2) + co2, rows.start(r2) + ro2
+
+
+def _size(box: tuple[int, int, int, int]) -> tuple[int, int]:
+    return box[2] - box[0], box[3] - box[1]
+
+
+def test_placement_reads_every_anchor_kind(png: Path):
+    wb = Workbook.open(INSPECT_FIXTURES["DrawingAnchors"])
+    assert wb["Anchors"].images[0].placement == "oneCell"
+    assert wb["Anchors"].charts[0].placement == "twoCell"
+    ws = _walker_workbook(png)["Sheet1"]
+    assert {pic.name: pic.placement for pic in ws.images} == {
+        "two": "twoCell",
+        "one": "oneCell",
+        "grouped": "twoCell",  # its group's anchor
+    }
+    assert {chart.name: chart.placement for chart in ws.charts} == {
+        "top chart": "twoCell",
+        "abs chart": "absolute",
+    }
+
+
+def test_placement_sets_edit_as_on_a_two_cell_anchor():
+    wb = Workbook.open(INSPECT_FIXTURES["DrawingAnchors"])
+    before = read_pkg(wb)
+    chart = wb["Anchors"].charts[0]
+    chart.placement = "absolute"
+    assert chart._anchor.get("editAs") == "absolute"
+    chart.placement = "oneCell"
+    assert wb["Anchors"].charts[0].placement == "oneCell"
+    assert_preserved(before, read_pkg(wb), expected_changed={"xl/drawings/drawing1.xml"})
+    chart.placement = "twoCell"
+    assert "editAs" not in chart._anchor.attrib
+    assert_valid_package(wb)
+
+
+def test_placement_refuses_what_an_anchor_cannot_store(png: Path):
+    ws = _walker_workbook(png)["Sheet1"]
+    one = next(pic for pic in ws.images if pic.name == "one")
+    grouped = next(pic for pic in ws.images if pic.name == "grouped")
+    with pytest.raises(ValueError, match="a oneCellAnchor is always 'oneCell'"):
+        one.placement = "twoCell"
+    one.placement = "oneCell"  # what it is already
+    with pytest.raises(ValueError, match="part of a group"):
+        grouped.placement = "oneCell"
+    with pytest.raises(ValueError, match="one of 'twoCell', 'oneCell', 'absolute'"):
+        ws.images[0].placement = "moveAndSize"
+    with pytest.raises(TypeError):
+        ws.images[0].placement = None
+
+
+@pytest.mark.parametrize("placement", ["oneCell", "absolute"])
+def test_moving_an_object_that_does_not_size_with_cells_keeps_its_size(placement: str):
+    wb = Workbook.open(INSPECT_FIXTURES["DrawingAnchors"])
+    ws = wb["Anchors"]
+    chart = ws.charts[0]
+    chart.placement = placement
+    size = _size(_box(ws, chart._anchor))
+    chart.anchor = "D2"  # over the 30 pt row 2 and the 6 pt row 4, and a wider column
+    assert _marker(chart._anchor, "from")[::2] == (3, 1)
+    assert _size(_box(ws, chart._anchor)) == size
+    chart.offset_x = 20
+    chart.offset_y = 5
+    assert _size(_box(ws, chart._anchor)) == size
+    assert_valid_package(wb)
+
+
+def test_moving_an_object_that_sizes_with_cells_keeps_its_cells():
+    wb = Workbook.open(INSPECT_FIXTURES["DrawingAnchors"])
+    chart = wb["Anchors"].charts[0]
+    assert _marker(chart._anchor, "from") == (1, 0, 15, 0)
+    assert _marker(chart._anchor, "to") == (4, 0, 23, 0)
+    chart.anchor = "D2"
+    chart.offset_y = 5
+    assert _marker(chart._anchor, "from") == (3, 0, 1, 5 * EMU_PER_PIXEL)
+    assert _marker(chart._anchor, "to") == (6, 0, 9, 0)
+
+
 def test_axis_measures_runs_and_defaults():
     axis = _Axis([(2, 3, 50), (6, 6, 0)], 10, 10)
     assert [axis.start(i) for i in range(8)] == [0, 10, 20, 70, 120, 130, 140, 140]
