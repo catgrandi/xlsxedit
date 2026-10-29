@@ -12,8 +12,9 @@ import io
 import pytest
 from lxml import etree
 
-from xlsxedit import FormulaGroupError, GridOverflowError, InvalidColorError, Workbook
+from xlsxedit import FormulaGroupError, GridOverflowError, InvalidColorError, InvalidRangeError, Workbook
 from xlsxedit.opc.constants import SML_NS
+from xlsxedit.row_shift import _Shift, shift_cells
 from tests.conftest import BOOK1
 from tests.preservation import assert_preserved, check_consistency, read_pkg
 
@@ -279,6 +280,38 @@ def test_a_held_missing_cell_pushed_off_the_grid_raises_on_use():
             use()
     assert ws._find_row_element(1048576) is None
     assert read_pkg(_saved(wb)) == read_pkg(before)
+
+
+def test_a_held_missing_cell_follows_cell_shifts_and_raises_once_deleted():
+    """``shift_cells`` (Excel's insert and delete cells, internal for now) moves a
+    held missing cell as it moves the cells around it. One it deletes or pushes
+    off the grid raises on use and changes nothing."""
+    wb = Workbook.create()
+    ws = wb[SHEET]
+    for address, value in (("B3", "moved"), ("B6", "below"), ("C5", "beside")):
+        ws[address].value = value
+    down, beside, last = ws["B5"], ws["C4"], ws["B1048576"]
+    shift_cells(ws, _Shift(True, 3, 2, span=(2, 2)))  # insert cells B3:B4, shifting down
+    assert (down.address, beside.address) == ("B7", "C4")
+    down.value = "X"
+    assert _values(ws) == {"B5": "moved", "B7": "X", "B8": "below", "C5": "beside"}
+    assert repr(last) == "<Cell 'B1048576', moved past the grid>"
+    with pytest.raises(GridOverflowError, match="moved cell B1048576 past the grid"):
+        last.value = 1
+
+    gone, up = ws["B6"], ws["B10"]
+    shift_cells(ws, _Shift(True, 5, -2, span=(2, 2)))  # delete cells B5:B6, shifting up
+    assert up.address == "B8"
+    assert repr(gone) == "<Cell 'B6', deleted>"
+    before = _saved(wb)
+    for use in (lambda: gone.value, lambda: setattr(gone, "value", 1), lambda: gone.style):
+        with pytest.raises(InvalidRangeError, match="cell B6 was deleted") as raised:
+            use()
+        assert not isinstance(raised.value, GridOverflowError)
+    assert read_pkg(_saved(wb)) == read_pkg(before)
+    up.value = "Y"
+    assert _values(ws) == {"B5": "X", "B6": "below", "B8": "Y", "C5": "beside"}
+    check_consistency(Workbook.open(io.BytesIO(_saved(wb))))
 
 
 def test_repr_follows_inserts():
