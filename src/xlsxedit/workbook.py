@@ -713,7 +713,9 @@ class Workbook:
         try:
             _SheetGrid(ws).place_to(anchor_elm, cx, cy)
         except ValueError:
-            raise ValueError(f"a picture anchored at {anchor!r} would pass the edge of the sheet") from None
+            raise ValueError(
+                f"a picture anchored at {anchor!r} would pass the edge of the sheet"
+            ) from None
         sp_pr = anchor_elm.find(f".//{{{_XDR_NS}}}spPr")
         if sp_pr is not None:
             a_ext = sp_pr.find(f".//{_A_EXT}")
