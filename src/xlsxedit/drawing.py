@@ -553,10 +553,7 @@ def _parse_chart_formula(formula: str) -> tuple[str, str, int, str, int]:
 
 
 def _range_cells(worksheet: Worksheet, c1: str, r1: int, c2: str, r2: int) -> list[_Element | None]:
-    """``<c>`` elements of a range in row-major order, ``None`` where a cell is absent.
-
-    Reads the sheet without creating cells, which ``worksheet[address]`` would.
-    """
+    """``<c>`` elements of a range in row-major order, ``None`` where a cell is absent."""
     col_lo, col_hi = sorted((col_to_index(c1), col_to_index(c2)))
     row_lo, row_hi = sorted((r1, r2))
     found: dict[tuple[int, int], _Element] = {}
