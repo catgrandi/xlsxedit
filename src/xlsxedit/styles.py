@@ -687,6 +687,9 @@ class Styles:
         self, style_kwargs: dict[str, Any], *, base_xf: int = 0
     ) -> dict[str, Any]:
         check_style_text(style_kwargs)
+        for key in ("font_color", "bg_color"):  # before any font or fill is built
+            if style_kwargs.get(key) is not None:
+                normalize_rgb(style_kwargs[key])
         overrides: dict[str, Any] = {}
 
         if style_kwargs.get("num_format") is not None:

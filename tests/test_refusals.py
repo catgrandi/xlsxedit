@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from xlsxedit import FormulaGroupError, GridOverflowError, InvalidRangeError, Workbook
+from xlsxedit import FormulaGroupError, GridOverflowError, InvalidColorError, InvalidRangeError, Workbook
 from xlsxedit.bulk import write_cell_value
 from tests.conftest import INSPECT_FIXTURES
 from tests.preservation import assert_preserved, read_pkg
@@ -130,6 +130,30 @@ def test_string_over_an_index_in_another_form_leaves_the_shared_string_alone(ind
 
     ws["B1"].value = "new"
     assert (ws["A1"].value, ws["B1"].value) == ("kept", "new")
+
+
+def test_a_refused_style_builds_nothing_in_the_stylesheet():
+    wb = Workbook.create()
+    before = read_pkg(_saved(wb))
+    with pytest.raises(InvalidColorError):
+        wb["Sheet1"]["B2"].apply_style(bold=True, bg_color="nope")
+    with pytest.raises(InvalidColorError):
+        wb.styles.allocate_cell_style(num_format="0.00", font_color="nope")
+    assert read_pkg(_saved(wb)) == before
+
+
+@pytest.mark.parametrize("link", [None, "https://example.com/original"])
+@pytest.mark.parametrize("field", ["location", "url"])
+def test_a_refused_hyperlink_keeps_the_cell_s_link(field, link):
+    wb = Workbook.create()
+    cell = wb["Sheet1"]["C3"]
+    if link is not None:
+        cell.hyperlink.url = link
+    before = read_pkg(_saved(wb))
+    with pytest.raises(ValueError):
+        setattr(cell.hyperlink, field, "Sheet1!A1" + chr(1))
+    assert read_pkg(_saved(wb)) == before
+    assert cell.hyperlink.url == link
 
 
 def test_numpy_scalars_are_written_as_numbers():
