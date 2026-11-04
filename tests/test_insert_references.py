@@ -430,13 +430,13 @@ def test_a_timezone_aware_datetime_refuses_before_changing_anything(method, valu
     assert_preserved(before, _saved(wb))
 
 
-def test_pandas_nat_refuses_before_changing_anything():
+def test_pandas_nat_inserts_an_empty_cell():
     pd = pytest.importorskip("pandas")
     wb = Workbook.open(INSPECT_FIXTURES["SimpleFormula"])
-    before = _saved(wb)
-    with pytest.raises(ValueError, match="use None"):
-        wb["Sheet1"].insert_rows([["ok", pd.NaT]], at_row=5)
-    assert_preserved(before, _saved(wb))
+    ws = wb["Sheet1"]
+    ws.insert_rows([["ok", pd.NaT]], at_row=5)
+    assert (ws["A5"].value, ws["B5"].value) == ("ok", None)
+    assert_valid_package(wb)
 
 
 @pytest.mark.parametrize("method", ["insert_rows", "insert_columns"])

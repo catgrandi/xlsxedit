@@ -999,7 +999,7 @@ class Worksheet:
         """Refuse, before anything changes, a bulk overwrite ``_write_bulk_rows`` would
         stop partway: conflicting or invalid styles, cells off the grid, values the
         cells cannot hold, or the anchor of a multi-cell array or data-table formula.
-        Returns ``row_list`` as ``check_values_writable`` does, with each NaN made ``None``."""
+        Returns ``row_list`` as ``check_values_writable`` does, with each missing value made ``None``."""
         validate_style_sources(template_rows=template_rows, row_styles=row_styles)
         check_style_specs(row_styles, column_styles)
         if not row_list:
