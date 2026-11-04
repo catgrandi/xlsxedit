@@ -85,6 +85,7 @@ _ROW = f"{{{SML_NS}}}row"
 _C = f"{{{SML_NS}}}c"
 _F = f"{{{SML_NS}}}f"
 _SHEET_DATA = f"{{{SML_NS}}}sheetData"
+_ROW_BLOCK_BITS = 6  # a range formula over 64 rows or more is looked up by blocks of 64
 _SHEET_FORMAT_PR = f"{{{SML_NS}}}sheetFormatPr"
 _COLS = f"{{{SML_NS}}}cols"
 _COL = f"{{{SML_NS}}}col"
@@ -195,6 +196,8 @@ class Worksheet:
         self._shifts: list[_Shift] = []
         self._column_styles: tuple | None = None  # see _column_style
         self._range_formulas: list[list] | None = None  # see _range_formula_areas
+        # (len(_shifts), areas, by row, by row block) as _range_formula_areas last found them
+        self._range_formula_cache: tuple | None = None
 
     def __repr__(self) -> str:
         return f"<Worksheet {self._name!r}>"
@@ -411,22 +414,26 @@ class Worksheet:
 
         The ``<f>`` of each is found in one pass over the sheet, the first time
         a write needs them, and again after ``_get_or_create_cell_element``.
-        Each call reads their anchor and ``ref`` afresh, so it follows the
-        formulas that inserts move and drops the ones that writes remove. Only
-        a formula over several cells is kept: the API never makes one, nor turns
-        a one-cell formula into one, so a range formula added to the sheet's XML
-        by other means is not seen.
+        Their anchors and ``ref`` are read again after each insert or cell shift
+        (``_shifts``), the only edits that move such a formula or remove its cell;
+        writes refuse to change one. Only a formula over several cells is kept: the
+        API never makes one, nor turns a one-cell formula into one, so a range
+        formula added to the sheet's XML by other means is not seen.
         """
+        cached = self._range_formula_cache
+        if cached is not None and cached[0] == len(self._shifts):
+            return cached[1]
         entries = self._range_formulas
         if entries is None:
+            sheet_data = next(self._part.element.iterchildren(_SHEET_DATA), None)
+            found = () if sheet_data is None else sheet_data.iter(_F)  # no walk without an <f>
             entries = self._range_formulas = [
                 [f, f.get("ref"), area]
-                for f in _RANGE_FORMULAS(self._part.element)
+                for f in found
+                if f.get("t") in ("array", "dataTable")
                 for area in [_multi_cell_area(f.get("ref"))]
                 if area is not None
             ]
-        if not entries:
-            return []
         areas = []
         kept = []
         for entry in entries:
@@ -444,22 +451,34 @@ class Worksheet:
                 areas.append((kind, c.get("r", ""), area))
         if len(kept) != len(entries):
             self._range_formulas = kept
+        by_row: dict[int, list] = {}  # a formula over fewer rows than a block, by each row
+        by_block: dict[int, list] = {}  # a taller one, by each block of rows it reaches
+        for item in areas:
+            area = item[2]
+            if area.max_row - area.min_row < 1 << _ROW_BLOCK_BITS:
+                for row in range(area.min_row, area.max_row + 1):
+                    by_row.setdefault(row, []).append(item)
+            else:
+                for block in range(area.min_row >> _ROW_BLOCK_BITS, (area.max_row >> _ROW_BLOCK_BITS) + 1):
+                    by_block.setdefault(block, []).append(item)
+        self._range_formula_cache = (len(self._shifts), areas, by_row, by_block)
         return areas
 
     def _range_formula_part(self, address: str) -> tuple[str, str, CellRange] | None:
         """The multi-cell array or data-table formula that ``address`` is part of other
         than as its anchor, as ``(kind, anchor, range)``; ``None`` if there is none."""
-        areas = self._range_formula_areas()
-        if not areas:
+        if not self._range_formula_areas():
             return None
         try:
             col, row = split_address(address)
         except InvalidRangeError:
             return None  # a <c> without r: no range formula can name it
         column = col_to_index(col) + 1
-        for kind, anchor, area in areas:
-            if area.contains(column, row) and anchor.upper() != address.upper():
-                return kind, anchor, area
+        _, _, by_row, by_block = self._range_formula_cache
+        for candidates in (by_row.get(row), by_block.get(row >> _ROW_BLOCK_BITS)):
+            for kind, anchor, area in candidates or ():
+                if area.contains(column, row) and anchor.upper() != address.upper():
+                    return kind, anchor, area
         return None
 
     def _refuse_range_formula_part(self, address: str) -> None:
@@ -653,7 +672,7 @@ class Worksheet:
         """The ``<c>`` at ``address``, created bare where the sheet has none, for
         code that edits the element directly; cell writes use ``_cell_for_write``."""
         address = self._resolve_write_address(address).upper()
-        self._range_formulas = None  # the caller may plant one
+        self._range_formulas = self._range_formula_cache = None  # the caller may plant one
         existing = self._find_cell_element(address)
         if existing is not None:
             return existing
