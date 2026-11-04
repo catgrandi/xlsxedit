@@ -165,6 +165,18 @@ def test_every_write_shares_one_part():
     assert [back[a].value for a in ("A1", "A2", "A3", "B3")] == ["three", "one", "two", "one"]
 
 
+def test_two_workbooks_over_one_package_share_one_part():
+    from xlsxedit.opc.package import OpcPackage
+
+    package = OpcPackage.open(BOOK)
+    first, second = Workbook(package), Workbook(package)
+    first[SHEET]["A1"].value = "from first"
+    second[SHEET]["A2"].value = "from second"
+    assert len(package.main_document_part().rels.parts_with_reltype(RT.SHARED_STRINGS)) == 1
+    back = _reopen(second)[SHEET]
+    assert (back["A1"].value, back["A2"].value) == ("from first", "from second")
+
+
 def test_the_part_does_not_take_an_orphans_name(tmp_path: Path):
     path = tmp_path / "orphan.xlsx"
     shutil.copy(BOOK, path)
@@ -323,6 +335,10 @@ REFUSALS: dict[str, tuple[Callable, type[BaseException]]] = {
     "add_table(write_header=True) with a name Excel rejects": (
         lambda ws: ws.add_table("K1:L3", ["One", "Two"], name="1st", write_header=True),
         TableError,
+    ),
+    "bulk write_cell_value without a table or a worksheet": (
+        lambda ws: write_cell_value(ws._get_or_create_cell_element("A1"), "text", None, {}),
+        ValueError,
     ),
     "bulk write_cell_value with text XML cannot hold": (
         lambda ws: write_cell_value(
