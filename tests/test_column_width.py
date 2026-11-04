@@ -193,6 +193,32 @@ def test_only_the_first_of_overlapping_cols_keeps_the_column():
     assert _cols(wb)[-1] == _col(5, 6, width="30")
 
 
+def test_a_col_in_a_second_cols_block_is_read_and_split():
+    wb = _book({"width": "9", "style": "1", "customWidth": "1"})
+    ws = wb["Sheet1"]
+    root = ws._part.element
+    second = etree.Element(_COLS)
+    root.find(_COLS).addnext(second)
+    second.append(root.find(_COLS)[-1])  # <col min="3" max="5"> moves to a second <cols>
+    assert ws.column_dimensions["D"].width == 9.0
+    ws.column_dimensions["D"].width = 20
+    assert [dict(c.attrib) for c in root.find(_COLS)] == [A]
+    assert [dict(c.attrib) for c in second] == [
+        _col(3, 3, width="9", style="1", customWidth="1"),
+        _col(4, 4, width="20", style="1", customWidth="1"),
+        _col(5, 5, width="9", style="1", customWidth="1"),
+    ]
+    assert {c: ws.column_dimensions[c].width for c in "CDE"} == {"C": 9.0, "D": 20.0, "E": 9.0}
+    assert_valid_package(wb)
+
+
+def test_custom_width_true_counts_as_custom_width():
+    wb = Workbook.open(io.BytesIO(_saved(_book({"width": "9", "style": "1", "customWidth": "true"}))))
+    wb["Sheet1"].column_dimensions["D"].width = 9
+    assert not wb["Sheet1"]._part.is_dirty
+    assert _cols(wb)[-1] == _col(3, 5, width="9", style="1", customWidth="true")
+
+
 def test_a_new_col_goes_in_column_order():
     """Excel 16 opened ``<col>``s out of column order and saved them sorted (2026-11-04)."""
     wb = Workbook.create()
