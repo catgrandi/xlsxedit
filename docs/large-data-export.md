@@ -44,11 +44,15 @@ wb.write_dataframe(
 wb.write_dataframe(df, at_cell="A5", header=False, mode="insert")
 ```
 
-An overwrite checks the whole write before it changes anything: values of a type it cannot write, text XML cannot hold, cells past row 1,048,576 or column XFD (`GridOverflowError`), invalid inline styles, and a write to the anchor of a multi-cell array or data-table formula (`FormulaGroupError`). A refused write, including its `clear_range`, leaves the sheet as it was.
+An overwrite checks the whole write before it changes anything: values of a type it cannot write, infinite numbers ([NaN and infinity](#nan-and-infinity)), text XML cannot hold, cells past row 1,048,576 or column XFD (`GridOverflowError`), invalid inline styles, and a write to the anchor of a multi-cell array or data-table formula (`FormulaGroupError`). A refused write, including its `clear_range`, leaves the sheet as it was.
 
 `write_dataframe` only overwrites cells it writes. It does **not** clear extra cells outside the new data rectangle. Use `clear_range` when re-filling a slot with **fewer** rows than a previous export.
 
 A value aimed at a cell that a merged range covers is not written there. It goes to the merge's top-left cell, as `ws["B1"].value = ...` does, unless it is `None` or the same write also writes that top-left cell (even with `None`, which clears it). When several such values in one write go to the same top-left cell, the last one is kept. The covered cell still gets the row's style.
+
+## NaN and infinity
+
+Excel has no NaN and no infinite numbers, and it repairs a workbook whose cells store either. So xlsxedit treats NaN as a missing value: `cell.value = float("nan")`, `write_rows`, `write_dataframe`, `insert_rows` and `insert_columns` write an empty cell for it, as they do for `None`, including in a column of `string_columns`. Like `None`, a NaN aimed at a merged cell is not sent to the merge's top-left cell. An infinite number raises `ValueError` before anything changes, except in a column of `string_columns`, which writes it as the text `inf` or `-inf`. Refusing NaN would break most DataFrame exports, since pandas marks missing numbers with it; infinity has no such use.
 
 ## Tables in the slot
 

@@ -1669,23 +1669,34 @@ def check_block_in_grid(
         raise GridOverflowError(f"{method} would write past column XFD")
 
 
+def _is_nan(value) -> bool:
+    return isinstance(value, float) and value != value
+
+
 def check_values_writable(
     method: str,
     rows: list,
     *,
     start_col_idx: int,
     string_columns: set[int] | None,
-) -> None:
-    """Refuse, before anything changes, a value the bulk writer would fail on.
+) -> list:
+    """Refuse, before anything changes, a value the bulk writer would fail on or
+    that Excel would repair, and return ``rows`` with each NaN made ``None``.
 
     Mirrors ``bulk.write_cell_value``: the accepted types and the characters
-    XML cannot hold.
+    XML cannot hold. A NaN, even in one of ``string_columns``, writes an empty
+    cell, as ``None`` does; an infinite number is refused, since Excel has none.
     """
     string_columns = string_columns or set()
-    for row in rows:
+    with_nan = []
+    for index, row in enumerate(rows):
         values = row if isinstance(row, (list, tuple)) else (row,)
         for offset, value in enumerate(values):
             if value is None:
+                continue
+            if _is_nan(value):
+                if not with_nan or with_nan[-1] != index:
+                    with_nan.append(index)
                 continue
             forced = start_col_idx + offset in string_columns
             if not forced and not isinstance(value, _WRITABLE):
@@ -1693,6 +1704,8 @@ def check_values_writable(
                     f"{method} accepts str, int, float, bool, datetime, date, or None; "
                     f"got {type(value)!r}"
                 )
+            if not forced and isinstance(value, float) and math.isinf(value):
+                raise ValueError(f"{method} cannot write {value!r}: Excel has no infinite numbers")
             if not forced and isinstance(value, date):
                 try:
                     serial = datetime_to_serial(value)
@@ -1708,6 +1721,16 @@ def check_values_writable(
             if forced or isinstance(value, str):
                 if _XML_ILLEGAL.search(str(value)):
                     raise ValueError(f"{method}: {str(value)!r} holds characters XML cannot store")
+    if not with_nan:
+        return rows
+    blanked = list(rows)
+    for index in with_nan:
+        row = rows[index]
+        if isinstance(row, (list, tuple)):
+            blanked[index] = tuple(None if _is_nan(value) else value for value in row)
+        else:
+            blanked[index] = None
+    return blanked
 
 
 def check_style_specs(*spec_lists: list[dict] | None) -> None:

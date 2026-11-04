@@ -799,17 +799,18 @@ class Worksheet:
         row_styles: list[dict[str, Any]] | None,
         column_styles: list[dict[str, Any]] | None,
         string_columns: set[int] | None,
-    ) -> None:
+    ) -> list:
         """Refuse, before anything changes, a bulk overwrite ``_write_bulk_rows`` would
         stop partway: conflicting or invalid styles, cells off the grid, values the
-        cells cannot hold, or the anchor of a multi-cell array or data-table formula."""
+        cells cannot hold, or the anchor of a multi-cell array or data-table formula.
+        Returns ``row_list`` as ``check_values_writable`` does, with each NaN made ``None``."""
         validate_style_sources(template_rows=template_rows, row_styles=row_styles)
         check_style_specs(row_styles, column_styles)
         if not row_list:
-            return
+            return row_list
         widths = [len(r) if isinstance(r, (list, tuple)) else 1 for r in row_list]
         check_block_in_grid(method, start_row, start_col_idx, len(row_list), max(widths))
-        check_values_writable(
+        row_list = check_values_writable(
             method,
             row_list,
             start_col_idx=start_col_idx,
@@ -818,6 +819,7 @@ class Worksheet:
         self._check_range_formula_anchors_kept(
             row_list, widths, start_row=start_row, start_col_idx=start_col_idx
         )
+        return row_list
 
     def _check_range_formula_anchors_kept(
         self, row_list: list, widths: list[int], *, start_row: int, start_col_idx: int
@@ -906,10 +908,9 @@ class Worksheet:
         rather than a DataFrame. Every check comes first, then ``clear_range``
         is cleared, then the rows are written, so a refused write changes nothing.
         """
-        row_list = list(rows)
-        self._check_overwrite(
+        row_list = self._check_overwrite(
             method,
-            row_list,
+            list(rows),
             start_row=start_row,
             start_col_idx=start_col_idx,
             template_rows=template_rows,
@@ -1003,7 +1004,7 @@ class Worksheet:
         check_style_specs(row_styles, column_styles)
         width = max(len(r) if isinstance(r, (list, tuple)) else 1 for r in row_list)
         check_block_in_grid("insert_rows", at_row, start_col_idx, count, width)
-        check_values_writable(
+        row_list = check_values_writable(
             "insert_rows",
             row_list,
             start_col_idx=start_col_idx,
@@ -1099,7 +1100,7 @@ class Worksheet:
                 row_vals.append(col_vec[row_offset] if row_offset < len(col_vec) else None)
             row_list.append(tuple(row_vals))
 
-        check_values_writable(
+        row_list = check_values_writable(
             "insert_columns",
             row_list,
             start_col_idx=at_col_idx,

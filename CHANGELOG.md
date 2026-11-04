@@ -25,6 +25,7 @@ Several changes below are breaking, so the next release is a major one.
 - **Tables** — `Table` lives in `xlsxedit.table` (still importable from `xlsxedit` and `xlsxedit.drawing`), and its constructor takes the table part and its worksheet.
 - **Cells** — the first write through a `Cell` (`ws[address]`) to a cell the sheet does not have gives it the style Excel gives a cell typed there: its row's when the row is formatted as a whole (the default if the row names none), else its column's. It used to get none, which Excel shows as the default style. A number written that way into an empty cell of a date-formatted column therefore reads back as a `datetime`, or as the number when it is past Excel's last date, 9999-12-31. Bulk writes (`write_rows`, `write_dataframe`, the pandas engine and the values `insert_rows` and `insert_columns` write) and the header cells that `add_table`, `Table.resize` and `insert_columns` write still create cells without that style.
 - **Styles** — `CellStyle`'s third argument is the `Cell` it describes instead of the cell's element, so that setting `num_format` can create a cell the sheet does not have yet.
+- **Values** — NaN written through `cell.value`, `write_rows`, `write_dataframe`, `insert_rows` or `insert_columns` writes an empty cell, as `None` does, and an infinite number raises `ValueError` before anything changes. Both used to be stored as `nan` or `inf`, which Excel repairs. See [NaN and infinity](docs/large-data-export.md#nan-and-infinity).
 
 ### Added
 
