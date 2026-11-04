@@ -83,10 +83,17 @@ def test_string_edit_changes_only_the_probed_sheet_and_shared_strings(name: str)
     sst = [
         m for m, ct in content_types(read_pkg(FIXTURES[name])).items() if ct == CT.SHARED_STRINGS
     ]
-    if not sst:
-        pytest.skip("no shared strings part to append to")
     before, after, member = _probe_first_sheet(name, "probe")
-    _assert_bytes_kept(assert_preserved(before, after, expected_changed={member, *sst}))
+    if sst:
+        _assert_bytes_kept(assert_preserved(before, after, expected_changed={member, *sst}))
+    else:  # the string adds the part, its relationship and its content type
+        report = assert_preserved(
+            before,
+            after,
+            expected_changed={member, "xl/_rels/workbook.xml.rels"},
+            expected_added={"xl/sharedStrings.xml"},
+        )
+        assert report.reserialised == {"[Content_Types].xml"}
     diff = worksheet_diff(before[member], after[member])
     assert list(diff.added) == [PROBE]
     assert diff.added[PROBE].t == "s"
