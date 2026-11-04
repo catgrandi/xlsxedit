@@ -219,3 +219,41 @@ def test_data_validation_writes_mark_the_sheet_only_on_a_change():
     ws = wb[SHEET]
     ws.remove_data_validation(ws.data_validations[0])
     assert ws._part.is_dirty
+
+
+def _parsed_on_save(monkeypatch, wb: Workbook) -> list[bytes]:
+    parsed: list[bytes] = []
+    real = part_module.parse_xml
+    monkeypatch.setattr(part_module, "parse_xml", lambda blob: parsed.append(blob) or real(blob))
+    _saved_bytes(wb)
+    monkeypatch.setattr(part_module, "parse_xml", real)
+    return parsed
+
+
+def test_an_insert_marks_every_part_it_changes(monkeypatch):
+    """The sheet, its drawing, the charts and defined names that follow it, and
+    other sheets' references to it; so saving parses none of them again (#56)."""
+    wb = Workbook.open(INSPECT_FIXTURES["ChartsAndTables"])
+    wb["Table"].add_conditional_formatting("A1:A3", formula="'bar chart'!$B$4")
+    wb = Workbook.open(io.BytesIO(_saved_bytes(wb)))
+    source = read_pkg(_saved_bytes(wb))
+    wb["bar chart"].insert_rows([[None]], at_row=4)
+    changed = {
+        "/xl/worksheets/sheet1.xml",
+        "/xl/worksheets/sheet3.xml",
+        "/xl/drawings/drawing1.xml",
+        "/xl/charts/chart1.xml",
+        "/xl/workbook.xml",
+    }
+    assert changed <= set(_dirty_parts(wb))
+    parsed = _parsed_on_save(monkeypatch, wb)
+    assert not [name for name in changed if source[name.lstrip("/")] in parsed]
+    after = read_pkg(_saved_bytes(wb))
+    assert {name.lstrip("/") for name in changed} <= {m for m in after if after[m] != source.get(m)}
+
+
+def test_an_insert_that_moves_nothing_marks_nothing():
+    wb = Workbook.open(INSPECT_FIXTURES["ChartsAndTables"])
+    wb["Table"].insert_rows([[]], at_row=500)
+    assert _dirty_parts(wb) == ["/xl/workbook.xml"]  # fullCalcOnLoad
+

@@ -32,7 +32,8 @@ import re
 import string
 import sys
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import date
 from functools import partial
@@ -992,6 +993,10 @@ class _Planner:
     ``after`` steps that act on other parts. A structure that belongs to
     whole rows (columns), such as a page break or a ``<col>``, ignores a
     shift restricted to a span.
+
+    Each edit belongs to the part being planned, the shifted sheet's
+    ``part`` unless :meth:`editing` names another; ``apply`` marks every part
+    an edit changes dirty. The ``after`` steps mark their own parts.
     """
 
     def __init__(self, ins: _Shift, *, sheet_name: str | None = None, part=None):
@@ -1002,25 +1007,43 @@ class _Planner:
         self._sets: list[Callable[[], None]] = []
         self._removals: list[Callable[[], None]] = []
         self._after: list[Callable[[], None]] = []
+        self._editing = part
+        self._changed: dict = {}  # the parts an edit changes, in order
 
     def apply(self) -> None:
         for step in (*self._sets, *self._removals, *self._after):
             step()
+        for part in self._changed:
+            part.mark_dirty()
+
+    @contextmanager
+    def editing(self, part) -> Iterator[None]:
+        """Attribute the edits planned inside the block to ``part``."""
+        outer, self._editing = self._editing, part
+        try:
+            yield
+        finally:
+            self._editing = outer
+
+    def _edit(self, step: Callable[[], None], steps: list[Callable[[], None]]) -> None:
+        steps.append(step)
+        if self._editing is not None:
+            self._changed[self._editing] = None
 
     def set(self, elm: etree._Element, attr: str, value: str) -> None:
         if elm.get(attr) != value:
-            self._sets.append(partial(elm.set, attr, value))
+            self._edit(partial(elm.set, attr, value), self._sets)
 
     def set_text(self, elm: etree._Element, value: str) -> None:
         if elm.text != value:
-            self._sets.append(partial(setattr, elm, "text", value))
+            self._edit(partial(setattr, elm, "text", value), self._sets)
 
     def drop(self, elm: etree._Element, attr: str) -> None:
         if elm.get(attr) is not None:
-            self._sets.append(partial(elm.attrib.pop, attr))
+            self._edit(partial(elm.attrib.pop, attr), self._sets)
 
     def remove(self, elm: etree._Element) -> None:
-        self._removals.append(partial(_detach, elm))
+        self._edit(partial(_detach, elm), self._removals)
 
     def after(self, step: Callable[[], None]) -> None:
         self._after.append(step)
@@ -1401,13 +1424,14 @@ class _Planner:
 
     def other_sheets(self, workbook, worksheet) -> None:
         """References to the shifted sheet from the workbook's other worksheets
-        (see :meth:`foreign_sheet`)."""
+        (see :meth:`foreign_sheet`), each attributed to that sheet's part."""
         for other in workbook.worksheets:
             if other is worksheet:
                 continue
             root = _root_if_it_may_refer(other, self.sheet_name)
             if root is not None:
-                self.foreign_sheet(root)
+                with self.editing(other._part):
+                    self.foreign_sheet(root)
 
     def foreign_sheet(self, root: etree._Element) -> None:
         """References to the shifted sheet from another sheet's conditional formats,
@@ -1441,22 +1465,25 @@ class _Planner:
                 _forget_scans(part)
             elif self.sheet_name is None or not _unparsed_may_name(part, self.sheet_name):
                 continue
-            for elm in chart_references(part.element):
-                self.set_text(elm, self.plain(elm.text, own=False))
+            with self.editing(part):
+                for elm in chart_references(part.element):
+                    self.set_text(elm, self.plain(elm.text, own=False))
 
     def defined_names(self, workbook) -> None:
-        wb_elm = workbook._workbook_part.element
+        wb_part = workbook._workbook_part
+        wb_elm = wb_part.element
         block = wb_elm.find(_DEFINED_NAMES)
         if block is None:
             return
         index = _local_sheet_index(wb_elm, self.sheet_name)
-        for elm in block.iterchildren(_DEFINED_NAME):
-            if not elm.text:
-                continue
-            local_id = elm.get("localSheetId")
-            local = index is not None and local_id is not None and local_id == str(index)
-            new = rewrite_formula_refs(elm.text, self.sheet_name, self.ins.area, unqualified=local)
-            self.set_text(elm, new)
+        with self.editing(wb_part):
+            for elm in block.iterchildren(_DEFINED_NAME):
+                if not elm.text:
+                    continue
+                local_id = elm.get("localSheetId")
+                local = index is not None and local_id is not None and local_id == str(index)
+                new = rewrite_formula_refs(elm.text, self.sheet_name, self.ins.area, unqualified=local)
+                self.set_text(elm, new)
 
 
 def _extension_formulas(
