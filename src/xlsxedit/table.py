@@ -37,7 +37,7 @@ from xlsxedit.oxml.address import (
 )
 from xlsxedit.oxml.parser import parse_xml
 from xlsxedit.parts import TablePart
-from xlsxedit.styles import _XML_ILLEGAL
+from xlsxedit.styles import _MAX_TEXT, _XML_ILLEGAL, _text_length
 from xlsxedit.worksheet_order import insert_ordered
 
 if TYPE_CHECKING:
@@ -959,6 +959,11 @@ def _check_column_names(columns, *, width: int | None = None) -> list[str]:
             raise TableError(f"column names must be non-empty strings, got {name!r}")
         if _XML_ILLEGAL.search(name):
             raise TableError(f"column name {name!r} holds characters XML cannot store")
+        if len(name) > _MAX_TEXT // 2 and _text_length(name) > _MAX_TEXT:
+            raise TableError(
+                f"a column name of {_text_length(name):,} characters is longer than the "
+                f"{_MAX_TEXT:,} its header cell can hold"
+            )
         if name.casefold() in seen:
             raise TableError(f"duplicate column name {name!r} (names ignore case)")
         seen.add(name.casefold())

@@ -77,6 +77,16 @@ _BUILTIN_DATE_NUMFMT_ID = 14
 _EXCEL_EPOCH = datetime(1899, 12, 30)
 _MIN_CUSTOM_NUMFMT_ID = 164
 _XML_ILLEGAL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
+_MAX_TEXT = 32_767  # the most text a cell holds, in UTF-16 code units as Excel counts it
+
+
+def _text_length(text: str) -> int:
+    """The length of ``text`` as Excel counts it: in UTF-16 code units, so a
+    character past U+FFFF, such as an emoji, counts twice. ``text`` holds no
+    lone surrogate (``_XML_ILLEGAL`` refuses those first)."""
+    return len(text.encode("utf-16-le")) // 2
+
+
 _ALIGNMENTS = {
     "horizontal_align": frozenset(
         {

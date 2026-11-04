@@ -64,7 +64,14 @@ from xlsxedit.oxml.address import MAX_COL, MAX_ROW, col_to_index, index_to_col, 
 from xlsxedit.oxml.parser import _DECLARED_ENCODING, _prolog_codec
 from xlsxedit.parts import WorksheetPart
 from xlsxedit.range_set import CellRange, SheetRangeSet, shift_bounds
-from xlsxedit.styles import _XML_ILLEGAL, check_style_text, datetime_to_serial, normalize_rgb
+from xlsxedit.styles import (
+    _MAX_TEXT,
+    _XML_ILLEGAL,
+    _text_length,
+    check_style_text,
+    datetime_to_serial,
+    normalize_rgb,
+)
 from xlsxedit.worksheet_order import insert_worksheet_child
 
 _ROW = f"{{{SML_NS}}}row"
@@ -148,7 +155,6 @@ _FORMULA1 = f"{{{SML_NS}}}formula1"
 _FORMULA2 = f"{{{SML_NS}}}formula2"
 _WRITABLE = (str, int, float, date)  # bool is an int and datetime a date
 _MAX_INT_BITS = 2_000  # at most 603 digits: under the lowest digit limit str() allows (640)
-_MAX_TEXT = 32_767  # the most text a cell holds, in UTF-16 code units as Excel counts it
 _MAX_DOUBLE = sys.float_info.max  # Excel stores numbers as doubles
 
 _CELL_ADDRESS_RE = re.compile(r"([A-Za-z]{1,3})([0-9]+)")
@@ -2066,13 +2072,6 @@ def _is_missing(value) -> bool:
         return value != value
     kind = type(value)
     return kind.__name__ in _PANDAS_MISSING and kind.__module__.startswith("pandas")
-
-
-def _text_length(text: str) -> int:
-    """The length of ``text`` as Excel counts it: in UTF-16 code units, so a
-    character past U+FFFF, such as an emoji, counts twice. ``text`` holds no
-    lone surrogate (``_XML_ILLEGAL`` refuses those first)."""
-    return len(text.encode("utf-16-le")) // 2
 
 
 def check_values_writable(
