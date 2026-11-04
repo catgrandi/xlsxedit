@@ -291,11 +291,18 @@ def test_value_a_merge_sends_to_the_anchor_is_refused(extra_merges: int):
 
 
 def test_rows_without_values_write_no_cells():
+    """An empty row writes nothing, so it adds no ``<row>``, which on a sheet that hides
+    unused rows (``zeroHeight``) would show the row; later rows still go below it."""
     wb, ws = _array_sheet()
+    before = read_pkg(wb)
     dimension = ws._part.element.find(f"{{{_SML}}}dimension").get("ref")
-    assert ws.write_rows([[]], at_row=5) == 1
-    assert ws.write_rows([[], []], at_cell="C5") == 2
+    assert ws.write_rows([[]], at_row=50) == 1
+    assert ws.write_rows([[], []], at_cell="C50") == 2
     assert ws._part.element.find(f"{{{_SML}}}dimension").get("ref") == dimension
+    assert_preserved(before, read_pkg(wb))
+    assert ws.write_rows([[], ["x"]], at_row=60) == 2
+    assert ws._find_row_element(60) is None
+    assert ws["A61"].value == "x"
 
 
 def test_bulk_write_beside_the_anchor_still_writes():

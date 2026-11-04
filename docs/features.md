@@ -94,6 +94,8 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | `ws.add_data_validation(sqref, *, type, formula1, formula2, operator, …)` | Add a validation | Dropdown lists and number, date, time, text-length and custom rules; checks every argument before changing anything |
 | `ws.remove_data_validation(dv)` | Remove a validation | Not an x14 rule |
 
+On a sheet that hides the rows it does not list (`sheetFormatPr/@zeroHeight`, which Excel writes when every unused row is hidden), a row that a write adds to the sheet, through a `Cell` or a bulk write, the rows `insert_columns` writes values into included, is written hidden, as Excel keeps a hidden row hidden when a value is typed into it. So the drawing objects below it stay where they are on the page. A row given a height through `row_dimensions` shows, as in Excel, and so do the rows `insert_rows` adds.
+
 ### Inserting rows and columns
 
 `insert_rows` and `insert_columns` move everything in the workbook that names the shifted cells:
