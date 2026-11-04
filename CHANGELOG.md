@@ -76,7 +76,7 @@ Several changes below are breaking, so the next release is a major one.
 - **Hyperlinks** — a `url` or `location` holding characters XML cannot store raises `ValueError` before anything changes. Such a `url` used to be accepted and make every later save fail, and such a `location` dropped the cell's existing link first.
 - **Drawings** — editing a chart and then a picture on one sheet keeps both edits. `Picture.anchor` moves the whole anchor, and `Picture.width` / `height` resize the picture with its anchor. Added images and charts get ids unique within their drawing. Rebuilt chart caches hold only numbers in `c:numCache`. A refused chart title or series formula leaves the chart unchanged, and clearing a title no longer writes an empty `c:tx`.
 - **Bulk export** — `write_rows` with rows that hold no values no longer raises or writes an inverted `<dimension>`.
-- **Columns** — setting `column_dimensions[...].width` for a column that shares a `<col>` with others, such as `<col min="3" max="5" style="7"/>`, splits the `<col>` as Excel does instead of replacing it with one for that column: the other columns keep their width, style and other attributes, and the column keeps its style.
+- **Columns** — setting `column_dimensions[...].width` for a column that shares a `<col>` with others, such as `<col min="3" max="5" style="7"/>`, splits the `<col>` as Excel does instead of replacing it with one for that column: the other columns keep their width, style and other attributes, and the column keeps its style. A new `<col>` goes in column order instead of last.
 - **Worksheet XML order** — new worksheet and stylesheet children are placed in schema order around `legacyDrawing` and `mc:AlternateContent`.
 
 ### Security

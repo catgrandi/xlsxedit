@@ -193,6 +193,15 @@ def test_only_the_first_of_overlapping_cols_keeps_the_column():
     assert _cols(wb)[-1] == _col(5, 6, width="30")
 
 
+def test_a_new_col_goes_in_column_order():
+    """Excel 16 opened ``<col>``s out of column order and saved them sorted (2026-11-04)."""
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    for column in "CAZB":
+        ws.column_dimensions[column].width = 10
+    assert [c["min"] for c in _cols(wb)] == ["1", "2", "3", "26"]
+
+
 def _saved(wb: Workbook) -> bytes:
     pkg = read_pkg(wb)
     buf = io.BytesIO()
