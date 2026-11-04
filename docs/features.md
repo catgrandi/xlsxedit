@@ -60,7 +60,7 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | `ws.merge_cells(cell_range)` | Merge range | e.g. `"A1:C1"` |
 | `ws.unmerge_cells(cell_range)` | Unmerge range | |
 | `ws.merged_ranges` | Merged ranges as `list[str]` | e.g. `["A1:C1"]` |
-| `ws.clear_range(cell_range)` | Clear values in range | Returns count cleared; refuses before clearing anything (see `FormulaGroupError`) |
+| `ws.clear_range(cell_range)` | Clear values in range | Returns count cleared; refuses, before clearing anything, a range that reaches a cell of a multi-cell array or data-table formula (see `FormulaGroupError`) |
 | `ws.write_rows(rows, at_cell / at_row, …)` | Write rows at fixed positions | Bulk styling kwargs; a write it cannot complete raises before any cell changes ([details](large-data-export.md#two-write-modes)) |
 | `ws.insert_rows(rows, at_cell, …, shift_drawings=True)` | Insert rows, shift below down | See [Inserting rows and columns](#inserting-rows-and-columns) |
 | `ws.insert_columns(cols, at_col / at_cell, …, shift_drawings=True)` | Insert columns, shift right | ``cols`` = column vectors (top→bottom); see [Inserting rows and columns](#inserting-rows-and-columns) |
@@ -74,7 +74,7 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | `ws.charts` | List of `Chart` | |
 | `ws.add_chart(type, *, anchor, data_range, title, name, to_anchor)` | Add bar chart | `chart_type="bar"` today; flush from template; ``to_anchor`` optional end cell |
 | `ws.tables` | List of [`Table`](#table) | The same object for a table on every call |
-| `ws.add_table(cell_range, columns, *, name, display_name, write_header)` | Add Excel table | Header row must hold `columns`, or pass `write_header=True`; `name` defaults to `TableN`, N being the new table's id or the next free number; raises `TableError`, changing nothing, for invalid or duplicate names or columns and for overlapping tables, and `FormulaGroupError` when `write_header=True` would overwrite the anchor of a multi-cell array or data-table formula |
+| `ws.add_table(cell_range, columns, *, name, display_name, write_header)` | Add Excel table | Header row must hold `columns`, or pass `write_header=True`; `name` defaults to `TableN`, N being the new table's id or the next free number; raises `TableError`, changing nothing, for invalid or duplicate names or columns and for overlapping tables, and `FormulaGroupError` when `write_header=True` would write into a cell of a multi-cell array or data-table formula |
 | `ws.conditional_formatting` | Read CF blocks | colorScale, dataBar, cellIs, … |
 | `ws.add_conditional_formatting(cell_range, *, operator, formula, …)` | Add `cellIs` rule | With optional dxf colors |
 | `ws.add_color_scale_formatting(cell_range)` | Add color-scale rule | |
@@ -99,7 +99,7 @@ They refuse an insert, changing nothing, by raising:
 - `GridOverflowError` when the new cells, cell content, a table, a scenario input cell, a data-table input cell or, with `shift_drawings=True`, a drawing object would pass row 1,048,576 or column XFD;
 - `InvalidRangeError` for a reference in the sheet they cannot parse, a drawing anchor whose corner does not name a cell (with `shift_drawings=True`), or an insert point off the grid (`TypeError` if it is not an integer);
 - `TableError` when columns would be inserted strictly inside a table whose columns are bound to a query (`queryTableFieldId`), or when `insert_columns` would write into a joining column's header cell a value that cannot name the column, or one that a merge covers;
-- `FormulaGroupError` when a value aimed at a cell that a merge covers would overwrite a merge anchor holding a multi-cell array or data-table formula;
+- `FormulaGroupError` when a value aimed at a cell that a merge covers would overwrite a merge anchor that holds a multi-cell array or data-table formula or lies in one;
 - `ValueError` when a `template_rows` merge would overlap a merge, or when both `template_rows` and `row_styles` are given;
 - `TypeError` or `ValueError` for a value or inline style they cannot write.
 
@@ -380,7 +380,7 @@ All library errors derive from `XlsxeditError`, so you can catch everything with
 | `MissingPartError` | `RuntimeError` | A required package part is absent |
 | `DataValidationError` | `ValueError` | A data-validation edit Excel would reject or cannot apply, or a change to a read-only x14 validation ([details](#data-validation)) |
 | `TableError` | `ValueError` | A table edit would leave an invalid or inconsistent table: `add_table` names, columns, range, overlap or header cells; `Table.resize` and the `Table` setters; a `write_dataframe` resize that does not fit the table; `insert_columns` inside a table bound to a query, or with a header value that cannot name a column joining a table, or whose header cell a merge covers |
-| `FormulaGroupError` | `ValueError` | An edit would split a formula group: setting `cell.formula` on a shared-formula master that other cells still derive from, or on any cell of a multi-cell array or data-table formula; or overwriting, clearing, or removing the formula of such a multi-cell formula's anchor (`cell.value`, `cell.clear()`, `cell.formula = None`, `clear_range`, bulk writes, `add_table(write_header=True)`). Raised before anything changes, so a refused bulk write or `clear_range` changes no cell |
+| `FormulaGroupError` | `ValueError` | An edit would split a formula group: setting `cell.formula` on a shared-formula master that other cells still derive from, or on any cell of a multi-cell array or data-table formula; overwriting, clearing, or removing the formula of such a multi-cell formula's anchor; or writing any value, `None` included, into another of its cells, which Excel refuses as changing part of an array or data table (`cell.value`, `cell.clear()`, `cell.formula = None`, `clear_range`, bulk writes, `add_table(write_header=True)`). Raised before anything changes, so a refused bulk write or `clear_range` changes no cell. Typed `replace` and `insert_image_at_placeholder` skip those other cells, as they skip formula cells |
 | `DTDForbiddenError` | `ValueError` | An XML part xlsxedit reads declares a DTD (`<!DOCTYPE>`), which Excel never writes. Raised by `Workbook.open`, so never partway through an edit: the parts parsed only on first use (tables, drawings, charts, worksheets opened with `large=True`, and the pivot caches, data connections and slicer caches that table renames and resizes read) are checked without being parsed. Parts xlsxedit never parses, such as custom XML, may keep a DTD. Parsing never expands entities or fetches external resources |
 
 ---

@@ -37,7 +37,7 @@ from xlsxedit.data_validation import (
     new_data_validation,
 )
 from xlsxedit.dimensions import ColumnDimensions, RowDimensions
-from xlsxedit.exceptions import InvalidRangeError, WorksheetNotFoundError
+from xlsxedit.exceptions import FormulaGroupError, InvalidRangeError, WorksheetNotFoundError
 from xlsxedit.drawing import (
     DrawingObject,
     Picture,
@@ -49,6 +49,9 @@ from xlsxedit.drawing import (
 )
 from xlsxedit.range_set import CellRange, SheetRangeSet, column_number
 from xlsxedit.row_shift import (
+    _EXCEL_ARRAY,
+    _EXCEL_DATA_TABLE,
+    _excel_says,
     append_merges,
     check_block_in_grid,
     check_merge_anchors_writable,
@@ -64,7 +67,7 @@ from xlsxedit.row_shift import (
 )
 from xlsxedit.merge import MergeMap, normalize_range, parse_range, ranges_overlap
 from xlsxedit.opc.constants import CT, OFFICE_REL_NS, RT, SML_NS
-from xlsxedit.oxml.address import col_to_index, index_to_col, join_address, split_address
+from xlsxedit.oxml.address import MAX_COL, MAX_ROW, col_to_index, index_to_col, join_address, split_address
 from xlsxedit.shared_strings import SharedStringTable
 from xlsxedit.table import Table, table_parts_for_worksheet
 
@@ -114,6 +117,30 @@ def _row_values(values) -> tuple | list:
     return values if isinstance(values, (list, tuple)) else (values,)
 
 
+def _range_formula_part_error(address: str, kind: str, anchor: str, area: CellRange) -> FormulaGroupError:
+    excel = _EXCEL_ARRAY if kind == "array" else _EXCEL_DATA_TABLE
+    return FormulaGroupError(
+        _excel_says(
+            f"{address} lies in the {kind} formula anchored at {anchor} over {area}; "
+            "writing part of a multi-cell formula is not supported",
+            excel,
+        )
+    )
+
+
+def _part_of(area: CellRange, block: CellRange, anchor: str) -> str | None:
+    """A cell of ``area`` that ``block`` covers other than ``anchor``, or ``None``."""
+    if not area.intersects(block):
+        return None
+    lo_col, lo_row = max(area.min_col, block.min_col), max(area.min_row, block.min_row)
+    hi_col, hi_row = min(area.max_col, block.max_col), min(area.max_row, block.max_row)
+    for col, row in ((lo_col, lo_row), (lo_col + 1, lo_row), (lo_col, lo_row + 1)):
+        address = join_address(index_to_col(col - 1), row)
+        if col <= hi_col and row <= hi_row and address != anchor.upper():
+            return address
+    return None
+
+
 class Worksheet:
     """A worksheet of a workbook.
 
@@ -141,6 +168,7 @@ class Worksheet:
         # for a missing cell replays to follow the cells around it (Cell._where)
         self._shifts: list[_Shift] = []
         self._column_styles: tuple | None = None  # see _column_style
+        self._range_formulas: list[list] | None = None  # see _range_formula_areas
 
     def __repr__(self) -> str:
         return f"<Worksheet {self._name!r}>"
@@ -202,6 +230,7 @@ class Worksheet:
 
     def _invalidate_bulk_indexes(self) -> None:
         self._column_styles = None
+        self._range_formulas = None
         self._bulk_indexes_built = False
         self._row_index.clear()
         self._cell_index.clear()
@@ -352,6 +381,61 @@ class Worksheet:
             return ranges[i][2] if i >= 0 and column <= ranges[i][1] else None
         return next((style for low, high, style in ranges if low <= column <= high), None)
 
+    def _range_formula_areas(self) -> list[tuple[str, str, CellRange]]:
+        """``(kind, anchor, range)`` of each array or data-table formula over several cells.
+
+        The formulas are found in one pass over the sheet, again after the edits
+        that clear the row index (inserts among them) and after
+        ``_get_or_create_cell_element``, and each call reads their anchor and
+        ``ref`` afresh, so it follows the formulas that inserts move and the ones
+        that writes remove. A range formula added to the sheet's XML by other
+        means is not seen until then; the API adds none.
+        """
+        found = self._range_formulas
+        if found is None:
+            found = self._range_formulas = [[f, None, None] for f in _RANGE_FORMULAS(self._part.element)]
+        areas = []
+        for entry in found:
+            f, ref, area = entry
+            c = f.getparent()
+            kind = f.get("t")
+            if c is None or c.getparent() is None or kind not in ("array", "dataTable"):
+                continue
+            text = f.get("ref")
+            if text != ref:
+                try:
+                    area = CellRange.parse(text) if text else None
+                except InvalidRangeError:
+                    area = None
+                entry[1:] = [text, area]
+            if area is not None and not area.is_cell:
+                areas.append((kind, c.get("r", ""), area))
+        return areas
+
+    def _range_formula_part(self, address: str) -> tuple[str, str, CellRange] | None:
+        """The multi-cell array or data-table formula that ``address`` is part of other
+        than as its anchor, as ``(kind, anchor, range)``; ``None`` if there is none."""
+        areas = self._range_formula_areas()
+        if not areas:
+            return None
+        try:
+            col, row = split_address(address)
+        except InvalidRangeError:
+            return None  # a <c> without r: no range formula can name it
+        column = col_to_index(col) + 1
+        for kind, anchor, area in areas:
+            if area.contains(column, row) and anchor.upper() != address.upper():
+                return kind, anchor, area
+        return None
+
+    def _refuse_range_formula_part(self, address: str) -> None:
+        """Raise ``FormulaGroupError`` if writing ``address`` would change part of a
+        multi-cell array or data-table formula, which Excel refuses; the formula's
+        anchor is ``_refuse_range_formula_edit``'s to refuse."""
+        part = self._range_formula_part(address)
+        if part is not None:
+            raise _range_formula_part_error(address, *part)
+
     def _resolve_write_address(self, address: str) -> str:
         anchor = self._merge_index.anchor_for(address)
         if anchor is not None and anchor.upper() != address.upper():
@@ -479,6 +563,7 @@ class Worksheet:
         """The ``<c>`` at ``address``, created bare where the sheet has none, for
         code that edits the element directly; cell writes use ``_cell_for_write``."""
         address = self._resolve_write_address(address).upper()
+        self._range_formulas = None  # the caller may plant one
         existing = self._find_cell_element(address)
         if existing is not None:
             return existing
@@ -825,7 +910,9 @@ class Worksheet:
         self, row_list: list, widths: list[int], *, start_row: int, start_col_idx: int
     ) -> None:
         """Refuse an overwrite of a multi-cell array or data-table formula's anchor, by a
-        value for that cell or a value for another cell of a merge it is the top-left of."""
+        value for that cell or a value for another cell of a merge it is the top-left of,
+        and a write, even of ``None``, into any other cell of such a formula, which Excel
+        refuses as changing part of it."""
 
         def writes(col_idx: int, row: int) -> bool:
             offset = row - start_row
@@ -887,6 +974,18 @@ class Worksheet:
             f_elm = None if c_elm is None else c_elm.find(_F)
             if f_elm is not None:
                 _refuse_range_formula_edit(anchor, f_elm)
+            self._refuse_range_formula_part(anchor)
+
+        last_row = start_row + len(widths) - 1
+        for kind, anchor, area in self._range_formula_areas():
+            for row in range(max(area.min_row, start_row), min(area.max_row, last_row) + 1):
+                width = widths[row - start_row]
+                if not width:
+                    continue
+                written = CellRange.from_bounds(start_col_idx + 1, row, start_col_idx + width, row)
+                part = _part_of(area, written, anchor)
+                if part is not None:
+                    raise _range_formula_part_error(part, kind, anchor, area)
 
     def _write_rows_at(
         self,
@@ -1171,7 +1270,7 @@ class Worksheet:
         """Clear cell values in ``cell_range`` while preserving styles. Returns cells cleared.
 
         Raises ``FormulaGroupError`` before clearing anything when the range holds
-        the anchor of a multi-cell array or data-table formula.
+        any cell of a multi-cell array or data-table formula.
         """
         c1, r1, c2, r2 = parse_range(cell_range)
         c1i, c2i = col_to_index(c1), col_to_index(c2)
@@ -1183,6 +1282,13 @@ class Worksheet:
                 address = f_elm.getparent().get("r", "")
                 if f_elm.get("t") in ("array", "dataTable") and _ref_contains(cell_range, address):
                     _refuse_range_formula_edit(address, f_elm)
+        bounds = (max(c1i + 1, 1), max(r1, 1), min(c2i + 1, MAX_COL), min(r2, MAX_ROW))
+        if bounds[0] <= bounds[2] and bounds[1] <= bounds[3]:  # an inverted range clears nothing
+            cleared_area = CellRange.from_bounds(*bounds)
+            for kind, anchor, area in self._range_formula_areas():
+                part = _part_of(area, cleared_area, anchor)
+                if part is not None:
+                    raise _range_formula_part_error(part, kind, anchor, area)
         cleared = 0
         changed = False
         for row_num in range(r1, r2 + 1):

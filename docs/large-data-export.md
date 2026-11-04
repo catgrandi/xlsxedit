@@ -44,7 +44,7 @@ wb.write_dataframe(
 wb.write_dataframe(df, at_cell="A5", header=False, mode="insert")
 ```
 
-An overwrite checks the whole write before it changes anything: values of a type it cannot write, infinite numbers ([NaN and infinity](#nan-and-infinity)), text XML cannot hold, text longer than the 32,767 characters Excel holds in a cell (counted as Excel counts them, in UTF-16 code units, so a character past U+FFFF such as an emoji counts twice), cells past row 1,048,576 or column XFD (`GridOverflowError`), invalid inline styles, and a write to the anchor of a multi-cell array or data-table formula (`FormulaGroupError`). A refused write, including its `clear_range`, leaves the sheet as it was.
+An overwrite checks the whole write before it changes anything: values of a type it cannot write, infinite numbers ([NaN and infinity](#nan-and-infinity)), text XML cannot hold, text longer than the 32,767 characters Excel holds in a cell (counted as Excel counts them, in UTF-16 code units, so a character past U+FFFF such as an emoji counts twice), cells past row 1,048,576 or column XFD (`GridOverflowError`), invalid inline styles, and a write, even of `None`, to any cell of a multi-cell array or data-table formula (`FormulaGroupError`), which Excel refuses as changing part of an array or data table. A refused write, including its `clear_range`, leaves the sheet as it was.
 
 `write_dataframe` only overwrites cells it writes. It does **not** clear extra cells outside the new data rectangle. Use `clear_range` when re-filling a slot with **fewer** rows than a previous export.
 

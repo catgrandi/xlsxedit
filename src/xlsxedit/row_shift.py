@@ -1848,6 +1848,7 @@ def check_merge_anchors_writable(
         f = None if c is None else c.find(_F)
         if f is not None:
             _refuse_range_formula_edit(anchor, f)
+        worksheet._refuse_range_formula_part(anchor)
 
 
 def _column_key(c: etree._Element) -> int:

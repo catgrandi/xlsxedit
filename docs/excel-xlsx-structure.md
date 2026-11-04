@@ -502,7 +502,7 @@ When xlsxedit **removes** a formula (`Cell.value` overwrite, `clear`, `clear_ran
 - `replace()` **skips** cells with `<f>` — avoids corrupting formulas
 - `cell.formula = "…"` must not strip `t="shared"` / `si` on neighboring cells
 - Overwriting a shared-formula **master** with a plain value also strips `<f>` from same-`si` followers (avoids orphan shared cells)
-- Overwriting, clearing or re-formulating the anchor of a multi-cell array or data-table formula raises `FormulaGroupError` ([features.md](features.md#exceptions))
+- Overwriting, clearing or re-formulating the anchor of a multi-cell array or data-table formula, or writing into another of its cells, raises `FormulaGroupError` ([features.md](features.md#exceptions))
 - Changing source cells (A3, B3) updates what Excel shows after recalc; cached `<v>` may be stale until Excel opens the file
 
 ---
