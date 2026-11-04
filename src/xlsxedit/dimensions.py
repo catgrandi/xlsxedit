@@ -150,10 +150,14 @@ class RowDimension:
         if value <= 0:
             raise ValueError("row height must be positive")
         existed = self._worksheet._find_row_element(self._row) is not None
-        row_elm = self._worksheet._ensure_row(self._row, shown=True)  # a height shows a row
-        if not existed or (row_elm.get("ht"), row_elm.get("customHeight")) != (str(value), "1"):
+        row_elm = self._worksheet._ensure_row(self._row, shown=True)
+        # Excel shows a hidden row given a height on a sheet that hides unlisted rows.
+        unhide = row_elm.get("hidden") in ("1", "true") and self._worksheet._hides_unlisted_rows()
+        if unhide or not existed or (row_elm.get("ht"), row_elm.get("customHeight")) != (str(value), "1"):
             row_elm.set("ht", str(value))
             row_elm.set("customHeight", "1")
+            if unhide:
+                del row_elm.attrib["hidden"]
             self._worksheet._part.mark_dirty()
 
 

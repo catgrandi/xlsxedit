@@ -362,10 +362,14 @@ def test_a_row_a_write_adds_stays_hidden_on_a_sheet_that_hides_unused_rows(png, 
     assert_valid_package(wb)
 
 
-def test_a_row_given_a_height_shows_on_a_sheet_that_hides_unused_rows(png):
-    """Excel shows a hidden row whose height is set (recorded with Excel 16 on 2026-11-04)."""
+@pytest.mark.parametrize("value_first", [False, True], ids=["height only", "value, then height"])
+def test_a_row_given_a_height_shows_on_a_sheet_that_hides_unused_rows(png, value_first):
+    """Excel shows a hidden row whose height is set, on such a sheet (recorded with
+    Excel 16 on 2026-11-04), so it does not matter whether a write added the row first."""
     wb, ws = _sheet_hiding_unused_rows(png)
     top = sheet_axis(ws, rows=True).start(19)
+    if value_first:
+        ws["A10"].value = 1
     ws.row_dimensions[10].height = 20
     assert ws._find_row_element(10).get("hidden") is None
     assert sheet_axis(ws, rows=True).start(19) == top + 20 * 12_700
