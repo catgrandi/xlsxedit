@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 
 _COLS = f"{{{SML_NS}}}cols"
 _COL = f"{{{SML_NS}}}col"
+_ALL_COLS = f"{_COLS}/{_COL}"  # a sheet may hold several <cols>
+_TRUE = ("1", "true")  # xsd:boolean
 _SHEET_FORMAT_PR = f"{{{SML_NS}}}sheetFormatPr"
 _ROW = f"{{{SML_NS}}}row"
 _DEFAULT_COL_WIDTH = 8.43
@@ -35,13 +37,11 @@ class ColumnDimension:
     def width(self) -> float:
         col_idx = col_to_index(self._column) + 1
         root = self._worksheet._part.element
-        cols = root.find(_COLS)
-        if cols is not None:
-            for col_elm in cols.findall(_COL):
-                min_c = int(col_elm.get("min", "0"))
-                max_c = int(col_elm.get("max", "0"))
-                if min_c <= col_idx <= max_c:
-                    return float(col_elm.get("width", _DEFAULT_COL_WIDTH))
+        for col_elm in root.iterfind(_ALL_COLS):
+            min_c = int(col_elm.get("min", "0"))
+            max_c = int(col_elm.get("max", "0"))
+            if min_c <= col_idx <= max_c:
+                return float(col_elm.get("width", _DEFAULT_COL_WIDTH))
         fmt = root.find(_SHEET_FORMAT_PR)
         if fmt is not None and fmt.get("baseColWidth"):
             return float(fmt.get("baseColWidth"))
@@ -57,8 +57,9 @@ class ColumnDimension:
         columns before and after keep every attribute, and so does this one,
         with the new ``width``, ``customWidth="1"`` and no ``bestFit``. Excel
         also unhides a hidden column; ``hidden`` stays here, as nothing in this
-        API could hide the column again. A new ``<col>`` goes in column order,
-        and a width the column's ``<col>`` already has changes nothing.
+        API could hide the column again. A width the column's ``<col>`` already
+        has changes nothing. A new ``<col>`` goes into the first ``<cols>``,
+        before the first ``<col>`` that starts after its column.
         """
         if value <= 0:
             raise ValueError("column width must be positive")
@@ -73,15 +74,17 @@ class ColumnDimension:
             else:
                 root.append(cols)
 
-        covering = [c for c in cols.findall(_COL) if _col_span(c)[0] <= col_idx <= _col_span(c)[1]]
+        covering = [
+            c for c in root.iterfind(_ALL_COLS) if _col_span(c)[0] <= col_idx <= _col_span(c)[1]
+        ]
         if covering:
             col_elm = covering[0]
-            same = (col_elm.get("width"), col_elm.get("customWidth")) == (str(value), "1")
+            same = col_elm.get("width") == str(value) and col_elm.get("customWidth") in _TRUE
             if same and len(covering) == 1:
                 return
             for other in covering[1:]:  # overlapping <col>s: only the first keeps this column
                 _split_around(other, col_idx)
-                cols.remove(other)
+                other.getparent().remove(other)
             _split_around(col_elm, col_idx)
             col_elm.set("width", str(value))
             col_elm.set("customWidth", "1")
