@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import TYPE_CHECKING
 
 from lxml import etree
@@ -50,6 +51,15 @@ class ColumnDimension:
 
     @width.setter
     def width(self, value: float) -> None:
+        """Set the width as Excel sets a column's ``ColumnWidth``.
+
+        A ``<col>`` covering more columns than this one is split around it: the
+        columns before and after keep every attribute, and so does this one,
+        with the new ``width``, ``customWidth="1"`` and no ``bestFit``. Excel
+        also unhides a hidden column; ``hidden`` stays here, as nothing in this
+        API could hide the column again. A width the column's ``<col>``
+        already has changes nothing.
+        """
         if value <= 0:
             raise ValueError("column width must be positive")
         col_idx = col_to_index(self._column) + 1
@@ -63,25 +73,48 @@ class ColumnDimension:
             else:
                 root.append(cols)
 
-        for col_elm in list(cols.findall(_COL)):
-            min_c = int(col_elm.get("min", "0"))
-            max_c = int(col_elm.get("max", "0"))
-            if min_c <= col_idx <= max_c:
-                if min_c == max_c == col_idx:
-                    if (col_elm.get("width"), col_elm.get("customWidth")) != (str(value), "1"):
-                        col_elm.set("width", str(value))
-                        col_elm.set("customWidth", "1")
-                        self._worksheet._part.mark_dirty()
-                    return
-                cols.remove(col_elm)
-
+        covering = [c for c in cols.findall(_COL) if _col_span(c)[0] <= col_idx <= _col_span(c)[1]]
+        if covering:
+            col_elm = covering[0]
+            same = (col_elm.get("width"), col_elm.get("customWidth")) == (str(value), "1")
+            if same and len(covering) == 1:
+                return
+            for other in covering[1:]:  # overlapping <col>s: only the first keeps this column
+                _split_around(other, col_idx)
+                cols.remove(other)
+            _split_around(col_elm, col_idx)
+            col_elm.set("width", str(value))
+            col_elm.set("customWidth", "1")
+            col_elm.attrib.pop("bestFit", None)
+        else:
+            col_elm = etree.Element(_COL)
+            col_elm.set("min", str(col_idx))
+            col_elm.set("max", str(col_idx))
+            col_elm.set("width", str(value))
+            col_elm.set("customWidth", "1")
+            cols.append(col_elm)
         self._worksheet._column_styles = None  # the styled <col> ranges first writes read
-        col_elm = etree.SubElement(cols, _COL)
-        col_elm.set("min", str(col_idx))
-        col_elm.set("max", str(col_idx))
-        col_elm.set("width", str(value))
-        col_elm.set("customWidth", "1")
         self._worksheet._part.mark_dirty()
+
+
+def _col_span(col_elm: etree._Element) -> tuple[int, int]:
+    return int(col_elm.get("min", "0")), int(col_elm.get("max", "0"))
+
+
+def _split_around(col_elm: etree._Element, col_idx: int) -> None:
+    """Narrow ``col_elm`` to column ``col_idx``, adding copies with every attribute
+    for the columns it covered before and after it."""
+    low, high = _col_span(col_elm)
+    if low < col_idx:
+        before = deepcopy(col_elm)
+        before.set("max", str(col_idx - 1))
+        col_elm.addprevious(before)
+    if col_idx < high:
+        after = deepcopy(col_elm)
+        after.set("min", str(col_idx + 1))
+        col_elm.addnext(after)
+    col_elm.set("min", str(col_idx))
+    col_elm.set("max", str(col_idx))
 
 
 class RowDimension:

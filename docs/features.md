@@ -55,7 +55,7 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | `ws.iter_cells()` | Iterate cells | |
 | `ws.iter_rows()` | Iterate `(row_num, [cells])` | |
 | `ws.values(*, max_rows=None, errors_as_nan=False)` | Dense `list[list]` of cell values | Blanks as `""`; merges anchored top-left; `errors_as_nan` maps Excel errors to NaN |
-| `ws.column_dimensions["C"]` | Column width proxy | `.width` get/set |
+| `ws.column_dimensions["C"]` | Column width proxy | `.width` get/set. Setting it changes that column alone: a `<col>` it shares with other columns is split as Excel splits it, every column keeps its style and other attributes, and the column set loses `bestFit`, as in Excel. A hidden column stays hidden, where Excel would show it |
 | `ws.row_dimensions[4]` | Row height proxy | `.height` get/set |
 | `ws.merge_cells(cell_range)` | Merge range | e.g. `"A1:C1"` |
 | `ws.unmerge_cells(cell_range)` | Unmerge range | |
