@@ -113,6 +113,28 @@ def test_infinity_is_refused_before_anything_changes(case: str, value: float):
     assert_preserved(before, read_pkg(wb))
 
 
+@pytest.mark.parametrize("value", [10**400, -(10**309)], ids=["10**400", "-10**309"])
+@pytest.mark.parametrize("case", INFINITE_WRITES)
+def test_an_integer_past_the_largest_double_is_refused(case: str, value: int):
+    """Excel stores numbers as doubles; such an integer reads as infinity."""
+    wb, ws = _sheet()
+    before = read_pkg(wb)
+    with pytest.raises(ValueError, match="largest number Excel holds"):
+        INFINITE_WRITES[case](ws, value)
+    assert_preserved(before, read_pkg(wb))
+
+
+def test_the_largest_integer_a_double_holds_is_written():
+    wb, ws = _sheet()
+    largest = int(1.7976931348623157e308)
+    ws["A1"].value = largest
+    ws.write_rows([[largest]], at_cell="B5")
+    ws.write_rows([[10**400]], at_cell="C5", string_columns={2})  # as text
+    reopened = _reopened(wb)
+    assert reopened["A1"].value == reopened["B5"].value == largest
+    assert reopened["C5"].value == str(10**400)
+
+
 EMOJI = "\N{GRINNING FACE}"
 LONGEST = {"32767 letters": "a" * 32_767, "16383 emoji and a letter": EMOJI * 16_383 + "a"}
 TOO_LONG = {"32768 letters": "a" * 32_768, "16384 emoji": EMOJI * 16_384}

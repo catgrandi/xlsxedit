@@ -29,6 +29,7 @@ import bisect
 import math
 import operator
 import re
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import date
@@ -142,6 +143,7 @@ _FORMULA2 = f"{{{SML_NS}}}formula2"
 _WRITABLE = (str, int, float, date)  # bool is an int and datetime a date
 _MAX_INT_BITS = 2_000  # at most 603 digits: under the lowest digit limit str() allows (640)
 _MAX_TEXT = 32_767  # the most text a cell holds, in UTF-16 code units as Excel counts it
+_MAX_DOUBLE = sys.float_info.max  # Excel stores numbers as doubles
 
 _CELL_ADDRESS_RE = re.compile(r"([A-Za-z]{1,3})([0-9]+)")
 
@@ -1714,6 +1716,10 @@ def check_values_writable(
                 )
             if not forced and isinstance(value, float) and math.isinf(value):
                 raise ValueError(f"{method} cannot write {value!r}: Excel has no infinite numbers")
+            if not forced and isinstance(value, int) and value.bit_length() > 1023 and abs(value) > _MAX_DOUBLE:
+                raise ValueError(
+                    f"{method} cannot write an integer past {_MAX_DOUBLE:.6g}, the largest number Excel holds"
+                )
             if not forced and isinstance(value, date):
                 try:
                     serial = datetime_to_serial(value)
