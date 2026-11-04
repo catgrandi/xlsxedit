@@ -300,3 +300,168 @@ def test_multiindex_index_merges(tmp_path: Path):
     assert "A4:A5" in refs
     assert wb["Sheet1"]["A2"].value == "G1"
     assert wb["Sheet1"]["A4"].value == "G2"
+
+
+# --- #54: everything is checked before the workbook changes ------------------------
+# pandas saves the workbook when the ``with`` block exits, even after ``to_excel`` raised,
+# so a refused call must leave every member of the file as it was.
+
+
+def _template(tmp_path: Path, *, sheets: tuple[str, ...] = ("Data", "Other")) -> Path:
+    wb = Workbook.create()
+    wb.rename_worksheet("Sheet1", sheets[0])
+    for name in sheets[1:]:
+        wb.add_worksheet(name)
+    wb[sheets[0]].write_rows([["kept", 1]], at_row=1)
+    wb[sheets[0]].merge_cells("D1:E1")
+    path = tmp_path / "template.xlsx"
+    wb.save(path)
+    return path
+
+
+def _to_excel(path: Path, frame, *, writer: dict, **to_excel) -> None:
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)  # pandas warns of text it calls truncated
+        with pd.ExcelWriter(path, engine="xlsxedit", mode="a", **writer) as w:
+            frame.to_excel(w, **to_excel)
+
+
+LONG = pd.DataFrame({"x": ["a" * 32_768]})
+REFUSED_TO_EXCEL = {
+    "replace, text too long": (dict(if_sheet_exists="replace"), LONG, {}, ValueError),
+    "replace on the only sheet": (dict(if_sheet_exists="replace"), LONG, {"only": True}, ValueError),
+    "new, text too long": (dict(if_sheet_exists="new"), LONG, {}, ValueError),
+    "a new sheet, text too long": (dict(), LONG, {"sheet_name": "Fresh"}, ValueError),
+    "overlay, text too long": (dict(if_sheet_exists="overlay"), LONG, {}, ValueError),
+    "insert, text too long": (
+        dict(if_sheet_exists="overlay", engine_kwargs={"mode": "insert"}),
+        LONG,
+        {},
+        ValueError,
+    ),
+    "a sheet name Excel rejects": (dict(), pd.DataFrame({"x": [1]}), {"sheet_name": "a/b"}, ValueError),
+    "a number format XML cannot store": (
+        dict(if_sheet_exists="overlay", date_format="YYYY\x01"),
+        pd.DataFrame({"d": [pd.Timestamp("2025-01-01").date()]}),
+        {},
+        ValueError,
+    ),
+    "a merge over an existing one": (
+        dict(if_sheet_exists="overlay"),
+        pd.DataFrame([[1, 2]], columns=pd.MultiIndex.from_product([["A"], ["x", "y"]])),
+        {"startcol": 3},  # its header merge E1:F1 overlaps D1:E1
+        ValueError,
+    ),
+}
+
+
+@pytest.mark.parametrize("case", REFUSED_TO_EXCEL)
+def test_a_refused_to_excel_leaves_the_file_as_it_was(tmp_path: Path, case: str):
+    from tests.preservation import assert_preserved, read_pkg
+
+    writer, frame, options, error = REFUSED_TO_EXCEL[case]
+    options = dict(options)
+    path = _template(tmp_path, sheets=("Data",) if options.pop("only", False) else ("Data", "Other"))
+    before = read_pkg(path)
+    with pytest.raises(error):
+        _to_excel(path, frame, writer=writer, sheet_name=options.pop("sheet_name", "Data"), **options)
+    assert_preserved(before, read_pkg(path))
+
+
+def test_overlaying_a_multiindex_frame_twice_keeps_its_merges(tmp_path: Path):
+    from tests.schema_validate import assert_valid_package
+
+    path = _template(tmp_path)
+    frame = pd.DataFrame([[1, 2, 3, 4]], columns=pd.MultiIndex.from_product([["A", "B"], ["x", "y"]]))
+    for _ in range(2):
+        _to_excel(path, frame, writer=dict(if_sheet_exists="overlay"), sheet_name="Data", startrow=3)
+    ws = Workbook.open(path)["Data"]
+    assert sorted(ws.merged_ranges) == ["B4:C4", "D1:E1", "D4:E4"]
+    assert (ws["B4"].value, ws["D4"].value, ws["B5"].value) == ("A", "B", "x")
+    assert_valid_package(path)
+
+
+def test_replace_puts_a_new_empty_sheet_in_place_of_the_only_one(tmp_path: Path):
+    path = _template(tmp_path, sheets=("Data",))
+    _to_excel(path, pd.DataFrame({"y": [5]}), writer=dict(if_sheet_exists="replace"), sheet_name="Data", index=False)
+    wb = Workbook.open(path)
+    assert wb.sheetnames == ["Data"]
+    ws = wb["Data"]
+    assert (ws["A1"].value, ws["A2"].value, ws["B1"].value, ws.merged_ranges) == ("y", 5, None, [])
+
+
+def test_replace_puts_the_new_sheet_last(tmp_path: Path):
+    path = _template(tmp_path)
+    _to_excel(path, pd.DataFrame({"y": [5]}), writer=dict(if_sheet_exists="replace"), sheet_name="Data", index=False)
+    assert Workbook.open(path).sheetnames == ["Other", "Data"]
+
+
+def test_a_sheet_name_in_another_case_names_the_existing_sheet(tmp_path: Path):
+    path = _template(tmp_path)
+    frame = pd.DataFrame({"y": [5]})
+    _to_excel(path, frame, writer=dict(if_sheet_exists="overlay"), sheet_name="DATA", startrow=5, index=False)
+    with pytest.raises(ValueError, match="already exists"):
+        _to_excel(path, frame, writer=dict(if_sheet_exists="error"), sheet_name="data")
+    _to_excel(path, frame, writer=dict(if_sheet_exists="new"), sheet_name="data")
+    wb = Workbook.open(path)
+    assert wb.sheetnames == ["Data", "Other", "data1"]
+    assert wb["Data"]["A6"].value == "y"
+
+
+def test_a_new_sheet_name_keeps_to_31_characters(tmp_path: Path):
+    long = "a" * 31
+    path = _template(tmp_path, sheets=(long,))
+    _to_excel(path, pd.DataFrame({"y": [5]}), writer=dict(if_sheet_exists="new"), sheet_name=long)
+    assert Workbook.open(path).sheetnames == [long, "a" * 30 + "1"]
+
+
+def test_writing_sheet1_first_keeps_it_when_another_sheet_follows(tmp_path: Path):
+    path = tmp_path / "two.xlsx"
+    with pd.ExcelWriter(path, engine="xlsxedit") as w:
+        pd.DataFrame({"a": [1]}).to_excel(w, sheet_name="Sheet1", index=False)
+        pd.DataFrame({"b": [2]}).to_excel(w, sheet_name="Other", index=False)
+    wb = Workbook.open(path)
+    assert wb.sheetnames == ["Sheet1", "Other"]
+    assert (wb["Sheet1"]["A1"].value, wb["Other"]["A1"].value) == ("a", "b")
+
+
+def test_nan_and_infinity_in_a_frame(tmp_path: Path):
+    """pandas hands the engine na_rep ("") for NaN, NaT and NA, which the engine writes as
+    an empty cell, as the openpyxl and XlsxWriter engines do, and inf_rep ("inf") for
+    infinity, written as text."""
+    import numpy as np
+
+    path = tmp_path / "missing.xlsx"
+    frame = pd.DataFrame(
+        {"n": [1.5, np.nan, np.inf], "d": [pd.NaT, pd.Timestamp("2025-01-01"), None], "s": ["x", "", None]}
+    )
+    with pd.ExcelWriter(path, engine="xlsxedit") as w:
+        frame.to_excel(w, index=False)
+    ws = Workbook.open(path)["Sheet1"]
+    assert [ws[a].value for a in ("A2", "A3", "A4", "B2", "C3", "C4")] == [1.5, None, "inf", None, None, None]
+    assert ws._find_cell_element("A3") is None or ws._find_cell_element("A3").find(
+        "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}v"
+    ) is None
+
+
+def test_an_insert_refuses_a_merge_over_one_the_insert_grows(tmp_path: Path):
+    from tests.preservation import assert_preserved, read_pkg
+
+    wb = Workbook.create()
+    wb["Sheet1"].merge_cells("A1:A3")  # the insert at row 2 grows it over the new rows
+    path = tmp_path / "grow.xlsx"
+    wb.save(path)
+    before = read_pkg(path)
+    frame = pd.DataFrame({"v": [1, 2]}, index=pd.MultiIndex.from_product([["G"], ["a", "b"]]))
+    with pytest.raises(ValueError, match="overlaps existing"):
+        _to_excel(
+            path,
+            frame,
+            writer=dict(if_sheet_exists="overlay", engine_kwargs={"mode": "insert"}),
+            sheet_name="Sheet1",
+            startrow=1,
+            header=False,
+        )
+    assert_preserved(before, read_pkg(path))

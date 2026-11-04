@@ -90,8 +90,16 @@ with pd.ExcelWriter(
 |-------|----------|
 | `overlay` (recommended for templates) | Write at `startrow`/`startcol` only |
 | `error` | Raise if the sheet already exists |
-| `replace` | Clear / recreate the sheet, then write |
-| `new` | Always create a uniquely named sheet |
+| `replace` | Put a new empty sheet of that name in place of the sheet, after the other sheets, then write |
+| `new` | Write to a new sheet named after `sheet_name` with the first free number appended, shortened to keep to 31 characters |
+
+A `sheet_name` that matches a sheet ignoring case names that sheet, as in Excel, and a name Excel rejects raises `ValueError` ([Sheet names](features.md#sheet-names)).
+
+### Refused writes
+
+pandas saves the workbook when the `ExcelWriter` closes, even after `to_excel` raised. So the engine checks a whole `to_excel` call before it changes the workbook: the sheet name, every value (as [`write_rows`](large-data-export.md#two-write-modes) checks them), every number format and every merge. A refused call leaves the file as it was, and with `if_sheet_exists="replace"` or `"new"` it neither removes nor adds a sheet. A merge from a MultiIndex that the sheet already has is kept as it is, so writing the same frame over itself again works; one that overlaps another merge raises `ValueError`. Text longer than the 32,767 characters a cell holds raises `ValueError`, after the warning pandas gives that it truncates such text.
+
+**Missing values:** pandas hands the engine NaN, `NaT` and `NA` as `na_rep` (default `""`) and infinity as `inf_rep` (default `"inf"`). The engine writes `""` as an empty cell, as the openpyxl and XlsxWriter engines do, and `"inf"` as text. See [NaN and infinity](large-data-export.md#nan-and-infinity) for `write_dataframe`.
 
 ### Writer `engine_kwargs`
 
