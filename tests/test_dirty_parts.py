@@ -257,3 +257,72 @@ def test_an_insert_that_moves_nothing_marks_nothing():
     wb["Table"].insert_rows([[]], at_row=500)
     assert _dirty_parts(wb) == ["/xl/workbook.xml"]  # fullCalcOnLoad
 
+
+def _linked() -> bytes:
+    wb = Workbook.open(BOOK1)
+    ws = wb[SHEET]
+    ws["Z99"].hyperlink.location = "Sheet1!A1"
+    ws["Z99"].hyperlink.display = "back"
+    ws["Z100"].hyperlink.url = "https://example.com/"
+    return _saved_bytes(wb)
+
+
+@pytest.mark.parametrize(
+    "rewrite",
+    [
+        lambda ws: setattr(ws["Z99"].hyperlink, "location", "Sheet1!A1"),
+        lambda ws: setattr(ws["Z99"].hyperlink, "display", "back"),
+        lambda ws: setattr(ws["Z100"].hyperlink, "url", "https://example.com/"),
+        lambda ws: setattr(ws["Z101"].hyperlink, "location", None),
+    ],
+    ids=["location", "display", "url", "no link removed"],
+)
+def test_hyperlink_writes_of_what_a_cell_holds_keep_its_bytes(rewrite):
+    source = _linked()
+    wb = Workbook.open(io.BytesIO(source))
+    rewrite(wb[SHEET])
+    assert _dirty_parts(wb) == []
+    assert read_pkg(_saved_bytes(wb)) == read_pkg(source)
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        lambda ws: setattr(ws["Z99"].hyperlink, "location", "Sheet1!B2"),
+        lambda ws: setattr(ws["Z99"].hyperlink, "display", "other"),
+        lambda ws: setattr(ws["Z99"].hyperlink, "url", "https://example.com/"),
+        lambda ws: setattr(ws["Z100"].hyperlink, "url", None),
+        lambda ws: setattr(ws["Z102"].hyperlink, "location", "Sheet1!A1"),
+        lambda ws: ws.add_conditional_formatting("A1:A5", formula="1"),
+        lambda ws: ws.add_color_scale_formatting("B1:B5"),
+    ],
+    ids=["location", "display", "url", "url removed", "new link", "cellIs", "color scale"],
+)
+def test_hyperlink_and_conditional_format_writes_mark_the_sheet(monkeypatch, write):
+    source = _linked()
+    sheet = worksheet_members(read_pkg(source))[SHEET]
+    wb = Workbook.open(io.BytesIO(source))
+    write(wb[SHEET])
+    assert f"/{sheet}" in _dirty_parts(wb)
+    assert read_pkg(source)[sheet] not in _parsed_on_save(monkeypatch, wb)
+
+
+def test_setting_an_excel_written_link_to_its_own_url_keeps_its_bytes():
+    source = INSPECT_FIXTURES["hyperlink"].read_bytes()
+    wb = Workbook.open(io.BytesIO(source))
+    link = wb.worksheets[0]["B1"].hyperlink
+    link.url = link.url
+    assert _dirty_parts(wb) == []
+    assert read_pkg(_saved_bytes(wb)) == read_pkg(source)
+
+
+def test_expanding_conditional_formats_marks_the_sheet_only_on_a_change():
+    wb = Workbook.create()
+    ws = wb[SHEET]
+    ws.add_conditional_formatting("A2:A5", formula="1")
+    wb = Workbook.open(io.BytesIO(_saved_bytes(wb)))
+    ws = wb[SHEET]
+    assert ws.expand_conditional_formatting(5) == 0
+    assert _dirty_parts(wb) == []
+    assert ws.expand_conditional_formatting(9) == 1
+    assert ws._part.is_dirty
