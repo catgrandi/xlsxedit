@@ -1257,7 +1257,8 @@ class Worksheet:
                 string_columns=string_columns,
                 inserted=True,
             )
-        self.update_dimension()
+        if not plan.dimension_set:
+            self.update_dimension()
         return count
 
     def insert_columns(
@@ -1360,7 +1361,10 @@ class Worksheet:
         for address, name in plan.header_cells.items():
             row_elm = self._ensure_row(split_address(address)[1])
             Cell(self._bulk_get_or_create_cell(address, row_elm), self).value = name
-        self.update_dimension()
+            if plan.dimension_set:
+                self._grow_dimension(CellRange.parse(address))
+        if not plan.dimension_set:
+            self.update_dimension()
         return count
 
     def _detach_shared_formula_followers(

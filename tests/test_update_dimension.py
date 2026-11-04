@@ -1,5 +1,5 @@
 """``update_dimension`` reads every cell address in one pass of the regex engine
-(#42); bulk writes grow ``<dimension>`` to cover the cells they write (#56)."""
+(#42); inserts and bulk writes keep ``<dimension>`` without reading them again (#56)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ from lxml import etree
 from xlsxedit import Workbook
 from xlsxedit.exceptions import InvalidRangeError
 from xlsxedit.opc.constants import SML_NS
+from xlsxedit.parts import WorksheetPart
+from tests.conftest import BOOK1, INSPECT_FIXTURES
 
 _NS = f'xmlns="{SML_NS}"'
 
@@ -30,6 +32,75 @@ def _sheet_with(cells: str, dimension: str | None = None):
 def _dimension(ws) -> str | None:
     dim = ws._part.element.find(f"{{{SML_NS}}}dimension")
     return None if dim is None else dim.get("ref")
+
+
+def _rescanned(ws) -> str | None:
+    """``<dimension>`` as ``update_dimension`` reads the cells, leaving the sheet as it was."""
+    dim = ws._part.element.find(f"{{{SML_NS}}}dimension")
+    kept = None if dim is None else (dim.get("ref"), ws._part.element.index(dim))
+    ws.update_dimension()
+    found = _dimension(ws)
+    dim = ws._part.element.find(f"{{{SML_NS}}}dimension")
+    if kept is None and dim is not None:
+        ws._part.element.remove(dim)
+    elif kept is not None:
+        dim.set("ref", kept[0])
+    return found
+
+
+# Numbers only, and nothing in a header cell, so that no fixture refuses them.
+_INSERTS = {
+    "rows at 1": lambda ws: ws.insert_rows([[1, 2]], at_row=1),
+    "rows at 3": lambda ws: ws.insert_rows([[1], [None, 2]], at_row=3),
+    "rows past the cells": lambda ws: ws.insert_rows([[1]], at_row=40),
+    "empty rows": lambda ws: ws.insert_rows([[], []], at_row=2),
+    "columns at A": lambda ws: ws.insert_columns([[1, 2]], at_col="A"),
+    "columns at C": lambda ws: ws.insert_columns([[None], [None, 3]], at_col="C"),
+    "columns at K": lambda ws: ws.insert_columns([[4]], at_cell="K4"),
+}
+
+
+@pytest.mark.parametrize("insert", _INSERTS.values(), ids=_INSERTS)
+@pytest.mark.parametrize("name", ["Book1", *INSPECT_FIXTURES])
+def test_an_insert_leaves_the_dimension_update_dimension_would_write(name: str, insert):
+    path = BOOK1 if name == "Book1" else INSPECT_FIXTURES[name]
+    for sheet in Workbook.open(path).sheetnames:
+        wb = Workbook.open(path)
+        ws = wb[sheet]
+        if not isinstance(ws._part, WorksheetPart):
+            continue
+        insert(ws)
+        assert _dimension(ws) == _rescanned(ws), sheet
+
+
+_IRREGULAR = {
+    "rows without r": '<row><c r="A1"><v>1</v></c></row><row><c><v>2</v></c></row>'
+    '<row r="5"><c r="B5"><v>5</v></c></row>',
+    "cells without r": '<row r="1"><c><v>1</v></c><c><v>2</v></c></row><row r="2"><c r="D2"/><c/></row>',
+    "lowercase": '<row r="1"><c r="a1"/><c r="b1"/></row><row r="4"><c r="c4"/></row>',
+    "a cell below its row": '<row r="2"><c r="A2"/><c r="B9"/></row><row r="5"><c r="C5"/></row>',
+    "a cell above its row": '<row r="7"><c r="A1"/></row><row r="8"><c r="B8"/></row>',
+    "leading zeros": '<row r="003"><c r="A003"/><c r="B3"/></row><row r="5"><c r="A5"/></row>',
+    "a row extension": '<row r="2"><c r="A2"/><extLst><ext uri="{X}"/></extLst></row>'
+    '<row r="4"><c r="B4"/></row>',
+    "rows out of order": '<row r="5"><c r="B5"/></row><row r="1"><c r="A1"/></row>',
+    "a row at the last row": '<row r="1"><c r="A1"/></row><row r="1048576" ht="20" customHeight="1"/>',
+    "a cell at the last column": '<row r="1"><c r="A1"/><c r="XFD1" s="1"/></row>',
+    "no cells": '<row r="2" ht="20" customHeight="1"/>',
+    "one zero-padded cell": '<row r="02"><c r="B02"/></row>',
+    "a row listed twice": '<row r="2"><c r="B2"/></row><row r="2"/>',
+}
+
+
+@pytest.mark.parametrize("insert", _INSERTS.values(), ids=_INSERTS)
+@pytest.mark.parametrize("dimension", [None, "A1", "B2:E9"])
+@pytest.mark.parametrize("cells", _IRREGULAR.values(), ids=_IRREGULAR)
+def test_an_insert_on_an_irregular_sheet_leaves_the_dimension_update_dimension_would_write(
+    cells: str, dimension: str | None, insert
+):
+    ws = _sheet_with(cells, dimension)
+    insert(ws)
+    assert _dimension(ws) == _rescanned(ws)
 
 
 def test_a_bulk_write_grows_the_dimension():

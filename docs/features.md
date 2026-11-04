@@ -75,7 +75,7 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | `ws.write_rows(rows, at_cell / at_row, …)` | Write rows at fixed positions | Bulk styling kwargs; a write it cannot complete raises before any cell changes ([details](large-data-export.md#two-write-modes)) |
 | `ws.insert_rows(rows, at_cell, …, shift_drawings=True)` | Insert rows, shift below down | See [Inserting rows and columns](#inserting-rows-and-columns) |
 | `ws.insert_columns(cols, at_col / at_cell, …, shift_drawings=True)` | Insert columns, shift right | ``cols`` = column vectors (top→bottom); see [Inserting rows and columns](#inserting-rows-and-columns) |
-| `ws.update_dimension()` | Refresh `<dimension>` | Reads every cell address. Usually automatic: inserts recompute it. A bulk write grows it to cover the cells it writes; on a sheet that had no cells it sets it to them, whatever it was (Excel writes `A1` for a sheet without cells), and on one with cells it leaves a missing `<dimension>`, or one that is not an area of cells, as it is. Single-cell writes leave it as it is |
+| `ws.update_dimension()` | Refresh `<dimension>` | Reads every cell address. Usually automatic: `insert_rows` and `insert_columns` leave it covering exactly the sheet's cells. A bulk write grows it to cover the cells it writes; on a sheet that had no cells it sets it to them, whatever it was (Excel writes `A1` for a sheet without cells), and on one with cells it leaves a missing `<dimension>`, or one that is not an area of cells, as it is. Single-cell writes leave it as it is |
 | `ws.replace(old, new, *, value_type=None)` | SAR on this sheet only | Sets `fullCalcOnLoad` when any cell changes |
 | `ws.find(value)` | First cell with exact ``value`` | Skips formulas; ``None`` if missing |
 | `ws.findall(value)` | All matching cells as `list[Cell]` | `[]` if none |
@@ -110,7 +110,7 @@ Merges, formats, validations, hyperlinks and other ranges pushed past the last r
 They refuse an insert, changing nothing, by raising:
 
 - `GridOverflowError` when the new cells, cell content, a table, a scenario input cell, a data-table input cell or, with `shift_drawings=True`, a drawing object would pass row 1,048,576 or column XFD;
-- `InvalidRangeError` for a reference in the sheet they cannot parse, a drawing anchor whose corner does not name a cell (with `shift_drawings=True`), or an insert point off the grid (`TypeError` if it is not an integer);
+- `InvalidRangeError` for a reference in the sheet they cannot parse, a row number or cell address anywhere on the sheet that is not one (rows run from 1 to 1,048,576, and a cell address is one to three column letters up to `XFD` and a row), a drawing anchor whose corner does not name a cell (with `shift_drawings=True`), or an insert point off the grid (`TypeError` if it is not an integer);
 - `TableError` when columns would be inserted strictly inside a table whose columns are bound to a query (`queryTableFieldId`), or when `insert_columns` would write into a joining column's header cell a value that cannot name the column, or one that a merge covers;
 - `FormulaGroupError` when a value would go into a cell of a multi-cell array or data-table formula that the insert grows over the new cells, other than its anchor, or when a value aimed at a cell that a merge covers would overwrite a merge anchor that holds such a formula or lies in one;
 - `ValueError` when a `template_rows` merge would overlap a merge, or when both `template_rows` and `row_styles` are given;
