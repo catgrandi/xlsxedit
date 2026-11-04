@@ -234,6 +234,35 @@ def test_cell_text_fits_in_32767_utf16_code_units(text: str, ok: bool):
         assert "A2 holds 32,768 UTF-16 code units of text" in _only(pkg, "cell-value")
 
 
+def _sheet_names(*names: str) -> dict[str, bytes]:
+    pkg = _pkg("ChartsAndTables")
+    for old, new in zip(("bar chart", "line chart", "Table"), names):
+        _edit(pkg, "xl/workbook.xml", f'name="{old}"'.encode(), f'name="{new}"'.encode())
+    return pkg
+
+
+@pytest.mark.parametrize(
+    ("names", "what"),
+    [
+        (("a" * 32,), "is one Excel repairs"),
+        (("a/b",), "is one Excel repairs"),
+        (("'ab",), "is one Excel repairs"),
+        (("Data", "DATA"), "'Data' and 'DATA' differ only in case"),
+        (("\N{GREEK SMALL LETTER FINAL SIGMA}", "\N{GREEK CAPITAL LETTER SIGMA}"), "differ only in case"),
+    ],
+)
+def test_sheet_names_excel_repairs(names: tuple[str, ...], what: str):
+    assert what in _only(_sheet_names(*names), "sheet-name")
+
+
+@pytest.mark.parametrize(
+    "names",
+    [("a" * 31, "History"), ("Stra\N{LATIN SMALL LETTER SHARP S}e", "STRASSE"), ("\N{LATIN SMALL LETTER LONG S}", "S")],
+)
+def test_sheet_names_excel_opens(names: tuple[str, ...]):
+    assert _codes(_sheet_names(*names)) == []
+
+
 def test_cell_order_numbers_rows_and_cells_without_r():
     pkg = _edit(_pkg("SimpleFormula"), SHEET, b'<row r="3" ', b"<row ")
     for col in "ABC":

@@ -633,6 +633,11 @@ INVARIANTS: dict[str, str] = {
         "every number a cell stores, cached formula results included, is finite, and the "
         "text of every string cell is at most 32,767 UTF-16 code units long"
     ),
+    "sheet-name": (
+        "every sheet name is 1 to 31 UTF-16 code units long, holds none of the characters "
+        ":\N{REVERSE SOLIDUS}/?*[], "
+        "neither begins nor ends with an apostrophe, and differs from the others in more than case"
+    ),
     "table-columns": "tableColumns/@count == number of tableColumn children == ref column width",
     "table-name": "table displayNames are unique workbook-wide (case-insensitively)",
     "table-autofilter": "table autoFilter/@ref == table ref minus totalsRowCount trailing rows",
@@ -695,6 +700,7 @@ def consistency_violations(pkg: Package) -> list[Violation]:
         _check_grid_bounds,
         _check_cell_order,
         _check_cell_values,
+        _check_sheet_names,
         _check_tables,
         _check_cell_metadata,
         _check_x14_cf,
@@ -1085,6 +1091,38 @@ def _check_cell_values(book: _Book) -> None:
                 bad.append(f"{addr}={v.text!r}")
         if bad:
             book.flag("cell-value", sheet.member, f"values Excel cannot read: {_summarise(bad)}")
+
+
+_SHEET_NAME_CHARS = re.compile("[" + re.escape(":\N{REVERSE SOLIDUS}/?*[]") + "]")
+
+
+def _sheet_name_fold(name: str) -> str:
+    """Excel's comparison of sheet names, letter by letter: lower case, then upper case
+    unless that turns a non-ASCII letter into an ASCII one (so "ς" and "Σ" clash, "ſ" and
+    "S" do not), and never one letter into several (recorded with Excel 16 on 2026-11-04)."""
+    folded = []
+    for letter in name:
+        lower = letter.lower() if len(letter.lower()) == 1 else letter
+        upper = lower.upper()
+        keep = len(upper) != 1 or (upper.isascii() and not lower.isascii())
+        folded.append(lower if keep else upper)
+    return "".join(folded)
+
+
+def _check_sheet_names(book: _Book) -> None:
+    """Excel repairs a workbook whose sheet names break these rules; it opens one with a
+    sheet named "History", which only its rename refuses (recorded with Excel 16 on
+    2026-11-04)."""
+    seen: dict[str, str] = {}
+    for sheet in book.sheets:
+        name = sheet.name
+        units = len(name.encode("utf-16-le", "surrogatepass")) // 2
+        if not 1 <= units <= 31 or _SHEET_NAME_CHARS.search(name) or name[:1] == "'" or name[-1:] == "'":
+            book.flag("sheet-name", book.workbook, f"sheet name {name!r} is one Excel repairs")
+        key = _sheet_name_fold(name)
+        if key in seen:
+            book.flag("sheet-name", book.workbook, f"sheet names {seen[key]!r} and {name!r} differ only in case")
+        seen.setdefault(key, name)
 
 
 def _check_tables(book: _Book) -> None:
