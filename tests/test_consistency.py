@@ -207,6 +207,19 @@ def test_cell_order_within_a_row(old: bytes, new: bytes, what: str):
     assert what in _only(pkg, "cell-order")
 
 
+@pytest.mark.parametrize(
+    ("old", "new", "what"),
+    [
+        (b"<v>19</v>", b"<v>nan</v>", "A3='nan'"),
+        (b"<v>437</v>", b"<v>-inf</v>", "C3='-inf'"),
+        (b"<v>23</v>", b"<v>x</v>", "B3='x'"),
+    ],
+)
+def test_cell_values_are_finite_numbers(old: bytes, new: bytes, what: str):
+    pkg = _edit(_pkg("SimpleFormula"), SHEET, old, new)
+    assert what in _only(pkg, "cell-value")
+
+
 def test_cell_order_numbers_rows_and_cells_without_r():
     pkg = _edit(_pkg("SimpleFormula"), SHEET, b'<row r="3" ', b"<row ")
     for col in "ABC":

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import functools
 import io
+import math
 import os
 import posixpath
 import re
@@ -628,6 +629,7 @@ INVARIANTS: dict[str, str] = {
         "rows appear once each in ascending r order within sheetData, and cells once "
         "each in ascending column order within the row their r names"
     ),
+    "cell-value": "every number a cell stores, cached formula results included, is finite",
     "table-columns": "tableColumns/@count == number of tableColumn children == ref column width",
     "table-name": "table displayNames are unique workbook-wide (case-insensitively)",
     "table-autofilter": "table autoFilter/@ref == table ref minus totalsRowCount trailing rows",
@@ -689,6 +691,7 @@ def consistency_violations(pkg: Package) -> list[Violation]:
         _check_calc_chain,
         _check_grid_bounds,
         _check_cell_order,
+        _check_cell_values,
         _check_tables,
         _check_cell_metadata,
         _check_x14_cf,
@@ -1053,6 +1056,25 @@ def _check_cell_order(book: _Book) -> None:
                 last_col = max(last_col, col)
         if bad:
             book.flag("cell-order", sheet.member, f"sheetData out of order: {_summarise(bad)}")
+
+
+def _check_cell_values(book: _Book) -> None:
+    """Excel repairs a number it cannot read, such as ``nan`` or ``inf`` (recorded with
+    Excel 16 on 2026-11-04)."""
+    for sheet in book.worksheets():
+        bad: list[str] = []
+        for addr, c in book.cells(sheet.member):
+            v = c.find(_sml("v"))
+            if v is None or c.get("t", "n") != "n":
+                continue
+            try:
+                number = float(v.text or "")
+            except ValueError:
+                number = None
+            if number is None or not math.isfinite(number):
+                bad.append(f"{addr}={v.text!r}")
+        if bad:
+            book.flag("cell-value", sheet.member, f"numbers Excel cannot read: {_summarise(bad)}")
 
 
 def _check_tables(book: _Book) -> None:

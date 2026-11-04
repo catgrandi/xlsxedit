@@ -508,11 +508,12 @@ class Cell:
     def value(self, new_value: Any) -> None:
         """Set cell content while preserving ``s`` (style index).
 
-        A value the cell cannot hold raises before anything changes.
+        A value the cell cannot hold raises before anything changes; NaN
+        clears the cell, as ``None`` does.
         """
         from xlsxedit.row_shift import check_values_writable
 
-        check_values_writable(
+        ((new_value,),) = check_values_writable(
             "Cell.value",
             ((new_value,),),
             start_col_idx=0,

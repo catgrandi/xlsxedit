@@ -107,7 +107,7 @@ def test_formula_cache_scientific_and_float():
     assert ws.values() == [[1000.0, 1.5]]
 
 
-def test_non_formula_junk_v_does_not_raise():
+def test_non_formula_junk_v_does_not_raise(unchecked_workbooks):
     wb = Workbook.create()
     ws = wb["Sheet1"]
     from xlsxedit.cell import _ensure_v
