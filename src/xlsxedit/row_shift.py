@@ -2026,8 +2026,17 @@ def check_block_in_grid(
         raise GridOverflowError(f"{method} would write past column XFD")
 
 
-def _is_nan(value) -> bool:
-    return isinstance(value, float) and value != value
+_PANDAS_MISSING = frozenset({"NaTType", "NAType"})
+
+
+def _is_missing(value) -> bool:
+    """Whether ``value`` is a missing value, which writes an empty cell as ``None``
+    does: NaN, or pandas' ``NaT`` or ``NA``, recognised by type so that pandas
+    stays optional."""
+    if isinstance(value, float):
+        return value != value
+    kind = type(value)
+    return kind.__name__ in _PANDAS_MISSING and kind.__module__.startswith("pandas")
 
 
 def _text_length(text: str) -> int:
@@ -2045,22 +2054,24 @@ def check_values_writable(
     string_columns: set[int] | None,
 ) -> list:
     """Refuse, before anything changes, a value the bulk writer would fail on or
-    that Excel would repair, and return ``rows`` with each NaN made ``None``.
+    that Excel would repair, and return ``rows`` with each missing value made
+    ``None``.
 
     Mirrors ``bulk.write_cell_value``: the accepted types and the characters
-    XML cannot hold. A NaN, even in one of ``string_columns``, writes an empty
-    cell, as ``None`` does; an infinite number is refused, since Excel has none.
+    XML cannot hold. A missing value (NaN, or pandas' ``NaT`` or ``NA``), even in
+    one of ``string_columns``, writes an empty cell, as ``None`` does; an
+    infinite number is refused, since Excel has none.
     """
     string_columns = string_columns or set()
-    with_nan = []
+    with_missing = []
     for index, row in enumerate(rows):
         values = row if isinstance(row, (list, tuple)) else (row,)
         for offset, value in enumerate(values):
             if value is None:
                 continue
-            if _is_nan(value):
-                if not with_nan or with_nan[-1] != index:
-                    with_nan.append(index)
+            if _is_missing(value):
+                if not with_missing or with_missing[-1] != index:
+                    with_missing.append(index)
                 continue
             forced = start_col_idx + offset in string_columns
             if not forced and not isinstance(value, _WRITABLE):
@@ -2079,7 +2090,7 @@ def check_values_writable(
                     serial = datetime_to_serial(value)
                 except (TypeError, ValueError, OverflowError) as exc:
                     raise TypeError(f"{method} cannot write {value!r}: {exc}") from None
-                if not math.isfinite(serial):  # pandas.NaT
+                if not math.isfinite(serial):  # a date-like value with no serial
                     raise ValueError(f"{method} cannot write {value!r}; use None")
             if isinstance(value, int) and value.bit_length() > _MAX_INT_BITS:
                 try:  # str() refuses more digits than sys.get_int_max_str_digits()
@@ -2095,13 +2106,13 @@ def check_values_writable(
                         f"{method}: a text of {_text_length(text):,} characters is longer than "
                         f"the {_MAX_TEXT:,} Excel holds in a cell"
                     )
-    if not with_nan:
+    if not with_missing:
         return rows
     blanked = list(rows)
-    for index in with_nan:
+    for index in with_missing:
         row = rows[index]
         if isinstance(row, (list, tuple)):
-            blanked[index] = tuple(None if _is_nan(value) else value for value in row)
+            blanked[index] = tuple(None if _is_missing(value) else value for value in row)
         else:
             blanked[index] = None
     return blanked

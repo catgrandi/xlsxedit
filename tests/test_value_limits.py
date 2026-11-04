@@ -1,4 +1,4 @@
-"""Values Excel cannot hold: NaN writes an empty cell, while infinity and text over
+"""Values Excel cannot hold: NaN, and pandas' NaT and NA, write an empty cell, while infinity and text over
 32,767 characters are refused.
 
 Excel repairs a workbook whose cell stores ``<v>nan</v>`` or ``<v>inf</v>``, or a
@@ -88,6 +88,47 @@ def test_write_dataframe_writes_nan_as_an_empty_cell():
     frame = pd.DataFrame({"x": [1.5, np.nan], "y": ["a", np.nan]})
     assert wb.write_dataframe(frame, at_cell="A4") == 2
     assert [ws[a].value for a in ("A4", "B4", "A5", "B5", "A6", "B6")] == ["x", "y", 1.5, "a", None, None]
+    assert_valid_package(wb)
+
+
+MISSING_WRITES = {  # each writes a missing value into A1 and 5 into the second cell named
+    "Cell.value": (lambda ws, v: setattr(ws["A1"], "value", v), None),
+    "write_rows": (lambda ws, v: ws.write_rows([[v, 5]], at_row=1), "B1"),
+    "write_rows, string column": (lambda ws, v: ws.write_rows([[v, 5]], at_row=1, string_columns={0}), "B1"),
+    "insert_rows": (lambda ws, v: ws.insert_rows([[v, 5]], at_row=1), "B1"),
+    "insert_columns": (lambda ws, v: ws.insert_columns([[v, 5]], at_col="A"), "A2"),
+}
+
+
+@pytest.mark.parametrize("write", list(MISSING_WRITES))
+@pytest.mark.parametrize("missing", ["NaT", "NA"])
+def test_pandas_nat_and_na_write_an_empty_cell_as_nan_does(missing: str, write: str):
+    pd = pytest.importorskip("pandas")
+    wb, ws = _sheet()
+    action, five = MISSING_WRITES[write]
+    action(ws, getattr(pd, missing))
+    assert ws["A1"].value is None
+    if five is not None:
+        assert ws[five].value == 5
+    ws["F9"].value = getattr(pd, missing)  # a cell the sheet does not have: none is created
+    assert ws._find_cell_element("F9") is None
+    assert_valid_package(wb)
+
+
+def test_write_dataframe_writes_nat_and_na_as_empty_cells():
+    pd = pytest.importorskip("pandas")
+    wb, ws = _sheet()
+    frame = pd.DataFrame(
+        {
+            "d": pd.to_datetime(["2024-01-01", None]),
+            "f": pd.array([1.5, None], dtype="Float64"),
+            "s": pd.array(["a", None], dtype="string"),
+        }
+    )
+    assert wb.write_dataframe(frame, at_cell="A4") == 2
+    assert [ws[a].value for a in ("B5", "C5")] == [1.5, "a"]
+    assert ws["A5"].value is not None
+    assert [ws[a].value for a in ("A6", "B6", "C6")] == [None, None, None]
     assert_valid_package(wb)
 
 

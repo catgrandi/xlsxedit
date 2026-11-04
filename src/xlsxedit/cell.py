@@ -508,8 +508,9 @@ class Cell:
     def value(self, new_value: Any) -> None:
         """Set cell content while preserving ``s`` (style index).
 
-        A value the cell cannot hold raises before anything changes; NaN
-        clears the cell, as ``None`` does. Any write, ``None`` included, into a
+        A value the cell cannot hold raises before anything changes; NaN, or
+        pandas' ``NaT`` or ``NA``, clears the cell, as ``None`` does. Any write,
+        ``None`` included, into a
         cell of a multi-cell array or data-table formula other than its anchor
         raises ``FormulaGroupError``, as Excel refuses to change part of a legacy array
         or data table; a dynamic array's stored range would go stale.
