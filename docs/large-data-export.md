@@ -178,4 +178,6 @@ Only when opening a huge existing file for light edits:
 wb = Workbook.open("huge.xlsx", large=True)
 ```
 
+Each sheet is parsed when first used. An insert parses another sheet only when its bytes can hold a reference to the sheet it shifts: a conditional format, validation, sparkline or internal hyperlink that names that sheet.
+
 Export from a small template does not need this.

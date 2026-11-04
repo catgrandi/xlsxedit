@@ -129,6 +129,15 @@ class LazyXmlPart(XmlPart):
         return part
 
     @property
+    def unparsed_blob(self) -> bytes | None:
+        """The source bytes while the part is still unparsed, else ``None``.
+
+        Lets a caller scan the part for a marker without parsing it; reading
+        :attr:`element` parses it.
+        """
+        return self._orig_blob if self._element is None else None
+
+    @property
     def element(self) -> etree._Element:
         if self._element is None:
             if self._orig_blob is None:

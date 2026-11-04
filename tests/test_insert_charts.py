@@ -14,6 +14,8 @@ from xlsxedit.exceptions import DTDForbiddenError, GridOverflowError
 from xlsxedit.opc.constants import CT, OFFICE_REL_NS, RT, SML_NS
 from xlsxedit.opc.packuri import PackURI
 from xlsxedit.opc.part import Part
+from xlsxedit import row_shift
+from xlsxedit.row_shift import _may_name_sheet
 from tests.conftest import INSPECT_FIXTURES
 from tests.preservation import assert_preserved, read_pkg
 from tests.schema_validate import assert_valid_package
@@ -101,6 +103,90 @@ def test_a_chart_follows_another_sheet_it_plots():
     assert values.text == "('line chart'!$B$4:$B$7,'bar chart'!$B$3:$B$6)"
     wb["bar chart"].insert_rows([[None]], at_row=6)
     assert values.text == "('line chart'!$B$4:$B$7,'bar chart'!$B$3:$B$7)"
+
+
+def _unparsed(wb) -> set[str]:
+    return {str(part.partname) for part in chart_parts(wb._package) if part.unparsed_blob is not None}
+
+
+def test_an_insert_parses_only_the_charts_that_can_name_the_sheet():
+    """A chart's references name their sheet, so a chart whose bytes never name the
+    shifted one is not parsed, and keeps its bytes without a comparison (#56)."""
+    wb = Workbook.open(INSPECT_FIXTURES["ChartsAndTables"])
+    before = read_pkg(wb)
+    wb["Table"].insert_rows([[None]], at_row=3)
+    assert _unparsed(wb) == {"/xl/charts/chart1.xml", "/xl/charts/chart2.xml"}
+    wb["bar chart"].insert_rows([[None]], at_row=4)
+    assert _unparsed(wb) == {"/xl/charts/chart2.xml"}
+    after = read_pkg(wb)
+    assert after["xl/charts/chart2.xml"] == before["xl/charts/chart2.xml"]
+    assert after["xl/charts/chart1.xml"] != before["xl/charts/chart1.xml"]
+
+
+_ENTITY = b"<c:f>&#39;bar chart&#39;!$B$2</c:f>"
+
+
+@pytest.mark.parametrize(
+    ("name", "blob", "names"),
+    [
+        ("Sheet1", b"<c:f>Sheet1!$A$1</c:f>", True),
+        ("Sheet1", b"<c:f>SHEET1!$A$1</c:f>", True),
+        ("Sheet1", b"<c:f>Sheet2!$A$1</c:f>", False),
+        ("Sheet1", b"<c:f>&#83;heet1!$A$1</c:f>", True),
+        ("Sheet1", b"<c:f>Sheet<![CDATA[1]]>!$A$1</c:f>", True),
+        ("Sheet1", "<c:f>ſheet1!$A$1</c:f>".encode(), True),  # long s casefolds to s
+        ("Sheet1", "<c:f>Sheet1!$A$1</c:f>".encode("utf-16"), True),
+        ("Sheet1", b'<?xml version="1.0" encoding="ISO-8859-1"?><c:f>x</c:f>', True),
+        ("Sheet1", b'<?xml version="1.0" encoding="UTF-8"?><c:f>Sheet2!A1</c:f>', False),
+        ("Bob's", b"<c:f>'Bob''s'!$A$1</c:f>", True),
+        ("Bob's", b"<c:f>&apos;BOB&apos;&apos;S&apos;!$A$1</c:f>", True),
+        ("Bob's", b"<c:f>'Bobs'!$A$1</c:f>", False),
+        ("R&D", b"<c:f>'R&amp;D'!$A$1</c:f>", True),
+        ("Données", "<c:f>'DONNÉES'!$A$1</c:f>".encode(), True),
+        ("Données", b"<c:f>'Donnees'!$A$1</c:f>", False),
+        ("bar chart", _ENTITY, True),
+        ("bar\x85chart", b"<c:f>'bar&#x85;chart'!$B$2</c:f>", True),  # html.unescape reads U+2026
+        ("bar\x85chart", b"<c:f>'bar&#133;chart'!$B$2</c:f>", True),
+        ("bar chart", b"<h location=\"'bar\nchart'!B3\"/>", True),  # read as a space
+        ("bar chart", b"<h location=\"'bar\r\nchart'!B3\"/>", True),
+        ("bar chart", b"<c val=\"'bar\tchart'!B3\"/>", True),
+        ("bar chart", b"<c:f>'bar  chart'!B3</c:f>", False),
+        ("R&D", b"<c:f>&#xFFFE;'R D'!A1</c:f>", True),  # not a character XML allows
+        ("R&D", b"<c:f>&nbsp;'R D'!A1</c:f>", True),  # not an entity XML defines
+        ("R&D", b"<c:f>Other!A1&amp;'R D'!A1</c:f>", False),
+    ],
+)
+def test_the_byte_scan_finds_every_way_to_name_a_sheet(name: str, blob: bytes, names: bool):
+    assert _may_name_sheet(blob, name) is names
+
+
+def test_repeated_inserts_scan_each_unparsed_part_once(monkeypatch):
+    """The bytes of a part stay the same until it is parsed, so its answer is kept."""
+    wb = Workbook.create()
+    wb.add_worksheet("Summary").add_conditional_formatting("A1:A5", formula="Summary!$B$1")
+    buf = io.BytesIO()
+    wb.save(buf)
+    wb = Workbook.open(io.BytesIO(buf.getvalue()), large=True)
+    scans: list[int] = []
+    real = row_shift._may_name_sheet
+    monkeypatch.setattr(row_shift, "_may_name_sheet", lambda blob, name: scans.append(id(blob)) or real(blob, name))
+    for _ in range(3):
+        wb["Sheet1"].insert_rows([[1]], at_row=2)
+    assert scans == [id(wb["Summary"]._part.unparsed_blob)]
+    wb["Summary"]["A1"].value = 1  # parsed now: its tree is read from here on
+    wb["Sheet1"].insert_rows([[1]], at_row=2)
+    assert len(scans) == 1
+
+
+def test_a_scan_answer_belongs_to_the_bytes_it_read():
+    """New bytes for a part, even of the same length, are scanned again."""
+    wb = Workbook.open(INSPECT_FIXTURES["ChartsAndTables"])
+    part = next(p for p in chart_parts(wb._package) if p.partname == "/xl/charts/chart2.xml")
+    wb["bar chart"].insert_rows([[None]], at_row=4)
+    assert part.unparsed_blob is not None
+    part._orig_blob = part._orig_blob.replace(b"'line chart'!$B$2<", b"'bar chart'!$B$22<")
+    wb["bar chart"].insert_rows([[None]], at_row=4)
+    assert "'bar chart'!$B$23" in _refs(wb, "/xl/charts/chart2.xml")
 
 
 def test_a_series_pushed_off_the_grid_becomes_a_ref_error():

@@ -117,7 +117,7 @@ Only these content types are registered as live XML:
 | styles | `StylesPart` | Live element; serves original bytes until a style is mutated |
 | core properties (`docProps/core.xml`) | `CorePropertiesPart` | Via `wb.properties` |
 | drawing (`xl/drawings/drawingN.xml`) | `DrawingPart` | No; parsed when first read or edited (`ws.images`, `ws.charts`, `ws.drawing_objects`, `add_image`, `add_chart`, `insert_rows`, `insert_columns`, `copy_worksheet`, …) |
-| chart (`xl/charts/chartN.xml`) | `ChartPart` | No; parsed when first read or edited |
+| chart (`xl/charts/chartN.xml`) | `ChartPart` | No; parsed when first read or edited, which an insert does only when the chart's bytes name the sheet it shifts |
 | table (`xl/tables/tableN.xml`) | `TablePart` | No; parsed when first read or edited (`ws.tables`, `add_table`, `insert_rows`, `insert_columns`, `copy_worksheet`, …) |
 
 Everything else (theme, media, chart styles and colours, pivot caches, VBA, slicers, customXml, printer settings, …) falls through to opaque `Part`.
