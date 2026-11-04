@@ -57,8 +57,8 @@ class ColumnDimension:
         columns before and after keep every attribute, and so does this one,
         with the new ``width``, ``customWidth="1"`` and no ``bestFit``. Excel
         also unhides a hidden column; ``hidden`` stays here, as nothing in this
-        API could hide the column again. A width the column's ``<col>``
-        already has changes nothing.
+        API could hide the column again. A new ``<col>`` goes in column order,
+        and a width the column's ``<col>`` already has changes nothing.
         """
         if value <= 0:
             raise ValueError("column width must be positive")
@@ -92,7 +92,11 @@ class ColumnDimension:
             col_elm.set("max", str(col_idx))
             col_elm.set("width", str(value))
             col_elm.set("customWidth", "1")
-            cols.append(col_elm)
+            following = next((c for c in cols.findall(_COL) if _col_span(c)[0] > col_idx), None)
+            if following is not None:
+                following.addprevious(col_elm)
+            else:
+                cols.append(col_elm)
         self._worksheet._column_styles = None  # the styled <col> ranges first writes read
         self._worksheet._part.mark_dirty()
 
