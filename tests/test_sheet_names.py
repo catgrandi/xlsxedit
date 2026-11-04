@@ -147,3 +147,12 @@ def test_a_sheet_keeps_or_changes_the_case_of_its_own_name():
     with pytest.raises(DuplicateWorksheetError):
         wb.add_worksheet(first.lower())
 
+
+
+@pytest.mark.parametrize("naming", ["copy_worksheet", "rename_worksheet"])
+def test_a_missing_source_sheet_is_reported_before_the_new_name(naming: str):
+    from xlsxedit import WorksheetNotFoundError
+
+    wb = _book()
+    with pytest.raises(WorksheetNotFoundError):
+        getattr(wb, naming)("Missing", "a/b")
