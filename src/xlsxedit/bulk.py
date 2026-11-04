@@ -59,6 +59,8 @@ def write_cell_value(
         _refuse_range_formula_edit(c_elm.get("r", ""), f_elm)
     if t == "s":
         if sst is None:
+            if worksheet is None:
+                raise ValueError("a string needs the shared strings table or the worksheet")
             if _XML_ILLEGAL.search(text):  # what sst.add refuses, refused before the part exists
                 raise ValueError(f"{text!r} holds characters XML cannot store")
             sst = worksheet._workbook._ensure_shared_strings()

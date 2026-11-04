@@ -300,17 +300,20 @@ class Workbook:
         part added holds an empty ``sst`` and comes with its workbook relationship
         and content type; it takes that name unless another part, orphans
         included, already has it. Call this only once a string write can no longer
-        be refused, so a refused write leaves no part behind.
+        be refused, so a refused write leaves no part behind. A part another
+        ``Workbook`` over the same package added is used, not added again.
         """
         if self._shared_strings is None:
-            element = etree.Element(f"{{{SML_NS}}}sst", nsmap={None: SML_NS})
-            element.set("count", "0")
-            element.set("uniqueCount", "0")
-            partname = self._package.next_partname("/xl/sharedStrings%d.xml", unnumbered=True)
-            part = SharedStringsPart(partname, CT.SHARED_STRINGS, element, self._package)
-            self._package._add_part(part)
-            self._workbook_part.relate_to(part, RT.SHARED_STRINGS)
-            self._shared_strings = SharedStringTable(element, part=part)
+            part = self._workbook_part.shared_strings_part
+            if part is None:
+                element = etree.Element(f"{{{SML_NS}}}sst", nsmap={None: SML_NS})
+                element.set("count", "0")
+                element.set("uniqueCount", "0")
+                partname = self._package.next_partname("/xl/sharedStrings%d.xml", unnumbered=True)
+                part = SharedStringsPart(partname, CT.SHARED_STRINGS, element, self._package)
+                self._package._add_part(part)
+                self._workbook_part.relate_to(part, RT.SHARED_STRINGS)
+            self._shared_strings = SharedStringTable(part.element, part=part)
         return self._shared_strings
 
     @property
