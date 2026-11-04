@@ -75,7 +75,7 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | `ws.write_rows(rows, at_cell / at_row, …)` | Write rows at fixed positions | Bulk styling kwargs; a write it cannot complete raises before any cell changes ([details](large-data-export.md#two-write-modes)) |
 | `ws.insert_rows(rows, at_cell, …, shift_drawings=True)` | Insert rows, shift below down | See [Inserting rows and columns](#inserting-rows-and-columns) |
 | `ws.insert_columns(cols, at_col / at_cell, …, shift_drawings=True)` | Insert columns, shift right | ``cols`` = column vectors (top→bottom); see [Inserting rows and columns](#inserting-rows-and-columns) |
-| `ws.update_dimension()` | Refresh `<dimension>` | Usually automatic |
+| `ws.update_dimension()` | Refresh `<dimension>` | Reads every cell address. Usually automatic: inserts recompute it. A bulk write grows it to cover the cells it writes; on a sheet that had no cells it sets it to them, whatever it was (Excel writes `A1` for a sheet without cells), and on one with cells it leaves a missing `<dimension>`, or one that is not an area of cells, as it is. Single-cell writes leave it as it is |
 | `ws.replace(old, new, *, value_type=None)` | SAR on this sheet only | Sets `fullCalcOnLoad` when any cell changes |
 | `ws.find(value)` | First cell with exact ``value`` | Skips formulas; ``None`` if missing |
 | `ws.findall(value)` | All matching cells as `list[Cell]` | `[]` if none |
