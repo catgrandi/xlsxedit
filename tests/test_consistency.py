@@ -220,6 +220,20 @@ def test_cell_values_are_finite_numbers(old: bytes, new: bytes, what: str):
     assert what in _only(pkg, "cell-value")
 
 
+@pytest.mark.parametrize(
+    ("text", "ok"),
+    [("a" * 32_767, True), ("\N{GRINNING FACE}" * 16_383 + "a", True), ("a" * 32_768, False),
+     ("\N{GRINNING FACE}" * 16_384, False)],
+    ids=["32767 letters", "16383 emoji and a letter", "32768 letters", "16384 emoji"],
+)
+def test_cell_text_fits_in_32767_utf16_code_units(text: str, ok: bool):
+    pkg = _edit(_pkg("SimpleFormula"), "xl/sharedStrings.xml", b"<t>Price</t>", f"<t>{text}</t>".encode())
+    if ok:
+        assert _codes(pkg) == []
+    else:
+        assert "A2 holds 32,768 UTF-16 code units of text" in _only(pkg, "cell-value")
+
+
 def test_cell_order_numbers_rows_and_cells_without_r():
     pkg = _edit(_pkg("SimpleFormula"), SHEET, b'<row r="3" ', b"<row ")
     for col in "ABC":

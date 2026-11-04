@@ -129,7 +129,7 @@ An insert that would push a drawing object past row 1,048,576 or column XFD is r
 
 | API | Summary | Notes |
 |-----|---------|-------|
-| `cell.value` | Get/set typed value | str, int, float, bool, `date`, `datetime`, `None`; NaN clears the cell as `None` does, and an infinite number raises `ValueError` ([NaN and infinity](large-data-export.md#nan-and-infinity)); overwriting a formula drops `calcChain.xml` (Excel rebuilds it) |
+| `cell.value` | Get/set typed value | str, int, float, bool, `date`, `datetime`, `None`; NaN clears the cell as `None` does, and an infinite number raises `ValueError` ([NaN and infinity](large-data-export.md#nan-and-infinity)), as does text longer than the 32,767 characters Excel holds in a cell, counted in UTF-16 code units; overwriting a formula drops `calcChain.xml` (Excel rebuilds it) |
 | `cell.data_type` | Raw OOXML cell type | `"s"`, `"str"`, `"inlineStr"`, `"b"`, `"e"`, or `None` (numeric) |
 | `cell.formula` | Get/set formula text | Stored and returned without the leading `=` (`"A2*2"`); the setter also accepts `"=A2*2"`. Setting drops the cached result and its type and sets `fullCalcOnLoad`. A shared-formula follower reads `None` and becomes a standalone formula when set; a single-cell array formula stays an array formula. Refused edits raise `FormulaGroupError`. Setting to `None` removes the formula and keeps its cached result as a value; on a shared-formula master the followers lose their formulas too, as with `cell.value` |
 | `cell.formula_type` | Kind of formula (read-only) | `"normal"`, `"shared"`, `"array"`, `"dataTable"`, or `None` without a formula, including the non-anchor cells of an array or data-table range |

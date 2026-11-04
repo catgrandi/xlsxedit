@@ -1,9 +1,11 @@
-"""Values Excel cannot hold: NaN writes an empty cell, and infinity is refused.
+"""Values Excel cannot hold: NaN writes an empty cell, while infinity and text over
+32,767 characters are refused.
 
-Excel repairs a workbook whose cell stores ``<v>nan</v>`` or ``<v>inf</v>``
-(recorded with Excel 16 on 2026-11-04: it does not open such a file without
-repairing it). The suite guard checks every saved workbook for such numbers
-(``cell-value`` in ``tests/preservation.py``).
+Excel repairs a workbook whose cell stores ``<v>nan</v>`` or ``<v>inf</v>``, or a
+text longer than 32,767 UTF-16 code units: 16,383 emoji and a letter open, 16,384
+emoji do not (recorded with Excel 16 on 2026-11-04: it does not open such a file
+without repairing it). The suite guard checks every saved workbook for such
+values (``cell-value`` in ``tests/preservation.py``).
 """
 
 from __future__ import annotations
@@ -108,4 +110,53 @@ def test_infinity_is_refused_before_anything_changes(case: str, value: float):
     before = read_pkg(wb)
     with pytest.raises(ValueError, match="Excel has no infinite numbers"):
         INFINITE_WRITES[case](ws, value)
+    assert_preserved(before, read_pkg(wb))
+
+
+EMOJI = "\N{GRINNING FACE}"
+LONGEST = {"32767 letters": "a" * 32_767, "16383 emoji and a letter": EMOJI * 16_383 + "a"}
+TOO_LONG = {"32768 letters": "a" * 32_768, "16384 emoji": EMOJI * 16_384}
+
+
+@pytest.mark.parametrize("text", LONGEST.values(), ids=LONGEST)
+def test_text_of_32767_utf16_code_units_is_written(text: str):
+    wb, ws = _sheet()
+    ws["A1"].value = text
+    ws.write_rows([[text]], at_cell="A3")
+    reopened = _reopened(wb)
+    assert reopened["A1"].value == reopened["A3"].value == text
+
+
+TOO_LONG_WRITES = {
+    "Cell.value": lambda ws, t: setattr(ws["A1"], "value", t),
+    "Cell.value on a new cell": lambda ws, t: setattr(ws["F9"], "value", t),
+    "write_rows, in a later row": lambda ws, t: ws.write_rows([["x"], [t]], at_row=1),
+    "write_rows, a string column": lambda ws, t: ws.write_rows(
+        [[1], [_Text(t)]], at_row=1, string_columns={0}
+    ),
+    "insert_rows": lambda ws, t: ws.insert_rows([["x", t]], at_row=1),
+    "insert_columns": lambda ws, t: ws.insert_columns([["x", t]], at_col="B"),
+    "write_dataframe": lambda ws, t: ws._workbook.write_dataframe(
+        [("x",), (t,)], at_cell="A1", header=False, clear_range="A1:C2"
+    ),
+}
+
+
+class _Text:
+    """A value a string column writes as its ``str()``."""
+
+    def __init__(self, text: str):
+        self._text = text
+
+    def __str__(self) -> str:
+        return self._text
+
+
+@pytest.mark.parametrize("text", TOO_LONG.values(), ids=TOO_LONG)
+@pytest.mark.parametrize("case", TOO_LONG_WRITES)
+def test_text_over_32767_utf16_code_units_is_refused_before_anything_changes(case: str, text: str):
+    wb, ws = _sheet()
+    before = read_pkg(wb)
+    with pytest.raises(ValueError, match="32,768 characters is longer than the 32,767"):
+        TOO_LONG_WRITES[case](ws, text)
     assert_preserved(before, read_pkg(wb))
