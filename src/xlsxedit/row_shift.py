@@ -141,6 +141,7 @@ _FORMULA1 = f"{{{SML_NS}}}formula1"
 _FORMULA2 = f"{{{SML_NS}}}formula2"
 _WRITABLE = (str, int, float, date)  # bool is an int and datetime a date
 _MAX_INT_BITS = 2_000  # at most 603 digits: under the lowest digit limit str() allows (640)
+_MAX_TEXT = 32_767  # the most text a cell holds, in UTF-16 code units as Excel counts it
 
 _CELL_ADDRESS_RE = re.compile(r"([A-Za-z]{1,3})([0-9]+)")
 
@@ -1673,6 +1674,13 @@ def _is_nan(value) -> bool:
     return isinstance(value, float) and value != value
 
 
+def _text_length(text: str) -> int:
+    """The length of ``text`` as Excel counts it: in UTF-16 code units, so a
+    character past U+FFFF, such as an emoji, counts twice. ``text`` holds no
+    lone surrogate (``_XML_ILLEGAL`` refuses those first)."""
+    return len(text.encode("utf-16-le")) // 2
+
+
 def check_values_writable(
     method: str,
     rows: list,
@@ -1719,8 +1727,14 @@ def check_values_writable(
                 except ValueError as exc:
                     raise ValueError(f"{method} cannot write an integer that long: {exc}") from None
             if forced or isinstance(value, str):
-                if _XML_ILLEGAL.search(str(value)):
-                    raise ValueError(f"{method}: {str(value)!r} holds characters XML cannot store")
+                text = str(value)
+                if _XML_ILLEGAL.search(text):
+                    raise ValueError(f"{method}: {text!r} holds characters XML cannot store")
+                if len(text) > _MAX_TEXT // 2 and _text_length(text) > _MAX_TEXT:
+                    raise ValueError(
+                        f"{method}: a text of {_text_length(text):,} characters is longer than "
+                        f"the {_MAX_TEXT:,} Excel holds in a cell"
+                    )
     if not with_nan:
         return rows
     blanked = list(rows)

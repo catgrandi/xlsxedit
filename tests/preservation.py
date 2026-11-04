@@ -629,7 +629,10 @@ INVARIANTS: dict[str, str] = {
         "rows appear once each in ascending r order within sheetData, and cells once "
         "each in ascending column order within the row their r names"
     ),
-    "cell-value": "every number a cell stores, cached formula results included, is finite",
+    "cell-value": (
+        "every number a cell stores, cached formula results included, is finite, and the "
+        "text of every string cell is at most 32,767 UTF-16 code units long"
+    ),
     "table-columns": "tableColumns/@count == number of tableColumn children == ref column width",
     "table-name": "table displayNames are unique workbook-wide (case-insensitively)",
     "table-autofilter": "table autoFilter/@ref == table ref minus totalsRowCount trailing rows",
@@ -1059,11 +1062,18 @@ def _check_cell_order(book: _Book) -> None:
 
 
 def _check_cell_values(book: _Book) -> None:
-    """Excel repairs a number it cannot read, such as ``nan`` or ``inf`` (recorded with
-    Excel 16 on 2026-11-04)."""
+    """Excel repairs a number it cannot read, such as ``nan`` or ``inf``, and a text
+    longer than 32,767 UTF-16 code units: 16,383 emoji and a letter open, 16,384 emoji
+    do not (recorded with Excel 16 on 2026-11-04)."""
     for sheet in book.worksheets():
         bad: list[str] = []
         for addr, c in book.cells(sheet.member):
+            text = book.cell_text(c)
+            if text is not None and len(text) > 16_383:
+                units = len(text.encode("utf-16-le", "surrogatepass")) // 2
+                if units > 32_767:
+                    bad.append(f"{addr} holds {units:,} UTF-16 code units of text")
+                continue
             v = c.find(_sml("v"))
             if v is None or c.get("t", "n") != "n":
                 continue
@@ -1074,7 +1084,7 @@ def _check_cell_values(book: _Book) -> None:
             if number is None or not math.isfinite(number):
                 bad.append(f"{addr}={v.text!r}")
         if bad:
-            book.flag("cell-value", sheet.member, f"numbers Excel cannot read: {_summarise(bad)}")
+            book.flag("cell-value", sheet.member, f"values Excel cannot read: {_summarise(bad)}")
 
 
 def _check_tables(book: _Book) -> None:
