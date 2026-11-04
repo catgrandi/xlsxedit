@@ -31,6 +31,7 @@ import operator
 import re
 import string
 import sys
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import date
@@ -58,6 +59,7 @@ from xlsxedit.exceptions import (
 from xlsxedit.hyperlinks import _release_rel
 from xlsxedit.opc.constants import OFFICE_REL_NS, SML_NS
 from xlsxedit.oxml.address import MAX_COL, MAX_ROW, col_to_index, index_to_col, join_address
+from xlsxedit.oxml.parser import _DECLARED_ENCODING, _prolog_codec
 from xlsxedit.parts import WorksheetPart
 from xlsxedit.range_set import CellRange, SheetRangeSet, shift_bounds
 from xlsxedit.styles import _XML_ILLEGAL, check_style_text, datetime_to_serial, normalize_rgb
@@ -716,6 +718,111 @@ def _plan_formula_moves(sheet_data: etree._Element | None, planner: _Planner) ->
                 planner.set(f, attr, str(moved))
 
 
+_XML_REFERENCE_RE = re.compile(r"&(?:#([0-9]+);|#[xX]([0-9A-Fa-f]+);|(lt|gt|amp|apos|quot);)?")
+_PREDEFINED_ENTITIES = {"lt": "<", "gt": ">", "amp": "&", "apos": "'", "quot": '"'}
+_WHITESPACE_TO_SPACE = str.maketrans("\t\n\r", "   ")
+_WHITESPACE_TO_SPACE_BYTES = bytes.maketrans(b"\t\n\r", b"   ")
+
+
+class _UnreadableReference(Exception):
+    """A character or entity reference XML does not allow."""
+
+
+def _read_reference(m: re.Match) -> str:
+    """The text an XML parser reads for the reference ``m`` matched."""
+    dec, hexa, name = m.groups()
+    if name is not None:
+        return _PREDEFINED_ENTITIES[name]
+    digits = (dec if dec is not None else hexa or "").lstrip("0")
+    if (dec is not None or hexa is not None) and len(digits) <= 7:
+        code = int(digits or "0", 10 if dec is not None else 16)
+        if _is_xml_char(code):
+            return chr(code)
+    raise _UnreadableReference
+
+
+def _is_xml_char(code: int) -> bool:
+    """Whether XML 1.0 allows the character ``code`` in a document."""
+    return code in (0x9, 0xA, 0xD) or 0x20 <= code <= 0xD7FF or 0xE000 <= code <= 0xFFFD or (
+        0x10000 <= code <= 0x10FFFF
+    )
+
+
+def _xml_line_ends(text: str) -> str:
+    """``text`` with its line ends read as an XML parser reads them before anything
+    else: ``\\r\\n`` and a lone ``\\r`` as ``\\n``."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _may_name_sheet(blob: bytes, sheet_name: str) -> bool:
+    """Whether ``blob``, the unparsed bytes of a part, can hold a reference that
+    names ``sheet_name`` as :func:`_same_sheet` reads a sheet prefix.
+
+    Such a reference spells the name, in any case, with each quote doubled
+    when it is quoted; so the text of the part must hold it once read as an
+    XML parser reads it (line ends first, then character and entity
+    references), with every tab and line break taken as a space, as in an
+    attribute. Bytes that may spell it some other way are taken to hold it:
+    an encoding other than UTF-8, a CDATA section, or a reference XML does
+    not allow.
+    """
+    codec, start = _prolog_codec(blob)
+    if codec != "latin-1" or b"<![CDATA[" in blob:
+        return True  # UTF-16 or UTF-32, or text that a CDATA section splits
+    declared = _DECLARED_ENCODING.match(blob[start : start + 256].decode("latin-1"))
+    if declared and declared.group(1).lower().replace("_", "-") not in ("utf-8", "utf8"):
+        return True
+    body = blob[start:]
+    name = sheet_name.translate(_WHITESPACE_TO_SPACE)
+    if name.isascii() and body.isascii() and b"&#" not in body and not any(ch in name for ch in "&<>\"'"):
+        if " " in name:
+            body = body.replace(b"\r\n", b"\n").translate(_WHITESPACE_TO_SPACE_BYTES)
+        return name.lower().encode() in body.lower()
+    try:
+        text = _xml_line_ends(body.decode("utf-8"))
+    except UnicodeDecodeError:
+        return True
+    if "&" in text:
+        try:
+            text = _XML_REFERENCE_RE.sub(_read_reference, text)
+        except _UnreadableReference:
+            return True
+    text = text.translate(_WHITESPACE_TO_SPACE).casefold()
+    name = name.casefold()
+    return name in text or name.replace("'", "''") in text
+
+
+_SCANS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()  # part -> (its bytes, answers)
+
+
+def _unparsed_may_name(part, sheet_name: str, markers: tuple[bytes, ...] = ()) -> bool:
+    """Whether ``part``, still unparsed, holds one of ``markers`` when given and may
+    name ``sheet_name`` (:func:`_may_name_sheet`). Bytes not in UTF-8 are taken to
+    hold the markers.
+
+    The answer is kept with the bytes it was read from, the part's own while
+    it stays unparsed, so repeated inserts scan each part once for a name;
+    :func:`_forget_scans` drops it once the part is parsed.
+    """
+    blob = part.unparsed_blob
+    entry = _SCANS.get(part)
+    if entry is None or entry[0] is not blob:
+        entry = _SCANS[part] = (blob, {})
+    key = (sheet_name, markers)
+    if key not in entry[1]:
+        held = (
+            not markers
+            or _prolog_codec(blob)[0] != "latin-1"
+            or any(marker in blob for marker in markers)
+        )
+        entry[1][key] = held and _may_name_sheet(blob, sheet_name)
+    return entry[1][key]
+
+
+def _forget_scans(part) -> None:
+    """Drop the answers kept for ``part``, and with them its source bytes."""
+    _SCANS.pop(part, None)
+
 def _same_sheet(prefix: str, sheet_name: str | None) -> bool:
     """Whether a reference prefix names exactly ``sheet_name`` (not a 3D span or another book)."""
     if sheet_name is None:
@@ -1292,6 +1399,16 @@ class _Planner:
             if formula is not None and formula.text:
                 self.set_text(formula, rewrite(formula.text))
 
+    def other_sheets(self, workbook, worksheet) -> None:
+        """References to the shifted sheet from the workbook's other worksheets
+        (see :meth:`foreign_sheet`)."""
+        for other in workbook.worksheets:
+            if other is worksheet:
+                continue
+            root = _root_if_it_may_refer(other, self.sheet_name)
+            if root is not None:
+                self.foreign_sheet(root)
+
     def foreign_sheet(self, root: etree._Element) -> None:
         """References to the shifted sheet from another sheet's conditional formats,
         validations (with their x14 twins and sparklines) and internal hyperlinks.
@@ -1317,8 +1434,13 @@ class _Planner:
 
     def charts(self, workbook) -> None:
         """References to the shifted sheet in every chart: series, titles and
-        labels with their c15 copies. A chart's references name their sheet."""
+        labels with their c15 copies. A chart's references name their sheet,
+        so a chart part still unparsed whose bytes cannot name it is skipped."""
         for part in chart_parts(workbook._package):
+            if part.unparsed_blob is None:
+                _forget_scans(part)
+            elif self.sheet_name is None or not _unparsed_may_name(part, self.sheet_name):
+                continue
             for elm in chart_references(part.element):
                 self.set_text(elm, self.plain(elm.text, own=False))
 
@@ -1360,19 +1482,25 @@ def _parse_spans(spans: str) -> list[tuple[int, int]] | None:
     return intervals
 
 
-_DEFERRED_MARKERS = (_XM_NS.encode(), b"location=", b"formula", b"cfvo")
+_DEFERRED_MARKERS = (_XM_NS.encode(), b"location", b"formula", b"cfvo")
 
 
-def _root_if_it_may_refer(worksheet) -> etree._Element | None:
+def _root_if_it_may_refer(worksheet, sheet_name: str | None) -> etree._Element | None:
     """The worksheet's element, unless it is still unparsed and cannot hold a
-    reference this module rewrites (keeps ``Workbook.open(large=True)`` lazy),
-    or is a chartsheet, which holds none."""
-    if not isinstance(worksheet._part, WorksheetPart):
+    reference to ``sheet_name`` this module rewrites (keeps
+    ``Workbook.open(large=True)`` lazy), or is a chartsheet, which holds none.
+
+    A reference from another sheet names the sheet it refers to, so its bytes
+    must hold a structure that carries one and the name (:func:`_may_name_sheet`).
+    """
+    part = worksheet._part
+    if not isinstance(part, WorksheetPart):
         return None
-    blob = worksheet._part.unparsed_blob
-    if blob is not None and not any(marker in blob for marker in _DEFERRED_MARKERS):
+    if part.unparsed_blob is None:
+        _forget_scans(part)
+    elif sheet_name is None or not _unparsed_may_name(part, sheet_name, _DEFERRED_MARKERS):
         return None
-    return worksheet._part.element
+    return part.element
 
 
 class InsertPlan:
@@ -1417,12 +1545,7 @@ class InsertPlan:
         planner.worksheet(root)
         planner.hyperlink_locations(root, own=True)
         workbook = worksheet._workbook
-        for other in workbook.worksheets:
-            if other is worksheet:
-                continue
-            other_root = _root_if_it_may_refer(other)
-            if other_root is not None:
-                planner.foreign_sheet(other_root)
+        planner.other_sheets(workbook, worksheet)
         self._check_tables(cells, planner.merges)
         if ins.rows:
             planner.after(partial(shift_table_parts, worksheet, ins.at, ins.delta))
@@ -1590,12 +1713,7 @@ class CellShiftPlan:
         planner.worksheet(root)
         planner.hyperlink_locations(root, own=True)
         workbook = worksheet._workbook
-        for other in workbook.worksheets:
-            if other is worksheet:
-                continue
-            other_root = _root_if_it_may_refer(other)
-            if other_root is not None:
-                planner.foreign_sheet(other_root)
+        planner.other_sheets(workbook, worksheet)
         tables = _check_span_tables(worksheet, shift)
         planner.after(partial(_move_span_tables, tables, shift))
         _check_span_drawings(worksheet, shift)

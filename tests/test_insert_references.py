@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import re
+import zipfile
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -740,6 +741,43 @@ def test_large_workbooks_stay_lazy_for_sheets_that_cannot_refer_to_the_shifted_o
     wb["Table"].insert_rows([[1]], at_row=3)
     assert wb["bar chart"]._part.unparsed_blob is not None
     assert wb["Table"]._part.unparsed_blob is None
+
+
+def test_large_workbooks_stay_lazy_for_sheets_whose_references_name_other_sheets():
+    """A deferred sheet's formats, validations and links name the sheet they refer
+    to, so one that never names the shifted sheet is left unparsed (#56)."""
+    wb = Workbook.create()
+    summary = wb.add_worksheet("Summary")
+    _add(summary, _X14_EXT.replace("Sheet1!", "Summary!"))
+    summary.add_conditional_formatting("A1:A5", formula="Summary!$B$1")
+    summary["A1"].hyperlink.location = "Summary!A10"
+    wb = Workbook.open(io.BytesIO(_saved(wb)), large=True)
+    wb["Sheet1"].insert_rows([[1]], at_row=5)
+    assert wb["Summary"]._part.unparsed_blob is not None
+    wb["Summary"].insert_rows([[1]], at_row=5)
+    assert _texts(wb["Summary"], ".//x14:sparkline/xm:f") == ["Summary!A11:E11", "Summary!A3:E3"]
+
+
+@pytest.mark.parametrize("form", ["spaced", "utf-16"])
+def test_large_workbooks_rewrite_deferred_sheets_whatever_their_bytes_look_like(form: str):
+    """A ``location`` written with spaces around its ``=``, or a sheet in UTF-16,
+    still counts as one that may refer to the shifted sheet."""
+    wb = Workbook.create()
+    wb.add_worksheet("Summary")["A1"].hyperlink.location = "Sheet1!A10"
+    pkg = read_pkg(_saved(wb))
+    sheet = "xl/worksheets/sheet2.xml"
+    xml = pkg[sheet]
+    if form == "spaced":
+        xml = xml.replace(b'location="', b'location = "')
+    else:
+        xml = xml.replace(b'encoding="UTF-8"', b'encoding="UTF-16"').decode("utf-8").encode("utf-16")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(_saved(wb))) as src, zipfile.ZipFile(buf, "w") as out:
+        for info in src.infolist():
+            out.writestr(info, xml if info.filename == sheet else src.read(info.filename))
+    wb = Workbook.open(io.BytesIO(buf.getvalue()), large=True)
+    wb["Sheet1"].insert_rows([[1]], at_row=5)
+    assert wb["Summary"]["A1"].hyperlink.location == "Sheet1!A11"
 
 
 def test_large_workbooks_rewrite_deferred_sheets_that_refer_to_the_shifted_one():
