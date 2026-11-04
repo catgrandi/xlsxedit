@@ -693,9 +693,9 @@ class Workbook:
     def rename_worksheet(self, old_name: str, new_name: str) -> Worksheet:
         """Rename a sheet. A name Excel rejects, or another sheet's name in any case,
         raises before anything changes (see ``docs/features.md``)."""
-        self._check_new_sheet_name(new_name, replacing=old_name)
         if old_name not in self._sheets_by_name:
             raise WorksheetNotFoundError(f"worksheet {old_name!r} not found")
+        self._check_new_sheet_name(new_name, replacing=old_name)
         for sheet_elm in self._workbook_part.sheet_elements:
             if sheet_elm.get("name") == old_name:
                 sheet_elm.set("name", new_name)
@@ -790,9 +790,9 @@ class Workbook:
             refresh_cloned_drawings,
         )
 
-        self._check_new_sheet_name(new_name)
         if name not in self._sheets_by_name:
             raise WorksheetNotFoundError(f"worksheet {name!r} not found")
+        self._check_new_sheet_name(new_name)
 
         source = self._sheets_by_name[name]
         source_index = list(self.sheetnames).index(name)
