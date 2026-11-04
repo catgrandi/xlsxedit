@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import functools
+from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
 from lxml import etree
 
@@ -14,6 +15,32 @@ if TYPE_CHECKING:
 
 _HYPERLINKS = f"{{{SML_NS}}}hyperlinks"
 _HYPERLINK = f"{{{SML_NS}}}hyperlink"
+
+_Setter = TypeVar("_Setter", bound=Callable[..., Any])
+
+
+def _marks_sheet(setter: _Setter) -> _Setter:
+    """Mark the worksheet's part dirty when ``setter`` changes the cell's hyperlink.
+
+    A setter changes only the cell's ``<hyperlink>`` and the ``<hyperlinks>``
+    block that holds it, so comparing them before and after tells; a call that
+    leaves them as they were, such as setting the location a link already
+    has, marks nothing.
+    """
+
+    @functools.wraps(setter)
+    def wrapper(self: Hyperlink, value: Any) -> None:
+        part = self._cell._worksheet._part
+        if part.is_dirty:
+            return setter(self, value)
+        before = self._state()
+        try:
+            return setter(self, value)
+        finally:
+            if self._state() != before:
+                part.mark_dirty()
+
+    return wrapper  # type: ignore[return-value]
 
 
 def _ensure_hyperlinks_block(ws_elm: etree._Element) -> etree._Element:
@@ -46,6 +73,28 @@ class Hyperlink:
                 return hl
         return None
 
+    def _links_to(self, url: str) -> bool:
+        """Whether the cell's hyperlink already goes to ``url``, and nowhere inside it."""
+        hl = self._hyperlink_element()
+        r_id = None if hl is None else hl.get(f"{{{OFFICE_REL_NS}}}id")
+        rel = None if r_id is None else self._cell._worksheet._part.rels.get(r_id)
+        return (
+            rel is not None
+            and rel.is_external
+            and rel.reltype == RT.HYPERLINK
+            and rel.target_ref == url
+            and hl.get("location") is None
+        )
+
+    def _state(self) -> tuple[int | None, bytes | None]:
+        """Where the ``<hyperlinks>`` block sits, and the cell's ``<hyperlink>``."""
+        ws_elm = self._cell._worksheet._part.element
+        block = ws_elm.find(_HYPERLINKS)
+        if block is None:
+            return None, None
+        hl = self._hyperlink_element()
+        return ws_elm.index(block), None if hl is None else etree.tostring(hl, with_tail=False)
+
     @property
     def url(self) -> str | None:
         hl = self._hyperlink_element()
@@ -74,12 +123,15 @@ class Hyperlink:
         return hl.get("display") if hl is not None else None
 
     @url.setter
+    @_marks_sheet
     def url(self, value: str | None) -> None:
         if value is None:
             self._remove()
             return
         address = self._cell.address  # raises, changing nothing, for a cell that cannot have one
         etree.Element(_HYPERLINK).set("location", value)  # lxml refuses text XML cannot store
+        if self._links_to(value):
+            return
         ws_part = self._cell._worksheet._part
         ws_elm = ws_part.element
         block = _ensure_hyperlinks_block(ws_elm)
@@ -100,6 +152,7 @@ class Hyperlink:
         hl.set(f"{{{OFFICE_REL_NS}}}id", r_id)
 
     @location.setter
+    @_marks_sheet
     def location(self, value: str | None) -> None:
         if value is None:
             hl = self._hyperlink_element()
@@ -130,6 +183,7 @@ class Hyperlink:
         hl.set("location", value)
 
     @display.setter
+    @_marks_sheet
     def display(self, value: str | None) -> None:
         hl = self._hyperlink_element()
         if hl is None:

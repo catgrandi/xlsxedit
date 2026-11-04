@@ -123,6 +123,7 @@ def add_cell_is_rule(
     from xlsxedit.worksheet_order import insert_worksheet_child
 
     insert_worksheet_child(root, cf_elm)
+    worksheet._part.mark_dirty()
     return ConditionalFormatting(cf_elm)
 
 
@@ -138,6 +139,7 @@ def clone_color_scale_rule(
     for rule in cf_elm.findall(_CF_RULE):
         rule.set("priority", str(_next_priority(worksheet)))
     insert_worksheet_child(root, cf_elm)
+    worksheet._part.mark_dirty()
     return ConditionalFormatting(cf_elm)
 
 
@@ -169,4 +171,6 @@ def expand_conditional_formatting_to_row(worksheet: Worksheet, end_row: int) -> 
         if new_sqref != sqref:
             block._element.set("sqref", new_sqref)
             updated += 1
+    if updated:
+        worksheet._part.mark_dirty()
     return updated
