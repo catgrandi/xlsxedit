@@ -324,6 +324,61 @@ def test_rows_an_insert_writes_are_visible_on_a_sheet_that_hides_unused_rows(nam
     assert_valid_package(wb)
 
 
+def _sheet_hiding_unused_rows(png: Path):
+    """Rows 1-5 listed and shown, every other row hidden by ``zeroHeight``, and a
+    picture placed ``absolute`` at C20, which Excel draws right below row 5."""
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    for row in range(1, 6):
+        ws[f"A{row}"].value = row
+    ws._part.element.find(f"{{{ws._part.element.nsmap[None]}}}sheetFormatPr").set("zeroHeight", "1")
+    ws.add_image(png, anchor="C20").placement = "absolute"
+    return wb, ws
+
+
+ROW_WRITES = {
+    "cell.value": lambda ws: setattr(ws["A10"], "value", 1),
+    "cell.formula": lambda ws: setattr(ws["B10"], "formula", "A1*2"),
+    "apply_style": lambda ws: ws["B10"].apply_style(bold=True),
+    "write_rows": lambda ws: ws.write_rows([[1, None], [2]], at_row=10),
+    "insert_columns": lambda ws: ws.insert_columns([[None] * 9 + [1]], at_col="A"),
+    "write_dataframe": lambda ws: ws._workbook.write_dataframe([("x",), (1,)], at_cell="A10", header=False),
+}
+
+
+@pytest.mark.parametrize("write", ROW_WRITES)
+def test_a_row_a_write_adds_stays_hidden_on_a_sheet_that_hides_unused_rows(png, write):
+    """Excel keeps a hidden row hidden when a value is typed or formatted into it, and
+    saves it as ``<row r="50" hidden="1">``; a listed row without ``hidden`` shows, an
+    empty ``<row/>`` too (recorded with Excel 16 on 2026-11-04, on a sheet whose rows
+    6:1048576 were hidden). So a write adds its rows hidden, and the drawing objects
+    below them stay where they are on the page."""
+    wb, ws = _sheet_hiding_unused_rows(png)
+    top = sheet_axis(ws, rows=True).start(19)
+    ROW_WRITES[write](ws)
+    assert ws._find_row_element(10).get("hidden") == "1"
+    assert ws._find_row_element(3).get("hidden") is None  # a listed row stays shown
+    assert sheet_axis(ws, rows=True).start(19) == top
+    assert_valid_package(wb)
+
+
+def test_a_row_given_a_height_shows_on_a_sheet_that_hides_unused_rows(png):
+    """Excel shows a hidden row whose height is set (recorded with Excel 16 on 2026-11-04)."""
+    wb, ws = _sheet_hiding_unused_rows(png)
+    top = sheet_axis(ws, rows=True).start(19)
+    ws.row_dimensions[10].height = 20
+    assert ws._find_row_element(10).get("hidden") is None
+    assert sheet_axis(ws, rows=True).start(19) == top + 20 * 12_700
+
+
+def test_rows_a_write_adds_show_on_a_sheet_that_lists_unused_rows():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A10"].value = 1
+    ws.write_rows([[1]], at_row=12)
+    assert all(row.get("hidden") is None for row in ws._part.element.iter(f"{{{ws._part.element.nsmap[None]}}}row"))
+
+
 def test_bulk_inserts_take_shift_drawings(tmp_path: Path):
     pd = pytest.importorskip("pandas")
     import shutil

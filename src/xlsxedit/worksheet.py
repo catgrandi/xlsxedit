@@ -85,6 +85,7 @@ _ROW = f"{{{SML_NS}}}row"
 _C = f"{{{SML_NS}}}c"
 _F = f"{{{SML_NS}}}f"
 _SHEET_DATA = f"{{{SML_NS}}}sheetData"
+_SHEET_FORMAT_PR = f"{{{SML_NS}}}sheetFormatPr"
 _COLS = f"{{{SML_NS}}}cols"
 _COL = f"{{{SML_NS}}}col"
 _MERGE_CELLS = f"{{{SML_NS}}}mergeCells"
@@ -275,9 +276,9 @@ class Worksheet:
                 self._cell_index[addr.upper()] = c_elm
         self._cell_indexed_rows.add(row_num)
 
-    def _bulk_ensure_row(self, row_num: int) -> etree._Element:
+    def _bulk_ensure_row(self, row_num: int, *, shown: bool = False) -> etree._Element:
         """Like ``_ensure_row``, but a new row's cells are indexed only when a lookup needs them."""
-        return self._ensure_row(row_num, index_cells=False)
+        return self._ensure_row(row_num, index_cells=False, shown=shown)
 
     def _bulk_get_or_create_cell(
         self, address: str, row_elm: etree._Element, *, index: bool = True
@@ -475,11 +476,19 @@ class Worksheet:
             return self._find_cell_element(address)
         return c_elm
 
-    def _ensure_row(self, row_num: int, *, index_cells: bool = True) -> etree._Element:
+    def _ensure_row(
+        self, row_num: int, *, index_cells: bool = True, shown: bool = False
+    ) -> etree._Element:
         """Row ``row_num``, inserted in row order if absent, with its cells indexed.
 
         Pass ``index_cells=False`` to leave a new row out of the cell index, as
         bulk writes do to save its memory; the first lookup in the row indexes it.
+
+        On a sheet whose unlisted rows are hidden (``sheetFormatPr/@zeroHeight``),
+        a new row is written ``hidden="1"``, as Excel writes a row a value is
+        typed into while it is hidden, so a write does not show the row and move
+        the drawing objects below it. Pass ``shown=True`` for a row that shows:
+        one given a height, which Excel shows, or one an insert adds.
 
         A new row goes after the indexed row that precedes it: row ``row_num - 1``
         when a write fills rows in order, the last row when it appends, and
@@ -492,9 +501,11 @@ class Worksheet:
         if row is not None:
             self._index_row_cells(row_num, row)
             return row
-        return self._add_row(row_num, index_cells=index_cells)[0]
+        return self._add_row(row_num, index_cells=index_cells, shown=shown)[0]
 
-    def _add_row(self, row_num: int, *, index_cells: bool = True) -> tuple[etree._Element, bool]:
+    def _add_row(
+        self, row_num: int, *, index_cells: bool = True, shown: bool = False
+    ) -> tuple[etree._Element, bool]:
         """``_ensure_row`` for a row the index does not hold: the row, and whether it is new.
 
         It is not new when the scan that a disagreeing index falls back to finds it.
@@ -502,6 +513,8 @@ class Worksheet:
         sheet_data = self._sheet_data()
         row = etree.Element(_ROW)
         row.set("r", str(row_num))
+        if not shown and self._hides_unlisted_rows():
+            row.set("hidden", "1")
         if not self._place_row_after_indexed(sheet_data, row, row_num):
             self._invalidate_bulk_indexes()
             self._build_bulk_indexes()
@@ -516,6 +529,11 @@ class Worksheet:
             self._cell_indexed_rows.add(row_num)
         self._bulk_max_row_num = max(self._bulk_max_row_num, row_num)
         return row, True
+
+    def _hides_unlisted_rows(self) -> bool:
+        """Whether the rows the sheet does not list are hidden (``sheetFormatPr/@zeroHeight``)."""
+        fmt = self._part.element.find(_SHEET_FORMAT_PR)
+        return fmt is not None and fmt.get("zeroHeight") in ("1", "true")
 
     def _place_row_after_indexed(
         self, sheet_data: etree._Element, row: etree._Element, row_num: int
@@ -769,7 +787,13 @@ class Worksheet:
         row_styles: list[dict[str, Any]] | None = None,
         column_styles: list[dict[str, Any]] | None = None,
         string_columns: set[int] | None = None,
+        inserted: bool = False,
     ) -> int:
+        """Write ``row_list`` from ``start_row`` / 0-based ``start_col_idx``; returns the
+        number of rows. ``inserted`` says the rows are the new rows of an insert: each
+        then gets a ``<row>``, shown, even when it writes nothing, as Excel lists the
+        rows it inserts. Otherwise a row without values adds no ``<row>``, and a row the
+        write adds is hidden where the sheet hides unlisted rows (see ``_ensure_row``)."""
         validate_style_sources(
             template_rows=template_rows,
             row_styles=row_styles,
@@ -807,10 +831,13 @@ class Worksheet:
 
         for offset, row_values in enumerate(row_list):
             row_num = start_row + offset
-            row_elm = self._bulk_ensure_row(row_num)
-            before = etree.tostring(row_elm, with_tail=False) if unchanged else None
             if not isinstance(row_values, (list, tuple)):
                 row_values = (row_values,)
+            if not row_values and not inserted:
+                count += 1
+                continue
+            row_elm = self._bulk_ensure_row(row_num, shown=inserted)
+            before = etree.tostring(row_elm, with_tail=False) if unchanged else None
             max_width = max(max_width, len(row_values))
             for col_offset, value in enumerate(row_values):
                 col_idx = start_col_idx + col_offset
@@ -1157,6 +1184,7 @@ class Worksheet:
                 row_styles=row_styles,
                 column_styles=column_styles,
                 string_columns=string_columns,
+                inserted=True,
             )
         self.update_dimension()
         return count

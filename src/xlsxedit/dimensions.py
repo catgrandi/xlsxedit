@@ -150,7 +150,7 @@ class RowDimension:
         if value <= 0:
             raise ValueError("row height must be positive")
         existed = self._worksheet._find_row_element(self._row) is not None
-        row_elm = self._worksheet._ensure_row(self._row)
+        row_elm = self._worksheet._ensure_row(self._row, shown=True)  # a height shows a row
         if not existed or (row_elm.get("ht"), row_elm.get("customHeight")) != (str(value), "1"):
             row_elm.set("ht", str(value))
             row_elm.set("customHeight", "1")
