@@ -237,7 +237,6 @@ class XlsxeditWriter(ExcelWriter):
                 book._check_new_sheet_name(sheet_name, replacing="Sheet1")
 
             def take_over():
-                self._pending_default_replace = False
                 if sheet_name == "Sheet1":
                     return blank
                 return book.rename_worksheet("Sheet1", sheet_name)
@@ -370,6 +369,20 @@ class XlsxeditWriter(ExcelWriter):
             )
 
         ws = make_sheet()
+        self._write_block(ws, block, rows, merges, clear_range, style_kwargs)
+        self._pending_default_replace = False  # only a write that went through takes Sheet1 over
+
+    def _write_block(
+        self,
+        ws,
+        block: _Block,
+        rows: list,
+        merges: list[CellRange],
+        clear_range: str | None,
+        style_kwargs: dict[str, Any],
+    ) -> None:
+        """Write a checked ``block`` into ``ws``: its rows, number formats and merges."""
+        inserting = self._write_mode == "insert"
         if not rows:
             if clear_range is not None:
                 ws.clear_range(clear_range)

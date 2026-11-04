@@ -465,3 +465,15 @@ def test_an_insert_refuses_a_merge_over_one_the_insert_grows(tmp_path: Path):
             header=False,
         )
     assert_preserved(before, read_pkg(path))
+
+
+@pytest.mark.filterwarnings("ignore:Cell contents too long:UserWarning")
+def test_a_refused_first_write_leaves_sheet1_to_the_next_one(tmp_path: Path):
+    path = tmp_path / "first.xlsx"
+    with pd.ExcelWriter(path, engine="xlsxedit") as w:
+        with pytest.raises(ValueError):
+            LONG.to_excel(w, sheet_name="Sheet1", index=False)
+        pd.DataFrame({"b": [2]}).to_excel(w, sheet_name="Other", index=False)
+    wb = Workbook.open(path)
+    assert wb.sheetnames == ["Other"]
+    assert wb["Other"]["A2"].value == 2
