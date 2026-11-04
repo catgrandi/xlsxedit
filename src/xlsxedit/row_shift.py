@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import bisect
 import math
+import numbers
 import operator
 import re
 import string
@@ -2029,6 +2030,34 @@ def check_block_in_grid(
 _PANDAS_MISSING = frozenset({"NaTType", "NAType"})
 
 
+def _from_numpy(value):
+    """A NumPy boolean, integer or floating scalar as the Python ``bool``, ``int`` or
+    ``float`` it holds, as a nullable pandas column hands them over; ``None`` for any
+    other value. A ``float64`` is a ``float`` already, and dates and times stay
+    refused: a ``timedelta64`` would turn into a bare count."""
+    kind = type(value)
+    if kind.__module__ != "numpy" or isinstance(value, float) or kind.__name__ == "timedelta64":
+        return None
+    if kind.__name__ in ("bool", "bool_"):
+        return bool(value)
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    if isinstance(value, numbers.Real):
+        return float(value)
+    return None
+
+
+def _plain(value, forced: bool = False):
+    """``value`` as the bulk writer takes it: ``None`` for a missing value, and a NumPy
+    number as the Python one it holds, except in a column of ``string_columns``
+    (``forced``), which writes the NumPy value's own text, as it always has."""
+    converted = _from_numpy(value)
+    plain = value if converted is None else converted
+    if _is_missing(plain):
+        return None
+    return value if forced else plain
+
+
 def _is_missing(value) -> bool:
     """Whether ``value`` is a missing value, which writes an empty cell as ``None``
     does: NaN, or pandas' ``NaT`` or ``NA``, recognised by type so that pandas
@@ -2055,7 +2084,7 @@ def check_values_writable(
 ) -> list:
     """Refuse, before anything changes, a value the bulk writer would fail on or
     that Excel would repair, and return ``rows`` with each missing value made
-    ``None``.
+    ``None`` and each NumPy number made the Python one it holds (``_plain``).
 
     Mirrors ``bulk.write_cell_value``: the accepted types and the characters
     XML cannot hold. A missing value (NaN, or pandas' ``NaT`` or ``NA``), even in
@@ -2063,17 +2092,22 @@ def check_values_writable(
     infinite number is refused, since Excel has none.
     """
     string_columns = string_columns or set()
-    with_missing = []
+    changed = []
     for index, row in enumerate(rows):
         values = row if isinstance(row, (list, tuple)) else (row,)
         for offset, value in enumerate(values):
             if value is None:
                 continue
-            if _is_missing(value):
-                if not with_missing or with_missing[-1] != index:
-                    with_missing.append(index)
-                continue
             forced = start_col_idx + offset in string_columns
+            kind = type(value)
+            if kind is not str and kind is not int and (kind is not float or value != value):
+                plain = _plain(value, forced)  # a NumPy value, a missing one, or any other
+                if plain is not value:
+                    if not changed or changed[-1] != index:
+                        changed.append(index)
+                    if plain is None:
+                        continue
+                    value = plain
             if not forced and not isinstance(value, _WRITABLE):
                 raise TypeError(
                     f"{method} accepts str, int, float, bool, datetime, date, or None; "
@@ -2106,16 +2140,18 @@ def check_values_writable(
                         f"{method}: a text of {_text_length(text):,} characters is longer than "
                         f"the {_MAX_TEXT:,} Excel holds in a cell"
                     )
-    if not with_missing:
+    if not changed:
         return rows
-    blanked = list(rows)
-    for index in with_missing:
+    plain = list(rows)
+    for index in changed:
         row = rows[index]
         if isinstance(row, (list, tuple)):
-            blanked[index] = tuple(None if _is_missing(value) else value for value in row)
+            plain[index] = tuple(
+                _plain(value, start_col_idx + offset in string_columns) for offset, value in enumerate(row)
+            )
         else:
-            blanked[index] = None
-    return blanked
+            plain[index] = _plain(row, start_col_idx in string_columns)
+    return plain
 
 
 def check_style_specs(*spec_lists: list[dict] | None) -> None:

@@ -152,6 +152,39 @@ def test_numpy_scalars_are_written_as_numbers():
     assert [ws[a]._v_text() for a in ("A1", "A2", "B2")] == ["2.5", "1.5", "0.5"]
 
 
+def test_numpy_integers_booleans_and_floats_are_written_as_python_values():
+    np = pytest.importorskip("numpy")
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A1"].value = np.int64(3)
+    ws["B1"].value = np.bool_(True)
+    ws["C1"].value = np.float32(0.5)
+    ws["D1"].value = np.float32("nan")  # a missing value: no cell is created
+    ws.write_rows([[np.uint8(7), np.False_, np.int32(-2)]], at_cell="A2")
+    assert [ws[a].value for a in ("A1", "B1", "C1", "A2", "B2", "C2")] == [3, True, 0.5, 7, False, -2]
+    assert [ws[a]._v_text() for a in ("A1", "B1", "B2")] == ["3", "1", "0"]
+    assert ws._find_cell_element("D1") is None
+    before = read_pkg(_saved(wb))
+    for value in (np.datetime64("2024-01-01"), np.timedelta64(5, "ns"), np.complex64(1j)):
+        with pytest.raises(TypeError):
+            ws["E1"].value = value
+        with pytest.raises(TypeError):
+            ws.write_rows([[value]], at_cell="E2")
+    assert read_pkg(_saved(wb)) == before
+
+
+def test_numpy_values_in_a_string_column_keep_their_own_text():
+    np = pytest.importorskip("numpy")
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    row = [np.float32(0.1), np.float16(0.1), np.float32(1 / 3), np.int64(7), np.bool_(True), np.float32("nan")]
+    ws.write_rows([row], at_row=1, string_columns=set(range(6)))
+    ws.insert_rows([row], at_row=1, string_columns=set(range(6)))
+    for r in (1, 2):
+        assert [ws[f"{c}{r}"].value for c in "ABCDE"] == ["0.1", "0.1", "0.33333334", "7", "True"]
+        assert ws[f"F{r}"].value is None  # NaN writes an empty cell
+
+
 def _saved(wb) -> bytes:
     buf = io.BytesIO()
     wb.save(buf)

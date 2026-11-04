@@ -132,6 +132,15 @@ def test_write_dataframe_writes_nat_and_na_as_empty_cells():
     assert_valid_package(wb)
 
 
+def test_write_dataframe_writes_nullable_integer_and_boolean_columns():
+    pd = pytest.importorskip("pandas")
+    wb, ws = _sheet()
+    frame = pd.DataFrame({"i": pd.array([1, None], dtype="Int64"), "b": pd.array([True, None], dtype="boolean")})
+    assert wb.write_dataframe(frame, at_cell="A4") == 2
+    assert [ws[a].value for a in ("A5", "B5", "A6", "B6")] == [1, True, None, None]
+    assert_valid_package(wb)
+
+
 INFINITE_WRITES = {
     "Cell.value": lambda ws, v: setattr(ws["A1"], "value", v),
     "Cell.value on a new cell": lambda ws, v: setattr(ws["F9"], "value", v),
