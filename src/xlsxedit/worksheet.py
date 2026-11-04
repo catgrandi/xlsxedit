@@ -52,7 +52,7 @@ from xlsxedit.drawing import (
     iter_drawing_objects,
     iter_pictures,
 )
-from xlsxedit.range_set import CellRange, SheetRangeSet, column_number
+from xlsxedit.range_set import CELL, RANGE, CellRange, SheetRangeSet, column_number
 from xlsxedit.row_shift import (
     _EXCEL_ARRAY,
     _EXCEL_DATA_TABLE,
@@ -91,6 +91,7 @@ _COL = f"{{{SML_NS}}}col"
 _MERGE_CELLS = f"{{{SML_NS}}}mergeCells"
 _MERGE_CELL = f"{{{SML_NS}}}mergeCell"
 _DIMENSION = f"{{{SML_NS}}}dimension"
+_ROW_CELL = f"{_ROW}/{_C}"
 _CELL_CONTENT = (f"{{{SML_NS}}}v", _F, f"{{{SML_NS}}}is")
 _ROW_REFS = etree.XPath("m:row/@r", namespaces={"m": SML_NS}, smart_strings=False)
 _CELL_REFS = etree.XPath("m:row/m:c/@r", namespaces={"m": SML_NS}, smart_strings=False)
@@ -869,10 +870,13 @@ class Worksheet:
         string_columns = string_columns or set()
         count = 0
         max_width = 0
+        first_row = last_row = None  # the rows that get cells
+        anchors: list[tuple[int, int]] = []  # (column, row) of merge anchors written
         has_merges = bool(self.merged_ranges)
         # Until a change is seen, compare each row before and after its write, so
         # that rewriting the values a sheet already holds leaves it unmarked.
         sheet_data = self._sheet_data()
+        had_cells = sheet_data.find(_ROW_CELL) is not None
         unchanged = not self._part.is_dirty
         rows_before = len(sheet_data) if unchanged else 0
 
@@ -895,6 +899,9 @@ class Worksheet:
             row_elm = self._bulk_ensure_row(row_num, shown=inserted)
             before = etree.tostring(row_elm, with_tail=False) if unchanged else None
             max_width = max(max_width, len(row_values))
+            if row_values:
+                first_row = row_num if first_row is None else first_row
+                last_row = row_num
             for col_offset, value in enumerate(row_values):
                 col_idx = start_col_idx + col_offset
                 address = join_address(index_to_col(col_idx), row_num)
@@ -934,13 +941,14 @@ class Worksheet:
                     if value is None or writes_cell(anchor):
                         target = None
                     else:
-                        anchor_row = split_address(anchor)[1]
+                        anchor_col, anchor_row = split_address(anchor)
                         target = self._bulk_get_or_create_cell(
                             anchor,
                             self._bulk_ensure_row(anchor_row),
                             index=anchor_row in self._cell_indexed_rows,
                         )
                         place_cell_in_order(target)
+                        anchors.append((col_to_index(anchor_col) + 1, anchor_row))
 
                 if target is not None:
                     write_cell_value(
@@ -959,13 +967,11 @@ class Worksheet:
 
         if not unchanged or (count and len(sheet_data) != rows_before):
             self._part.mark_dirty()
-        if count and max_width:
-            end_row = start_row + count - 1
-            end_col = start_col_idx + max_width - 1
-            self._update_dimension_to(
-                join_address(index_to_col(start_col_idx), start_row),
-                join_address(index_to_col(end_col), end_row),
-            )
+        if first_row is not None:
+            cols = [start_col_idx + 1, start_col_idx + max_width, *(col for col, _ in anchors)]
+            rows = [first_row, last_row, *(row for _, row in anchors)]
+            written = CellRange.from_bounds(min(cols), min(rows), max(cols), max(rows))
+            self._grow_dimension(written, had_cells=had_cells)
         return count
 
     def _check_overwrite(
@@ -1468,6 +1474,43 @@ class Worksheet:
             if local in ("sheetViews", "sheetFormatPr", "cols", "sheetData"):
                 return i
         return insert_at
+
+    def _set_dimension(self, area: CellRange) -> None:
+        """Set ``<dimension ref>`` to the cells of ``area``."""
+        self._update_dimension_to(
+            join_address(index_to_col(area.min_col - 1), area.min_row),
+            join_address(index_to_col(area.max_col - 1), area.max_row),
+        )
+
+    def _grow_dimension(self, area: CellRange, *, had_cells: bool = True) -> None:
+        """Grow ``<dimension ref>`` to cover ``area`` as well as what it covers.
+
+        ``had_cells`` says whether the sheet had cells before the write that
+        filled ``area``. Without any, the ref becomes ``area``, whatever it was:
+        Excel writes ``A1`` for a sheet without cells. With some, a ref that is
+        missing or is not an area of cells is left as it is, since only reading
+        every address could tell what the sheet's other cells cover.
+        """
+        if not had_cells:
+            self._set_dimension(area)
+            return
+        dim = self._part.element.find(_DIMENSION)
+        if dim is None:
+            return
+        try:
+            current = CellRange.parse(dim.get("ref") or "")
+        except (InvalidRangeError, ValueError):  # ValueError: a row number int() refuses
+            return
+        if current.kind not in (CELL, RANGE):
+            return  # whole rows or columns
+        self._set_dimension(
+            CellRange.from_bounds(
+                min(area.min_col, current.min_col),
+                min(area.min_row, current.min_row),
+                max(area.max_col, current.max_col),
+                max(area.max_row, current.max_row),
+            )
+        )
 
     def _update_dimension_to(self, top_left: str, bottom_right: str) -> None:
         ref = top_left if top_left == bottom_right else f"{top_left}:{bottom_right}"

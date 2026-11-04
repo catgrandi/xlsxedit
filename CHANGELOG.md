@@ -88,6 +88,7 @@ Several changes below are breaking, so the next release is a major one.
 - **pandas engine** — writing to `Sheet1` and then to another sheet in a new workbook keeps both sheets; the second write used to rename `Sheet1` and write over it. A `sheet_name` that matches a sheet ignoring case names that sheet, and `if_sheet_exists="new"` keeps the numbered name to 31 characters.
 - **Rows** — on a sheet that hides the rows it does not list (`zeroHeight`), a row that `cell.value`, the other cell setters, `write_rows`, `write_dataframe` or `insert_columns` adds is written hidden, as Excel writes a row typed into while hidden. Such a row used to show at the default height, moving the drawing objects below it. A row given a height shows, a hidden one too, as in Excel, and so do the rows `insert_rows` adds.
 - **Worksheet XML order** — new worksheet and stylesheet children are placed in schema order around `legacyDrawing` and `mc:AlternateContent`.
+- **Bulk export** — `write_rows`, `write_dataframe` and the pandas engine grow `<dimension>` to cover the cells they write, and the merge anchors they write through, instead of replacing it with the written block, which left the rest of the sheet outside it. On a sheet that has cells, they leave a missing or unreadable `<dimension>` as it is instead of writing one for the written block alone.
 
 ### Security
 
