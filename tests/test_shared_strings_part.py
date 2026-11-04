@@ -332,6 +332,10 @@ REFUSALS: dict[str, tuple[Callable, type[BaseException]]] = {
         lambda ws: ws.add_table("E3:F5", ["One", "Two"], write_header=True),
         FormulaGroupError,
     ),
+    "add_table(write_header=True) with a column name longer than a cell holds": (
+        lambda ws: ws.add_table("K1:L3", ["One", "x" * 32_768], write_header=True),
+        TableError,
+    ),
     "add_table(write_header=True) with a name Excel rejects": (
         lambda ws: ws.add_table("K1:L3", ["One", "Two"], name="1st", write_header=True),
         TableError,
@@ -366,6 +370,15 @@ def test_a_refused_table_resize_adds_no_part():
     wb = _reopen(before)
     with pytest.raises(TableError):
         wb[SHEET].tables[0].resize("H1:J1", columns=["Name", "Qty", "Price"])  # no data row
+    assert wb.shared_strings is None
+    assert_preserved(before, wb)
+
+
+def test_a_table_resize_to_a_column_name_longer_than_a_cell_holds_adds_no_part():
+    before = _book_with_a_table()
+    wb = _reopen(before)
+    with pytest.raises(TableError, match="longer than"):
+        wb[SHEET].tables[0].resize("H1:J3", columns=["Name", "Qty", "x" * 32_768])
     assert wb.shared_strings is None
     assert_preserved(before, wb)
 
