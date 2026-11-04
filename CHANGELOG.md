@@ -91,6 +91,7 @@ Several changes below are breaking, so the next release is a major one.
 - **Worksheet XML order** — new worksheet and stylesheet children are placed in schema order around `legacyDrawing` and `mc:AlternateContent`.
 - **Bulk export** — `write_rows`, `write_dataframe` and the pandas engine grow `<dimension>` to cover the cells they write, and the merge anchors they write through, instead of replacing it with the written block, which left the rest of the sheet outside it. On a sheet that has cells, they leave a missing or unreadable `<dimension>` as it is instead of writing one for the written block alone.
 - **Inserts** — `insert_rows` and `insert_columns` raise `InvalidRangeError` before changing anything for a row number or cell address that is not one anywhere on the sheet, such as one past the last row. An address in a row or column that does not move used to raise only after the insert had moved the rest, or to end up in `<dimension>`, and one naming row 0 in a moved row was renumbered.
+- **Worksheets** — refreshing `<dimension>` in a sheet whose XML holds a comment or processing instruction before its cells no longer raises after an insert or bulk write has changed the sheet, and a `<dimension>` already in its place stays there.
 
 ### Security
 
