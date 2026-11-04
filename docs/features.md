@@ -50,7 +50,7 @@ Access via `wb["Sheet1"]` or `ws = wb.worksheets[0]`. Cells via `ws["B2"]`.
 | API | Summary | Notes |
 |-----|---------|-------|
 | `ws.name` | Sheet name | Read-only; rename via `wb.rename_worksheet` |
-| `ws[address]` | Get `Cell` at address | e.g. `"A1"`, `"BC100"`; a cell inside a merge gives the merge's top-left cell. Reading changes nothing: a cell the sheet does not have reads as empty, and its first write creates it, and its row, in the style Excel gives a cell typed there, which `cell.style` reads for it beforehand. A write that is refused, or that writes nothing such as `None`, creates no cell. Until then, a `Cell` you hold for it moves with inserted rows and columns, as cells do |
+| `ws[address]` | Get `Cell` at address | e.g. `"A1"`, `"BC100"`; a cell inside a merge gives the merge's top-left cell. Reading changes nothing: a cell the sheet does not have reads as empty, and its first write creates it, and its row, in the style Excel gives a cell typed there, which `cell.style` reads for it beforehand. A write that is refused, or that writes nothing such as `None`, creates no cell. Until then, a `Cell` you hold for it moves with inserted rows and columns, as cells do. An address past row 1,048,576 or column XFD raises `GridOverflowError`, and row 0 or a malformed address `InvalidRangeError`, before any `Cell` is made |
 | `ws.cells` | All populated cells | |
 | `ws.iter_cells()` | Iterate cells | |
 | `ws.iter_rows()` | Iterate `(row_num, [cells])` | |
@@ -374,7 +374,7 @@ All library errors derive from `XlsxeditError`, so you can catch everything with
 | `WorksheetNotFoundError` | `KeyError` | A worksheet name is not present |
 | `DuplicateWorksheetError` | `ValueError` | Adding/renaming to an existing sheet name |
 | `InvalidRangeError` | `ValueError` | Malformed cell address or range (e.g. `"A1:C3"`), or a drawing anchor whose corner names no cell when an insert moves it |
-| `GridOverflowError` | `InvalidRangeError` | An insert or bulk write would put cells, or an insert a drawing object, past row 1,048,576 or column XFD ([details](#inserting-rows-and-columns)) |
+| `GridOverflowError` | `InvalidRangeError` | An insert or bulk write would put cells, or an insert a drawing object, past row 1,048,576 or column XFD ([details](#inserting-rows-and-columns)), or `ws[address]` names a cell past them |
 | `InvalidColorError` | `ValueError` | Invalid color value |
 | `InvalidImageError` | `ValueError` | Unsupported or corrupt image data |
 | `MissingPartError` | `RuntimeError` | A required package part is absent |

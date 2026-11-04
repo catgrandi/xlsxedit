@@ -37,7 +37,12 @@ from xlsxedit.data_validation import (
     new_data_validation,
 )
 from xlsxedit.dimensions import ColumnDimensions, RowDimensions
-from xlsxedit.exceptions import FormulaGroupError, InvalidRangeError, WorksheetNotFoundError
+from xlsxedit.exceptions import (
+    FormulaGroupError,
+    GridOverflowError,
+    InvalidRangeError,
+    WorksheetNotFoundError,
+)
 from xlsxedit.drawing import (
     DrawingObject,
     Picture,
@@ -623,9 +628,16 @@ class Worksheet:
 
         Reading it changes nothing. Where the sheet has no such cell, the
         ``Cell`` reads as empty, and its first write creates it in the style of
-        its row or column (see :meth:`Styles.effective_xf_index`).
+        its row or column (see :meth:`Styles.effective_xf_index`). An address
+        past row 1,048,576 or column XFD raises ``GridOverflowError``, and row 0
+        or a malformed address ``InvalidRangeError``.
         """
-        address = self._resolve_write_address(address).upper()
+        col, row = split_address(address)
+        if row < 1:
+            raise InvalidRangeError(f"cell {address!r} is not on the grid: rows start at 1")
+        if row > MAX_ROW or col_to_index(col) >= MAX_COL:
+            raise GridOverflowError(f"cell {address!r} lies past the grid, which ends at XFD{MAX_ROW}")
+        address = self._resolve_write_address(join_address(col, row)).upper()
         element = self._find_cell_element(address)
         return Cell(element, self, None if element is not None else address)
 
