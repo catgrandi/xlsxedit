@@ -234,6 +234,23 @@ def test_an_insert_value_a_merge_sends_to_part_of_an_array_is_refused():
     assert_preserved(before, read_pkg(wb))
 
 
+def test_range_formulas_are_found_once_however_the_sheet_changes():
+    """Finding them takes a pass over the sheet, so merges, clears, writes and inserts,
+    which add none, keep what was found; an insert moves the formulas it finds."""
+    wb, ws = _array_over_b1_b2()
+    ws["C1"].value = 1
+    found = ws._range_formulas
+    assert [str(area) for _, _, area in ws._range_formula_areas()] == ["B1:B2"]
+    ws.merge_cells("E1:F1")
+    ws.clear_range("C1:C2")
+    ws.write_rows([[1, 2]], at_cell="E5")
+    ws.insert_rows([["x"]], at_row=1)
+    assert ws._range_formulas is found
+    assert [(anchor, str(area)) for _, anchor, area in ws._range_formula_areas()] == [("B2", "B2:B3")]
+    with pytest.raises(FormulaGroupError):
+        ws["B3"].value = 0
+
+
 def test_writes_beside_an_array_and_into_a_single_cell_array_are_accepted():
     wb, ws = _array_over_b1_b2()
     _plant(ws["D1"], {}, '<f t="array" ref="D1">SUM(A1:A2)</f><v>3</v>')

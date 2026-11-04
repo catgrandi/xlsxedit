@@ -134,6 +134,15 @@ def _range_formula_part_error(address: str, kind: str, anchor: str, area: CellRa
     )
 
 
+def _multi_cell_area(ref: str | None) -> CellRange | None:
+    """The range a formula's ``ref`` names, when it covers several cells."""
+    try:
+        area = CellRange.parse(ref) if ref else None
+    except InvalidRangeError:
+        return None
+    return None if area is None or area.is_cell else area
+
+
 def _part_of(area: CellRange, block: CellRange, anchor: str) -> str | None:
     """A cell of ``area`` that ``block`` covers other than ``anchor``, or ``None``."""
     if not area.intersects(block):
@@ -236,7 +245,6 @@ class Worksheet:
 
     def _invalidate_bulk_indexes(self) -> None:
         self._column_styles = None
-        self._range_formulas = None
         self._bulk_indexes_built = False
         self._row_index.clear()
         self._cell_index.clear()
@@ -390,32 +398,41 @@ class Worksheet:
     def _range_formula_areas(self) -> list[tuple[str, str, CellRange]]:
         """``(kind, anchor, range)`` of each array or data-table formula over several cells.
 
-        The formulas are found in one pass over the sheet, again after the edits
-        that clear the row index (inserts among them) and after
-        ``_get_or_create_cell_element``, and each call reads their anchor and
-        ``ref`` afresh, so it follows the formulas that inserts move and the ones
-        that writes remove. A range formula added to the sheet's XML by other
-        means is not seen until then; the API adds none.
+        The ``<f>`` of each is found in one pass over the sheet, the first time
+        a write needs them, and again after ``_get_or_create_cell_element``.
+        Each call reads their anchor and ``ref`` afresh, so it follows the
+        formulas that inserts move and drops the ones that writes remove. Only
+        a formula over several cells is kept: the API never makes one, nor turns
+        a one-cell formula into one, so a range formula added to the sheet's XML
+        by other means is not seen.
         """
-        found = self._range_formulas
-        if found is None:
-            found = self._range_formulas = [[f, None, None] for f in _RANGE_FORMULAS(self._part.element)]
+        entries = self._range_formulas
+        if entries is None:
+            entries = self._range_formulas = [
+                [f, f.get("ref"), area]
+                for f in _RANGE_FORMULAS(self._part.element)
+                for area in [_multi_cell_area(f.get("ref"))]
+                if area is not None
+            ]
+        if not entries:
+            return []
         areas = []
-        for entry in found:
+        kept = []
+        for entry in entries:
             f, ref, area = entry
             c = f.getparent()
             kind = f.get("t")
             if c is None or c.getparent() is None or kind not in ("array", "dataTable"):
-                continue
+                continue  # removed with its cell, or no longer a range formula
             text = f.get("ref")
             if text != ref:
-                try:
-                    area = CellRange.parse(text) if text else None
-                except InvalidRangeError:
-                    area = None
+                area = _multi_cell_area(text)
                 entry[1:] = [text, area]
-            if area is not None and not area.is_cell:
+            kept.append(entry)
+            if area is not None:
                 areas.append((kind, c.get("r", ""), area))
+        if len(kept) != len(entries):
+            self._range_formulas = kept
         return areas
 
     def _range_formula_part(self, address: str) -> tuple[str, str, CellRange] | None:
