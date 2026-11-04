@@ -234,6 +234,41 @@ def test_an_insert_value_a_merge_sends_to_part_of_an_array_is_refused():
     assert_preserved(before, read_pkg(wb))
 
 
+def test_a_value_an_insert_writes_into_an_array_it_grows_is_refused():
+    from tests.conftest import INSPECT_FIXTURES
+
+    wb = Workbook.open(INSPECT_FIXTURES["Formulas"])
+    ws = wb["Calc"]  # an array formula over C2:C4, which a row inserted at 3 grows
+    before = read_pkg(wb)
+    with pytest.raises(FormulaGroupError, match="C3 lies in the array formula anchored at C2 over C2:C5"):
+        ws.insert_rows([[None, None, 5]], at_row=3)
+    assert_preserved(before, read_pkg(wb))
+    ws.insert_rows([[1, 2, None]], at_row=3)  # nothing written into the array
+    assert ws["C2"]._element.find(_F).get("ref") == "C2:C5"
+
+
+def test_a_value_an_insert_writes_into_a_row_array_it_grows_is_refused():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    _plant(ws["B1"], {}, '<f t="array" ref="B1:D1">{1,2,3}</f><v>1</v>')
+    before = read_pkg(wb)
+    with pytest.raises(FormulaGroupError, match="C1 lies in the array formula anchored at B1 over B1:E1"):
+        ws.insert_columns([[9]], at_col="C")
+    assert_preserved(before, read_pkg(wb))
+
+
+def test_a_refused_table_resize_into_part_of_an_array_changes_nothing():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws.write_rows([["a", "b"], [1, 2], [3, 4]], at_row=2)
+    ws.add_table("A2:B4", ["a", "b"])
+    _plant(ws["C1"], {}, '<f t="array" ref="C1:C2">1</f><v>1</v>')  # C2 has no <c>
+    before = read_pkg(wb)
+    with pytest.raises(FormulaGroupError, match="C2 lies in the array formula"):
+        ws.tables[0].resize("A2:C4", columns=["a", "b", "New"])
+    assert_preserved(before, read_pkg(wb))
+
+
 def test_range_formulas_are_found_once_however_the_sheet_changes():
     """Finding them takes a pass over the sheet, so merges, clears, writes and inserts,
     which add none, keep what was found; an insert moves the formulas it finds."""

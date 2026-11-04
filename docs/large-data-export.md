@@ -44,7 +44,7 @@ wb.write_dataframe(
 wb.write_dataframe(df, at_cell="A5", header=False, mode="insert")
 ```
 
-An overwrite checks the whole write before it changes anything: values of a type it cannot write, infinite numbers ([NaN and infinity](#nan-and-infinity)), text XML cannot hold, text longer than the 32,767 characters Excel holds in a cell (counted as Excel counts them, in UTF-16 code units, so a character past U+FFFF such as an emoji counts twice), cells past row 1,048,576 or column XFD (`GridOverflowError`), invalid inline styles, and a write, even of `None`, to any cell of a multi-cell array or data-table formula (`FormulaGroupError`), which Excel refuses as changing part of an array or data table. A refused write, including its `clear_range`, leaves the sheet as it was.
+An overwrite checks the whole write before it changes anything: values of a type it cannot write, infinite numbers ([NaN and infinity](#nan-and-infinity)), text XML cannot hold, text longer than the 32,767 characters Excel holds in a cell (counted as Excel counts them, in UTF-16 code units, so a character past U+FFFF such as an emoji counts twice), cells past row 1,048,576 or column XFD (`GridOverflowError`), invalid inline styles, and a write, even of `None`, to any cell of a multi-cell array or data-table formula (`FormulaGroupError`): Excel refuses that for an array formula entered with Ctrl+Shift+Enter and for a data table; a dynamic array's stored range would go stale, so xlsxedit refuses it there too. A refused write, including its `clear_range`, leaves the sheet as it was.
 
 A row with no values (`[]`) writes nothing and adds no row to the sheet; the rows after it are still written below it.
 
