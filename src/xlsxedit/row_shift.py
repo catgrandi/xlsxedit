@@ -1298,8 +1298,6 @@ class InsertPlan:
                     if value is None:
                         address = join_address(index_to_col(ins.at - 1 + offset), header_row)
                         self.header_cells[address] = name
-        if self.header_cells and self._worksheet.shared_strings is None:
-            raise ValueError("workbook has no shared strings part")
 
     def apply(self) -> None:
         _walk_sheet_data(self._worksheet._part.element.find(_SHEET_DATA), self._insert, apply=True)
@@ -1677,12 +1675,11 @@ def check_values_writable(
     *,
     start_col_idx: int,
     string_columns: set[int] | None,
-    has_shared_strings: bool,
 ) -> None:
     """Refuse, before anything changes, a value the bulk writer would fail on.
 
-    Mirrors ``bulk.write_cell_value``: the accepted types, the shared-strings
-    part every string needs, and the characters XML cannot hold.
+    Mirrors ``bulk.write_cell_value``: the accepted types and the characters
+    XML cannot hold.
     """
     string_columns = string_columns or set()
     for row in rows:
@@ -1709,8 +1706,6 @@ def check_values_writable(
                 except ValueError as exc:
                     raise ValueError(f"{method} cannot write an integer that long: {exc}") from None
             if forced or isinstance(value, str):
-                if not has_shared_strings:
-                    raise ValueError("workbook has no shared strings part")
                 if _XML_ILLEGAL.search(str(value)):
                     raise ValueError(f"{method}: {str(value)!r} holds characters XML cannot store")
 

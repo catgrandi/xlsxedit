@@ -814,7 +814,6 @@ class Worksheet:
             row_list,
             start_col_idx=start_col_idx,
             string_columns=string_columns,
-            has_shared_strings=self.shared_strings is not None,
         )
         self._check_range_formula_anchors_kept(
             row_list, widths, start_row=start_row, start_col_idx=start_col_idx
@@ -1009,7 +1008,6 @@ class Worksheet:
             row_list,
             start_col_idx=start_col_idx,
             string_columns=string_columns,
-            has_shared_strings=self.shared_strings is not None,
         )
         plan = plan_insert_rows(
             self, at_row, count, shift_drawings=shift_drawings, rows_written=bool(width)
@@ -1106,7 +1104,6 @@ class Worksheet:
             row_list,
             start_col_idx=at_col_idx,
             string_columns=string_columns,
-            has_shared_strings=self.shared_strings is not None,
         )
         plan = plan_insert_columns(
             self, at_col_idx, count, (row_list, start_row), shift_drawings=shift_drawings

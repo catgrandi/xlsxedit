@@ -36,7 +36,7 @@ Docs: [xlsxedit.jonasruilong.com](https://xlsxedit.jonasruilong.com)
 | `Workbook.export_to_template(template, df, save_path, **kwargs)` | Open template + `write_dataframe` + save | Class convenience |
 | `wb.properties` | Core document metadata (`docProps/core.xml`) | `title`, `author`, `subject`, `keywords`, `comments`, `category`, `last_modified_by`, `created`, `modified` |
 | `wb.orphan_partnames` | ZIP members not on relationship graph | Advanced |
-| `wb.shared_strings` | Shared string table (advanced) | |
+| `wb.shared_strings` | Shared string table (advanced) | `None` while the workbook has no `xl/sharedStrings.xml`, which Excel leaves out of a workbook without text. The first string a write stores adds the part, with its workbook relationship and content type; a refused write adds none |
 | `wb.styles` | Styles part (advanced) | `effective_xf_index(ws, address)` returns the `cellXfs` index that formats a cell |
 
 `.xlsm` (macro-enabled) and `.xltx` / `.xltm` (template) workbooks open, edit, and save too — the workbook content type is preserved and VBA parts round-trip untouched (no macro inspection or signing).

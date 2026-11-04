@@ -73,12 +73,18 @@ class OpcPackage:
     def _add_orphan_part(self, part: Part) -> None:
         self._orphan_parts[part.partname] = part
 
-    def next_partname(self, template: str) -> PackURI:
+    def next_partname(self, template: str, *, unnumbered: bool = False) -> PackURI:
         """Return the next part name matching ``template`` (``%d`` suffix) that no part,
-        orphans included, already uses; part names compare case-insensitively."""
+        orphans included, already uses; part names compare case-insensitively.
+
+        With ``unnumbered``, ``template`` without its number is tried first, as
+        Excel names a part a workbook has one of, such as ``/xl/sharedStrings.xml``.
+        """
         partnames = {name.lower() for name in (*self._parts, *self._orphan_parts)}
-        for n in range(1, len(partnames) + 2):
-            candidate = PackURI(template % n)
+        candidates = [template.replace("%d", "")] if unnumbered else []
+        candidates += (template % n for n in range(1, len(partnames) + 2))
+        for name in candidates:
+            candidate = PackURI(name)
             if candidate.lower() not in partnames:
                 return candidate
         raise RuntimeError(f"could not allocate partname from {template!r}")

@@ -34,20 +34,7 @@ INSPECT_FIXTURES = {
 # Tests that a registered fixture makes fail until a roadmap issue lands, by node id:
 # (exception, "#issue: reason"). Each becomes a strict xfail, so its entry has to go
 # when the fix lands.
-_NO_SHARED_STRINGS = (
-    "#26 (no issue yet): writing text into a workbook without xl/sharedStrings.xml "
-    "raises instead of adding the part; Excel writes none for a book with no text"
-)
-KNOWN_FIXTURE_FAILURES: dict[str, tuple[type[BaseException], str]] = {
-    "tests/test_schema_validation.py::test_fixture_validates_after_insert_rows[DrawingAnchors]": (
-        ValueError,
-        _NO_SHARED_STRINGS,
-    ),
-    "tests/test_schema_validation.py::test_fixture_validates_after_insert_columns[DrawingAnchors]": (
-        ValueError,
-        _NO_SHARED_STRINGS,
-    ),
-}
+KNOWN_FIXTURE_FAILURES: dict[str, tuple[type[BaseException], str]] = {}
 
 
 def pytest_collection_modifyitems(config, items):

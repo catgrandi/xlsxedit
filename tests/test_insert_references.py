@@ -374,15 +374,6 @@ def test_a_value_or_argument_it_cannot_use_refuses_before_changing_anything(meth
     assert_preserved(before, _saved(wb))
 
 
-def test_strings_need_a_shared_strings_part_before_anything_changes():
-    wb = Workbook.open(INSPECT_FIXTURES["SimpleFormula"])
-    wb._shared_strings = None
-    before = _saved(wb)
-    with pytest.raises(ValueError, match="no shared strings part"):
-        wb["Sheet1"].insert_rows([["text"]], at_row=3)
-    assert_preserved(before, _saved(wb))
-
-
 @pytest.mark.parametrize("method", ["insert_rows", "insert_columns"])
 @pytest.mark.parametrize(
     ("value", "error"),

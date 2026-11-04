@@ -579,8 +579,6 @@ class Table:
                 "(queryTableFieldId), and the query table part is not updated"
             )
         self._check_columns_unreferenced(dropped, action)
-        if header_writes and self._worksheet.shared_strings is None:
-            raise ValueError("workbook has no shared strings part")
 
         def apply() -> None:
             self._apply_resize(old, new, slots, dropped, header_writes)

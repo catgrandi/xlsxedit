@@ -219,6 +219,16 @@ def test_next_partname_skips_orphan_names_case_insensitively():
     assert Workbook.open(_zip(after)).sheetnames == ["Sheet1", "test", "New"]
 
 
+def test_next_partname_tries_the_unnumbered_name_first():
+    pkg = read_pkg(BOOK1)
+    package = OpcPackage.open(_zip(pkg))
+    assert package.next_partname("/xl/calcChain%d.xml", unnumbered=True) == "/xl/calcChain.xml"
+    assert package.next_partname("/xl/calcChain%d.xml") == "/xl/calcChain1.xml"
+    pkg["xl/CALCCHAIN.xml"] = b"orphan"
+    package = OpcPackage.open(_zip(pkg))
+    assert package.next_partname("/xl/calcChain%d.xml", unnumbered=True) == "/xl/calcChain1.xml"
+
+
 def test_package_writer_refuses_duplicate_part_names(tmp_path):
     parts = [
         Part(PackURI("/xl/media/image1.png"), CT.PNG, b"a"),
