@@ -22,9 +22,20 @@ class _Walks:
     """Count every pass over a sheet's rows that an insert can make."""
 
     def __init__(self, monkeypatch):
-        self.counts = {"scan": 0, "index": 0, "sort": 0, "walk": 0, "dimension": 0}
+        self.counts = {
+            "scan": 0,
+            "index": 0,
+            "sort": 0,
+            "addresses": 0,
+            "walk": 0,
+            "checked walk": 0,
+            "dimension": 0,
+        }
         self._count(monkeypatch, Worksheet, "_place_row_by_scan", "scan")
-        self._count(monkeypatch, row_shift, "_walk_sheet_data", "walk")
+        self._count(monkeypatch, row_shift._SheetCells, "_read", "addresses")
+        self._count(monkeypatch, row_shift, "_move_rows", "walk")
+        self._count(monkeypatch, row_shift, "_move_columns", "walk")
+        self._count(monkeypatch, row_shift, "_walk_sheet_data", "checked walk")
         self._count(monkeypatch, Worksheet, "update_dimension", "dimension")
         build = Worksheet._build_bulk_indexes
 
@@ -82,6 +93,31 @@ def test_insert_walks_the_sheet_a_fixed_number_of_times(monkeypatch, at_row: int
         assert [ws[f"A{at_row + n}"].value for n in range(inserted)] == list(range(inserted))
     assert counts[0] == counts[1]
     assert counts[0]["scan"] == 0
+
+
+@pytest.mark.parametrize(
+    "insert",
+    [
+        lambda ws: ws.insert_rows([[1, "new"]], at_row=150),
+        lambda ws: ws.insert_columns([[1, "new"]], at_col="B"),
+    ],
+    ids=["rows", "columns"],
+)
+def test_insert_reads_the_addresses_once_and_walks_the_cells_once(monkeypatch, insert):
+    """Planning reads every address in one pass, which also gives ``<dimension>``;
+    carrying the plan out walks the cells once, and nothing reads them again (#56)."""
+    ws = _sheet(300)
+    walks = _Walks(monkeypatch)
+    insert(ws)
+    assert walks.counts == {
+        "scan": 0,
+        "index": 1,
+        "sort": 0,
+        "addresses": 1,
+        "walk": 1,
+        "checked walk": 0,
+        "dimension": 0,
+    }
 
 
 def test_rows_written_in_any_order_are_placed_without_a_scan(monkeypatch):

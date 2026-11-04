@@ -29,11 +29,13 @@ import bisect
 import math
 import operator
 import re
+import string
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import date
 from functools import partial
+from itertools import chain, repeat
 
 from lxml import etree
 
@@ -440,18 +442,191 @@ def _refresh_manual_break_count(block: etree._Element) -> None:
         block.set("manualBreakCount", str(manual))
 
 
-def _walk_sheet_data(sheet_data: etree._Element | None, ins: _Shift, *, apply: bool) -> None:
-    """Check (``apply=False``) or carry out (``apply=True``) the move of every row and cell.
+_CELL_ADDRESSES = etree.XPath("m:row/m:c/@r", namespaces={"m": SML_NS}, smart_strings=False)
+_UNADDRESSED_CELLS = etree.XPath("count(m:row/m:c[not(@r)])", namespaces={"m": SML_NS})
+_DIGITS = "0123456789"
+_WITHOUT_DIGITS = str.maketrans("", "", _DIGITS)
+_WITHOUT_LETTERS = str.maketrans("", "", string.ascii_letters)
+_DIGIT_THEN_LETTER_RE = re.compile(r"[0-9][A-Za-z]")
 
-    Checking raises for an unparseable address and for content pushed past the
-    grid, so carrying out the same walk afterwards cannot fail. Rows and cells
-    without ``r`` get the number they implied.
+
+class _SheetCells:
+    """The rows and cells of ``sheetData`` that a whole-row or whole-column insert
+    moves, checked before anything changes.
+
+    Building it reads every cell address without walking the cells in Python,
+    and raises ``InvalidRangeError`` for the first that is not one to three
+    column letters up to ``XFD`` and a row from 1 to 1,048,576, wherever it is
+    on the sheet, so that ``<dimension>`` can be refreshed after the move, and
+    for a row numbered past that. ``bounds`` is the
+    area the addressed cells cover, as ``update_dimension`` reads it, or
+    ``None`` without any. A row or cell without ``r``, a row number that is
+    not ASCII digits, or a row (column) that the insert may push off the grid
+    leaves the rest of the check to :func:`_walk_sheet_data`, which raises
+    for content pushed off and for a row number it cannot read.
+
+    ``apply`` moves the rows (cells) in one walk. ``moved_bounds`` is then
+    the area of the cells after the move, when every cell names its own row,
+    so that the shift moves the bounds as it moves the cells.
     """
-    if sheet_data is None:
-        return
-    for f in sheet_data.iter(_F):
-        if f.get("t") in _RANGED_FORMULAS:
-            _move_formula_ranges(f, ins, apply=apply, cell=f.getparent().get("r") or "")
+
+    def __init__(self, sheet_data: etree._Element | None, ins: _Shift):
+        self._sheet_data = sheet_data
+        self._ins = ins
+        self.bounds: CellRange | None = None
+        self._checked = True  # every row and cell has r, and nothing can leave the grid
+        self._aligned = False
+        if sheet_data is None:
+            return
+        numbers: list[str] = []
+        sizes: list[int] = []
+        for row in sheet_data.iterchildren(_ROW):
+            r = row.get("r")
+            if r is None:
+                self._checked = False  # an implied number
+                break
+            numbers.append(r)
+            sizes.append(len(row))
+        joined = "".join(numbers)
+        if numbers and ("" in numbers or not (joined.isascii() and joined.isdigit())):
+            self._checked = False  # for _number to judge
+        last_row = max(map(int, numbers), default=0) if self._checked else 0
+        if last_row > MAX_ROW:
+            past = next(r for r in numbers if int(r) > MAX_ROW)
+            raise InvalidRangeError(f"row/@r: invalid number {past!r}")
+        addresses = _CELL_ADDRESSES(sheet_data)
+        digits = self._read(addresses)
+        listed = sum(sizes) == len(addresses)  # every child of every row is a <c r>
+        if self._checked and not listed and _UNADDRESSED_CELLS(sheet_data):
+            self._checked = False
+        if self._checked:
+            if ins.rows:
+                last = last_row
+            else:
+                last = 0 if self.bounds is None else self.bounds.max_col
+            self._checked = last + ins.delta <= ins.limit
+        if not self._checked:
+            _walk_sheet_data(sheet_data, ins, apply=False)
+        elif listed:
+            self._aligned = digits == list(chain.from_iterable(map(repeat, numbers, sizes)))
+
+    def _read(self, addresses: list[str]) -> list[str]:
+        """Check ``addresses`` and set ``bounds``; return each address's row digits.
+
+        One string holds them all, so the checks run once over it: each address
+        must lose only digits to leave its column letters, and only letters to
+        leave its row, with no letter after a digit.
+        """
+        if not addresses:
+            return []
+        joined = " ".join(addresses)
+        letters = set(joined.translate(_WITHOUT_DIGITS).split(" "))
+        digits = joined.translate(_WITHOUT_LETTERS).split(" ")
+        distinct = set(digits)
+        rows = {
+            int(text.lstrip("0") or "0")
+            for text in distinct
+            if text.isascii() and text.isdigit() and len(text.lstrip("0")) <= 7
+        }
+        cols = {
+            col_to_index(text) + 1
+            for text in letters
+            if text.isascii() and text.isalpha() and len(text) <= 3
+        }
+        if (
+            len(digits) != len(addresses)
+            or len(rows) != len(distinct)
+            or len(cols) != len(letters)
+            or not 1 <= min(rows) <= max(rows) <= MAX_ROW
+            or max(cols) > MAX_COL
+            or _DIGIT_THEN_LETTER_RE.search(joined)
+        ):
+            for address in addresses:
+                _check_cell_address(address)  # raises for the first one that is not one
+        self.bounds = CellRange.from_bounds(min(cols), min(rows), max(cols), max(rows))
+        return digits
+
+    def apply(self) -> bool:
+        """Move the rows (cells) the insert moves; return whether any moved."""
+        sheet_data, ins = self._sheet_data, self._ins
+        if sheet_data is None:
+            return False
+        if not self._checked:
+            return _walk_sheet_data(sheet_data, ins, apply=True)
+        return _move_rows(sheet_data, ins) if ins.rows else _move_columns(sheet_data, ins)
+
+    def moved_bounds(self) -> CellRange | None:
+        """The area of the addressed cells after ``apply``; ``None`` when there are
+        none, or when only reading them again can tell it."""
+        bounds, ins = self.bounds, self._ins
+        if bounds is None or not (self._checked and self._aligned):
+            return None
+        if ins.rows:
+            return replace(
+                bounds, min_row=ins.move(bounds.min_row), max_row=ins.move(bounds.max_row), text=None
+            )
+        return replace(
+            bounds, min_col=ins.move(bounds.min_col), max_col=ins.move(bounds.max_col), text=None
+        )
+
+
+def _check_cell_address(address: str) -> None:
+    """Raise ``InvalidRangeError`` unless ``address`` is one to three column letters
+    up to ``XFD`` and a row from 1 to 1,048,576."""
+    m = _CELL_ADDRESS_RE.fullmatch(address)
+    digits = m.group(2).lstrip("0") if m else ""
+    if not (digits and len(digits) <= 7 and int(digits) <= MAX_ROW and col_to_index(m.group(1)) < MAX_COL):
+        raise InvalidRangeError(f"c/@r: invalid cell address {address!r}")
+
+
+def _move_rows(sheet_data: etree._Element, ins: _Shift) -> bool:
+    """Renumber each row from ``ins.at`` and its cells, on a sheet :class:`_SheetCells`
+    checked: every row and cell has ``r`` and nothing leaves the grid."""
+    moved = False
+    for row in sheet_data.iterchildren(_ROW):
+        number = int(row.get("r"))
+        if number < ins.at:
+            continue
+        suffix = str(number + ins.delta)
+        row.set("r", suffix)
+        moved = True
+        for c in row.iterchildren(_C):
+            c.set("r", c.get("r").rstrip(_DIGITS).upper() + suffix)
+    return moved
+
+
+def _move_columns(sheet_data: etree._Element, ins: _Shift) -> bool:
+    """Move each cell from column ``ins.at`` right, on a sheet :class:`_SheetCells`
+    checked; a moved cell's address names its row's number."""
+    moved = False
+    targets: dict[str, str | None] = {}  # column letters -> where they go, None when they stay
+    for row in sheet_data.iterchildren(_ROW):
+        suffix = None
+        for c in row.iterchildren(_C):
+            letters = c.get("r").rstrip(_DIGITS)
+            if letters not in targets:
+                col = col_to_index(letters) + 1
+                new = ins.move(col)
+                targets[letters] = None if new == col else index_to_col(new - 1)
+            target = targets[letters]
+            if target is not None:
+                if suffix is None:
+                    suffix = str(int(row.get("r")))
+                c.set("r", target + suffix)
+                moved = True
+    return moved
+
+
+def _walk_sheet_data(sheet_data: etree._Element, ins: _Shift, *, apply: bool) -> bool:
+    """Check (``apply=False``) or carry out (``apply=True``) the move of every row and
+    cell, on a sheet with rows or cells without ``r`` or near the grid's edge.
+
+    Checking raises for an unparseable row number or address and for content
+    pushed past the grid, so carrying out the same walk afterwards cannot fail.
+    Rows and cells without ``r`` get the number they implied. Returns whether
+    carrying it out changed anything.
+    """
+    changed = False
     number = 0
     for row in list(sheet_data.iterchildren(_ROW)):
         r = row.get("r")
@@ -459,14 +634,16 @@ def _walk_sheet_data(sheet_data: etree._Element | None, ins: _Shift, *, apply: b
         if not ins.rows:
             if apply and r is None:
                 row.set("r", str(number))
-            _move_cells_right(row, number, ins, apply=apply)
+                changed = True
+            changed |= _move_cells_right(row, number, ins, apply=apply)
         elif number >= ins.at or r is None:  # rows above the insertion stay
-            _move_row_down(sheet_data, row, number, ins, apply=apply)
+            changed |= _move_row_down(sheet_data, row, number, ins, apply=apply)
+    return changed
 
 
 def _move_row_down(
     sheet_data: etree._Element, row: etree._Element, number: int, ins: _Shift, *, apply: bool
-) -> None:
+) -> bool:
     new_number = ins.move(number)
     if new_number > MAX_ROW:
         blocker = next((c for c in row.iterchildren(_C) if _holds_content(c)), None)
@@ -474,10 +651,11 @@ def _move_row_down(
             raise ins.overflow(f"cell {blocker.get('r') or f'in row {number}'}")
         if apply:
             sheet_data.remove(row)
-        return
-    if apply:
-        row.set("r", str(new_number))
+        return apply
     suffix = str(new_number)
+    changed = apply and row.get("r") != suffix
+    if apply:
+        row.set("r", suffix)
     letters = ""
     for c in row.iterchildren(_C):
         address = c.get("r")
@@ -488,11 +666,14 @@ def _move_row_down(
             letters = m.group(1).upper() if m else ""
             if not letters or (len(letters) == 3 and letters > "XFD"):
                 raise InvalidRangeError(f"c/@r: invalid cell address {address!r}")
-        if apply:
+        if apply and address != letters + suffix:
             c.set("r", letters + suffix)
+            changed = True
+    return changed
 
 
-def _move_cells_right(row: etree._Element, number: int, ins: _Shift, *, apply: bool) -> None:
+def _move_cells_right(row: etree._Element, number: int, ins: _Shift, *, apply: bool) -> bool:
+    changed = False
     col = 0
     for c in list(row.iterchildren(_C)):
         address = c.get("r")
@@ -503,23 +684,36 @@ def _move_cells_right(row: etree._Element, number: int, ins: _Shift, *, apply: b
                 raise ins.overflow(f"cell {address or index_to_col(col - 1) + str(number)}")
             if apply:
                 row.remove(c)
+                changed = True
             continue
         if apply and (address is None or new_col != col):
             c.set("r", f"{index_to_col(new_col - 1)}{number}")
+            changed = True
+    return changed
 
 
-def _move_formula_ranges(f: etree._Element, ins: _Shift, *, apply: bool, cell: str) -> None:
-    kind = f.get("t")
-    for attr in ("ref", "r1", "r2") if kind == "dataTable" else ("ref",):
-        value = f.get(attr)
-        if not value:
+def _plan_formula_moves(sheet_data: etree._Element | None, planner: _Planner) -> None:
+    """Move the ranges of shared, array and data-table formulas for a whole-row or
+    whole-column insert, which only moves or grows them; raise for one it
+    would push past the grid."""
+    if sheet_data is None:
+        return
+    ins = planner.ins
+    for f in sheet_data.iter(_F):
+        kind = f.get("t")
+        if kind not in _RANGED_FORMULAS:
             continue
-        area = _area(value, f"{cell} <f t={kind!r}> @{attr}")
-        moved = ins.area(area)
-        if moved is None:
-            raise ins.overflow(f"the {kind} formula range {attr}={value!r} of {cell}")
-        if apply and moved is not area:
-            f.set(attr, str(moved))
+        cell = f.getparent().get("r") or ""
+        for attr in ("ref", "r1", "r2") if kind == "dataTable" else ("ref",):
+            value = f.get(attr)
+            if not value:
+                continue
+            area = _area(value, f"{cell} <f t={kind!r}> @{attr}")
+            moved = ins.area(area)
+            if moved is None:
+                raise ins.overflow(f"the {kind} formula range {attr}={value!r} of {cell}")
+            if moved is not area:
+                planner.set(f, attr, str(moved))
 
 
 def _same_sheet(prefix: str, sheet_name: str | None) -> bool:
@@ -1184,15 +1378,21 @@ def _root_if_it_may_refer(worksheet) -> etree._Element | None:
 class InsertPlan:
     """Every change that inserting rows or columns into one worksheet makes.
 
-    Building the plan reads the worksheet, its table parts, the workbook's
-    defined names and charts, the other sheets' references to it and, with
+    Building the plan reads the worksheet, every row number and cell address
+    on it (see :class:`_SheetCells`), its table parts, the workbook's defined
+    names and charts, the other sheets' references to it and, with
     ``shift_drawings``, the anchors of its drawings (see ``DrawingShift``), and
     raises ``InvalidRangeError``, ``GridOverflowError``, ``TableError`` or
     ``ValueError`` before anything changes.
-    ``apply`` then only assigns precomputed values. ``merges`` lists the
-    sheet's merge ranges as they will be after ``apply``; ``header_cells``
-    the header cells of new table columns to write after it (see
-    ``_check_tables``, which reads ``cells``).
+    ``apply`` then only assigns precomputed values, walking the rows once,
+    and marks the parts it changes. It also sets ``<dimension>`` to the cells
+    as they are after the move, and ``dimension_set`` says whether it could:
+    when not, because the sheet held no addressed cell or only reading every
+    address again tells, the caller refreshes it with ``update_dimension``
+    once it has written its cells. ``merges`` lists the sheet's merge ranges
+    as they will be after ``apply``; ``header_cells`` the header cells of
+    new table columns to write after it (see ``_check_tables``, which reads
+    ``cells``).
     """
 
     def __init__(
@@ -1208,9 +1408,12 @@ class InsertPlan:
             raise ValueError("InsertPlan carries out inserts of whole rows or columns only")
         self._worksheet = worksheet
         self._insert = ins
+        self.dimension_set = False
         root = worksheet._part.element
-        _walk_sheet_data(root.find(_SHEET_DATA), ins, apply=False)
+        sheet_data = root.find(_SHEET_DATA)
         planner = _Planner(ins, sheet_name=worksheet.name, part=worksheet._part)
+        _plan_formula_moves(sheet_data, planner)
+        self._cells = _SheetCells(sheet_data, ins)
         planner.worksheet(root)
         planner.hyperlink_locations(root, own=True)
         workbook = worksheet._workbook
@@ -1303,9 +1506,15 @@ class InsertPlan:
                         self.header_cells[address] = name
 
     def apply(self) -> None:
-        _walk_sheet_data(self._worksheet._part.element.find(_SHEET_DATA), self._insert, apply=True)
+        worksheet = self._worksheet
+        if self._cells.apply():
+            worksheet._part.mark_dirty()
         self._planner.apply()
-        self._worksheet._shifts.append(self._insert)
+        worksheet._shifts.append(self._insert)
+        area = self._cells.moved_bounds()
+        if area is not None:
+            worksheet._set_dimension(area)
+            self.dimension_set = True
 
 
 def plan_insert_rows(

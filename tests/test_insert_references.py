@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import re
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -185,6 +186,40 @@ def test_a_malformed_reference_refuses_the_insert_before_changing_anything(
         ws.insert_rows([[1]], at_row=3)
     with pytest.raises(InvalidRangeError):
         ws.insert_columns([[1]], at_col="B")
+    assert_preserved(before, _saved(wb))
+
+
+@pytest.mark.parametrize(
+    "address", ["1A", "A0", "ZZZZ5", "", "B5x", "A1 B1", "A1048577", "A" + "1" * 20]
+)
+@pytest.mark.parametrize("row", [2, 8], ids=["above", "below"])
+def test_an_unreadable_cell_address_anywhere_refuses_the_insert(unchecked_workbooks, address, row):
+    """The plan reads every address, which refreshing ``<dimension>`` needs, before
+    anything changes; it used to move the rows below the insert point first (#56)."""
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws.write_rows([[1, 2], [3, 4]], at_row=2)
+    ws.write_rows([[5, 6]], at_row=8)
+    ws._part.element.find(f"m:sheetData/m:row[@r='{row}']/m:c", NS).set("r", address)
+    before = _saved(wb)
+    message = re.escape(f"invalid cell address {address!r}")
+    with pytest.raises(InvalidRangeError, match=message):
+        ws.insert_rows([[1]], at_row=5)
+    with pytest.raises(InvalidRangeError, match=message):
+        ws.insert_columns([[1]], at_col="B")
+    assert_preserved(before, _saved(wb))
+
+
+def test_a_row_numbered_past_the_grid_refuses_the_insert(unchecked_workbooks):
+    """Moving its cells would give them addresses past the last row."""
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws.write_rows([[1, 2]], at_row=2)
+    ws._part.element.find("m:sheetData/m:row", NS).set("r", "1048577")
+    before = _saved(wb)
+    for insert in (lambda: ws.insert_rows([[1]], at_row=5), lambda: ws.insert_columns([[1]], at_col="A")):
+        with pytest.raises(InvalidRangeError, match="row/@r: invalid number '1048577'"):
+            insert()
     assert_preserved(before, _saved(wb))
 
 

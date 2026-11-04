@@ -162,7 +162,7 @@ Rough expectations for numeric data (post bulk-row-append fix):
 |----------|-------------------|
 | 50k–200k rows, 4 cols, overwrite | ~20k rows/s write; scales roughly linearly |
 | Zebra + column formats | ~1.3× slower than plain numeric |
-| Insert mode | Similar write speed, plus a fixed number of passes over the sheet: two to move the content below `at_cell`, one to rebuild the row index, one to recompute `<dimension>`, and one over the row heights when a drawing object must keep its size or place |
+| Insert mode | Similar write speed, plus a fixed number of passes over the sheet: one that reads every cell address, which also gives the new `<dimension>`, one to move the content below `at_cell`, one to rebuild the row index, and one over the row heights when a drawing object must keep its size or place. Rows or cells that do not name their own number, and rows or columns that the insert could push off the grid, cost one or two passes more |
 
 A bulk write keeps the new rows in the sheet's XML tree but leaves their cells out of the per-cell index until a single-cell access such as `ws["B7"]` or `clear_range` reaches the row, so writing 100,000 × 8 cells costs no index memory. Saving afterwards serializes the edited sheet once; it is not parsed again.
 
