@@ -565,6 +565,7 @@ class Table:
                 address = join_address(index_to_col(col), new[1])
                 held = _header_cell(self._worksheet, address)
                 if held is None:
+                    self._worksheet._refuse_range_formula_part(address)  # before anything changes
                     header_writes[address] = col_name
                 elif held != col_name:
                     raise TableError(

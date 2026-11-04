@@ -459,6 +459,45 @@ class Worksheet:
         if part is not None:
             raise _range_formula_part_error(address, *part)
 
+    def _refuse_inserted_range_formula_parts(
+        self,
+        rows: bool,
+        at: int,
+        count: int,
+        row_list: list,
+        *,
+        start_row: int,
+        start_col_idx: int,
+        cells: Iterable[str] = (),
+    ) -> None:
+        """Refuse, before an insert of ``count`` rows (``rows``) or columns at 1-based
+        ``at`` changes anything, a value it would write into a cell of a multi-cell
+        array or data-table formula other than its anchor, with the formula as the
+        insert leaves it: one the new lines go through grows over them. ``row_list``
+        holds the values from ``start_row`` / 0-based ``start_col_idx``, and
+        ``cells`` the addresses of other cells the insert writes, after it."""
+        for kind, anchor, area in self._range_formula_areas():
+            moved = area.shift_rows(at, count) if rows else area.shift_cols(at, count)
+            if moved is None:
+                continue
+            col, row = split_address(anchor)
+            column = col_to_index(col) + 1
+            if rows and row >= at:
+                row += count
+            elif not rows and column >= at:
+                column += count
+            anchor = join_address(index_to_col(column - 1), row)
+            written = (
+                join_address(index_to_col(col_idx), start_row + offset)
+                for offset in range(max(moved.min_row - start_row, 0), min(moved.max_row - start_row + 1, len(row_list)))
+                for col_idx, value in enumerate(_row_values(row_list[offset]), start=start_col_idx)
+                if value is not None and moved.min_col <= col_idx + 1 <= moved.max_col
+            )
+            for address in (*written, *cells):
+                col, row = split_address(address)
+                if moved.contains(col_to_index(col) + 1, row) and address != anchor:
+                    raise _range_formula_part_error(address, kind, anchor, moved)
+
     def _resolve_write_address(self, address: str) -> str:
         anchor = self._merge_index.anchor_for(address)
         if anchor is not None and anchor.upper() != address.upper():
@@ -1189,6 +1228,9 @@ class Worksheet:
             start_col_idx=start_col_idx,
             new_rows=True,
         )
+        self._refuse_inserted_range_formula_parts(
+            True, at_row, count, row_list, start_row=at_row, start_col_idx=start_col_idx
+        )
         plan.apply()
         # Merge first, so the write treats the cells the new merges cover like any other.
         append_merges(self._part.element, new_merges)
@@ -1281,6 +1323,15 @@ class Worksheet:
             start_row=start_row,
             start_col_idx=at_col_idx,
             new_rows=False,
+        )
+        self._refuse_inserted_range_formula_parts(
+            False,
+            at_col_idx + 1,
+            count,
+            row_list,
+            start_row=start_row,
+            start_col_idx=at_col_idx,
+            cells=plan.header_cells,
         )
         plan.apply()
         self._invalidate_merge_map()
