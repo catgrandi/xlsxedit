@@ -172,6 +172,21 @@ PARTIAL_EDITS = {
     "clear": lambda ws: ws["B1"].clear(),
     "clear_range": lambda ws: ws.clear_range("B1:B2"),
     "write_rows": lambda ws: ws.write_rows([[0]], at_cell="B1"),
+    # Excel refuses these too: "You can't change part of an array." and "Can't change
+    # part of a data table." (recorded with Excel 16 on 2026-11-04: neither a value
+    # written into part of an array nor ClearContents there changes it)
+    "value on another cell": lambda ws: setattr(ws["B2"], "value", 0),
+    "None on another cell": lambda ws: setattr(ws["B2"], "value", None),
+    "clear on another cell": lambda ws: ws["B2"].clear(),
+    "clear_range of another cell": lambda ws: ws.clear_range("A2:C5"),
+    "write_rows over another cell": lambda ws: ws.write_rows([[5, 6]], at_cell="A2"),
+    "write_rows of None over another cell": lambda ws: ws.write_rows([[None]], at_cell="B2"),
+    "write_dataframe over another cell": lambda ws: ws._workbook.write_dataframe(
+        [(0,)], at_cell="B2", header=False, clear_range="C1:C2"
+    ),
+    "add_table header over another cell": lambda ws: ws.add_table(
+        "B2:C3", ["x", "y"], write_header=True
+    ),
 }
 
 
@@ -189,6 +204,63 @@ def test_partial_edit_of_a_range_formula_is_refused(kind: str, edit: str):
     with pytest.raises(FormulaGroupError, match=f"{kind} formula .*B1:B2"):
         PARTIAL_EDITS[edit](ws)
     assert_preserved(before, read_pkg(wb))
+
+
+def _array_over_b1_b2():
+    wb = Workbook.create()
+    ws = wb["Sheet1"]
+    ws["A1"].value = 1
+    ws["A2"].value = 2
+    _plant(ws["B1"], {}, f"{RANGE_FORMULAS['array']}<v>2</v>")
+    _plant(ws["B2"], {}, "<v>4</v>")
+    return wb, ws
+
+
+def test_a_value_a_merge_sends_to_part_of_an_array_is_refused():
+    wb, ws = _array_over_b1_b2()
+    ws.merge_cells("B2:C2")
+    before = read_pkg(wb)
+    with pytest.raises(FormulaGroupError, match="B2 lies in the array formula anchored at B1"):
+        ws.write_rows([["x"]], at_cell="C2")
+    assert_preserved(before, read_pkg(wb))
+
+
+def test_an_insert_value_a_merge_sends_to_part_of_an_array_is_refused():
+    wb, ws = _array_over_b1_b2()
+    ws.merge_cells("B2:C3")  # its top-left cell lies in the array; the insert grows it
+    before = read_pkg(wb)
+    with pytest.raises(FormulaGroupError, match="B2 lies in the array formula anchored at B1"):
+        ws.insert_rows([[None, "x"]], at_cell="B3")
+    assert_preserved(before, read_pkg(wb))
+
+
+def test_writes_beside_an_array_and_into_a_single_cell_array_are_accepted():
+    wb, ws = _array_over_b1_b2()
+    _plant(ws["D1"], {}, '<f t="array" ref="D1">SUM(A1:A2)</f><v>3</v>')
+    ws["C2"].value = 1
+    ws.write_rows([[5]], at_cell="A2")
+    ws.clear_range("C1:D2")
+    assert (ws["A2"].value, ws["B2"].value, ws["C2"].value, ws["D1"].value) == (5, 4, None, None)
+
+
+def test_part_of_an_array_follows_an_insert():
+    wb, ws = _array_over_b1_b2()
+    ws.insert_rows([["new"]], at_row=1)  # the array moves to B2:B3
+    ws["B1"].value = "free now"
+    with pytest.raises(FormulaGroupError, match="B3 lies in the array formula anchored at B2 over B2:B3"):
+        ws["B3"].value = 0
+
+
+def test_typed_replace_and_placeholders_skip_the_cells_of_an_array():
+    from tests.conftest import ASSETS
+
+    wb, ws = _array_over_b1_b2()
+    ws["C5"].value = 4
+    assert wb.replace(4, 9, value_type="number") == 1
+    assert (ws["B2"].value, ws["C5"].value) == (4, 9)
+    _plant(ws["B2"], {"t": "s"}, f"<v>{wb.shared_strings.add('{logo}')}</v>")
+    assert wb.insert_image_at_placeholder("{logo}", ASSETS / "XlsxEdit-Demo.jpg") == 0
+    assert ws["B2"].value == "{logo}"
 
 
 def test_clear_range_refuses_an_anchor_before_clearing_any_cell():

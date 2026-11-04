@@ -538,7 +538,10 @@ class Workbook:
             (ws, cell)
             for ws in self._sheets
             for cell in ws.iter_cells()
-            if not cell.has_formula and cell.is_string and cell.value == placeholder
+            if not cell.has_formula
+            and cell.is_string
+            and cell.value == placeholder
+            and not ws._range_formula_part(cell.address)
         ]
         size = {"width": width, "height": height, "max_width": max_width, "max_height": max_height}
         anchors = [self._image_anchor(ws, image_path, cell.address, **size) for ws, cell in found]
@@ -553,10 +556,11 @@ class Workbook:
         if value_type in (None, "text"):
             return self._substring_replace_on_sheet(ws, old, str(new))
 
+        # A cell of a multi-cell array or data-table formula holds part of its result.
         if value_type == "number":
             total = 0
             for cell in ws.iter_cells():
-                if cell.has_formula:
+                if cell.has_formula or ws._range_formula_part(cell.address):
                     continue
                 if cell.value == old:
                     cell.value = new
@@ -568,7 +572,7 @@ class Workbook:
             serial = datetime_to_serial(dt)
             total = 0
             for cell in ws.iter_cells():
-                if cell.has_formula:
+                if cell.has_formula or ws._range_formula_part(cell.address):
                     continue
                 if cell.value == old:
                     cell.value = serial
@@ -990,6 +994,7 @@ class Workbook:
                 f_elm = None if c_elm is None else c_elm.find(_F)
                 if f_elm is not None:
                     _refuse_range_formula_edit(address, f_elm)
+                ws._refuse_range_formula_part(address)
             row_elm = ws._ensure_row(header_row)
             for address, col_name in zip(addresses, columns):
                 Cell(ws._bulk_get_or_create_cell(address, row_elm), ws).value = col_name

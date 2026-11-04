@@ -509,7 +509,9 @@ class Cell:
         """Set cell content while preserving ``s`` (style index).
 
         A value the cell cannot hold raises before anything changes; NaN
-        clears the cell, as ``None`` does.
+        clears the cell, as ``None`` does. Any write, ``None`` included, into a
+        cell of a multi-cell array or data-table formula other than its anchor
+        raises ``FormulaGroupError``, as Excel refuses to change part of one.
         """
         from xlsxedit.row_shift import check_values_writable
 
@@ -519,6 +521,7 @@ class Cell:
             start_col_idx=0,
             string_columns=None,
         )
+        self._worksheet._refuse_range_formula_part(self.address)
         if self.has_formula:
             self._worksheet._workbook._on_formula_removed(self._worksheet, self._element)
 

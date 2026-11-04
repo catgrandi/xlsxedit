@@ -172,6 +172,8 @@ _REFUSED = {
     "unsupported type": (lambda ws: setattr(ws["B7"], "value", object()), TypeError),
     "empty formula": (lambda ws: setattr(ws["B7"], "formula", " "), ValueError),
     "formula in an array range": (lambda ws: setattr(ws["E3"], "formula", "1"), FormulaGroupError),
+    "value in an array range": (lambda ws: setattr(ws["E3"], "value", 1), FormulaGroupError),
+    "None in an array range": (lambda ws: setattr(ws["E3"], "value", None), FormulaGroupError),
     "bad colour": (lambda ws: ws["B7"].apply_style(bg_color="nope"), InvalidColorError),
     "bad number format": (lambda ws: ws["B7"].apply_number_format(5), TypeError),
     "past the grid": (lambda ws: ws.write_rows([[1, 2]], at_cell="XFD7"), GridOverflowError),
