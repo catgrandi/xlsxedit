@@ -194,6 +194,42 @@ def test_a_refused_write_leaves_no_cell_behind(case: str):
     assert_preserved(read_pkg(source), read_pkg(_saved(wb)))
 
 
+@pytest.mark.parametrize(
+    ("address", "error"),
+    [
+        ("XFE1", GridOverflowError),
+        ("A1048577", GridOverflowError),
+        ("AAAA1", GridOverflowError),
+        ("A0", InvalidRangeError),
+        ("A", InvalidRangeError),
+        ("1A", InvalidRangeError),
+    ],
+)
+def test_an_address_off_the_grid_is_refused_for_reads_and_writes(address: str, error: type):
+    """Bulk writes refuse these cells with ``GridOverflowError``; ``ws[address]`` does
+    too, before it makes the ``Cell``, so no write can create a cell Excel repairs."""
+    wb = Workbook.create()
+    ws = wb[SHEET]
+    before = read_pkg(_saved(wb))
+    with pytest.raises(error):
+        ws[address]
+    with pytest.raises(error):
+        ws[address].value = 1
+    assert_preserved(before, read_pkg(_saved(wb)))
+
+
+def test_the_last_cell_of_the_grid_and_odd_spellings_of_an_address_work():
+    wb = Workbook.create()
+    ws = wb[SHEET]
+    ws["XFD1048576"].value = 1
+    ws["b02"].value = 2
+    assert ws["XFD1048576"].value == 1
+    assert ws["B2"].value == 2
+    assert _layout(ws) == [(2, ["B2"]), (1048576, ["XFD1048576"])]
+    with pytest.raises(GridOverflowError):
+        ws["XFD1"].offset(cols=1)
+
+
 def _index_state(ws) -> tuple:
     return (
         dict(ws._row_index),
