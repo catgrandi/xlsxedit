@@ -22,10 +22,21 @@ Or use :func:`read_excel`, which registers and forces the xlsxedit engine.
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any
+from collections.abc import Callable
+from typing import Any, NamedTuple
 
+from xlsxedit.bulk_styles import validate_style_sources
+from xlsxedit.merge import parse_range
 from xlsxedit.oxml.address import index_to_col, join_address
-from xlsxedit.workbook import Workbook
+from xlsxedit.range_set import CellRange
+from xlsxedit.row_shift import (
+    append_merges,
+    check_block_in_grid,
+    check_style_specs,
+    check_values_writable,
+)
+from xlsxedit.styles import check_style_text
+from xlsxedit.workbook import Workbook, _sheet_name_key
 
 try:
     from pandas.io.excel import ExcelWriter, register_writer
@@ -85,6 +96,43 @@ class XlsxeditReader(BaseExcelReader):
 
     def get_sheet_data(self, sheet, file_rows_needed: int | None = None):
         return sheet.values(max_rows=file_rows_needed, errors_as_nan=True)
+
+
+class _Block(NamedTuple):
+    """The cells of one ``to_excel`` call: rows of values from ``start_row`` and the
+    0-based ``start_col_idx``, the number format of each date cell, and the merges."""
+
+    rows: list[tuple]
+    start_row: int
+    start_col_idx: int
+    formats: dict[tuple[int, int], str]
+    merges: list[CellRange]
+
+
+def _merges_to_add(existing: list[CellRange], new: list[CellRange]) -> list[CellRange]:
+    """The merges of ``new`` that ``existing`` does not hold already, so that writing a
+    frame over itself keeps its merges; ``ValueError``, as ``Worksheet.merge_cells``
+    raises it, when one overlaps another merge."""
+    held = {(a.min_col, a.min_row, a.max_col, a.max_row) for a in existing}
+    added = []
+    for area in new:
+        bounds = (area.min_col, area.min_row, area.max_col, area.max_row)
+        if bounds not in held:
+            held.add(bounds)
+            added.append(area)
+    tagged = sorted(
+        [(area, False) for area in existing] + [(area, True) for area in added],
+        key=lambda item: (item[0].min_row, item[0].min_col),
+    )
+    reaching: list[tuple[CellRange, bool]] = []  # the merges that reach the current row
+    for area, is_new in tagged:
+        reaching = [(other, new_one) for other, new_one in reaching if other.max_row >= area.min_row]
+        for other, other_new in reaching:
+            if (is_new or other_new) and area.intersects(other):
+                mine, theirs = (area, other) if is_new else (other, area)
+                raise ValueError(f"merge range {str(mine)!r} overlaps existing {str(theirs)!r}")
+        reaching.append((area, is_new))
+    return added
 
 
 class XlsxeditWriter(ExcelWriter):
@@ -157,51 +205,81 @@ class XlsxeditWriter(ExcelWriter):
         return {name: self._book[name] for name in self._book.sheetnames}
 
     def _unique_sheet_name(self, base: str) -> str:
-        if base not in self._book.sheetnames:
+        """``base``, or ``base`` with the first number appended that no sheet has,
+        ignoring case as Excel does, cut so that the name keeps to 31 characters."""
+        taken = {_sheet_name_key(name) for name in self._book.sheetnames}
+        if _sheet_name_key(base) not in taken:
             return base
         n = 1
-        while f"{base}{n}" in self._book.sheetnames:
+        while True:
+            suffix = str(n)
+            stem = base
+            while len((stem + suffix).encode("utf-16-le")) // 2 > 31:
+                stem = stem[:-1]
+            if _sheet_name_key(stem + suffix) not in taken:
+                return stem + suffix
             n += 1
-        return f"{base}{n}"
 
-    def _resolve_sheet(self, sheet_name: str):
-        names = self._book.sheetnames
-        exists = sheet_name in names
+    def _plan_sheet(self, sheet_name: str) -> tuple[Any, Callable[[], Any], bool]:
+        """Where this write goes, changing nothing yet: ``(sheet, make, changes)``.
 
-        if exists and self._if_sheet_exists != "new":
-            if "r+" in self._mode:
-                if self._if_sheet_exists == "error":
-                    raise ValueError(
-                        f"Sheet '{sheet_name}' already exists and "
-                        f"if_sheet_exists is set to 'error'."
-                    )
-                if self._if_sheet_exists == "replace":
-                    if len(names) == 1:
-                        ws = self._book[sheet_name]
-                        for cell in list(ws.iter_cells()):
-                            cell.clear()
-                        return ws
-                    self._book.remove_worksheet(sheet_name)
-                    return self._book.add_worksheet(sheet_name)
-                if self._if_sheet_exists == "overlay":
-                    return self._book[sheet_name]
-                raise ValueError(
-                    f"'{self._if_sheet_exists}' is not valid for if_sheet_exists. "
-                    "Valid options are 'error', 'new', 'replace' and 'overlay'."
-                )
-            return self._book[sheet_name]
-
-        if self._pending_default_replace and names == ["Sheet1"]:
-            self._pending_default_replace = False
+        ``sheet`` is the existing sheet the cells go into, ``None`` for a new one;
+        ``make()`` makes the change that gives the sheet to write, and ``changes``
+        says whether that changes the workbook. A name that matches a sheet
+        ignoring case names that sheet, as in Excel. Raises, before anything
+        changes, for ``if_sheet_exists="error"`` and for a sheet name Excel rejects.
+        """
+        book = self._book
+        if self._pending_default_replace and book.sheetnames == ["Sheet1"]:
+            # Mode "w": the first write takes over the blank Sheet1 of the new workbook.
+            blank = book["Sheet1"]
             if sheet_name != "Sheet1":
-                return self._book.rename_worksheet("Sheet1", sheet_name)
-            return self._book["Sheet1"]
+                book._check_new_sheet_name(sheet_name, replacing="Sheet1")
 
-        if self._if_sheet_exists == "new" and exists:
-            sheet_name = self._unique_sheet_name(sheet_name)
-        elif exists:
-            return self._book[sheet_name]
-        return self._book.add_worksheet(sheet_name)
+            def take_over():
+                self._pending_default_replace = False
+                if sheet_name == "Sheet1":
+                    return blank
+                return book.rename_worksheet("Sheet1", sheet_name)
+
+            return blank, take_over, sheet_name != "Sheet1"
+
+        existing = book._existing_sheet_name(sheet_name)
+        if existing is None:
+            book._check_new_sheet_name(sheet_name)
+            return None, lambda: book.add_worksheet(sheet_name), True
+        ws = book[existing]
+        if "r+" not in self._mode:  # mode "w": a later to_excel to a sheet writes over it
+            return ws, lambda: ws, False
+        how = self._if_sheet_exists
+        if how == "error":
+            raise ValueError(
+                f"Sheet '{sheet_name}' already exists and if_sheet_exists is set to 'error'."
+            )
+        if how == "overlay":
+            return ws, lambda: ws, False
+        if how == "replace":
+            book._check_new_sheet_name(sheet_name, replacing=existing)
+            return None, lambda: self._replace_sheet(existing, sheet_name), True
+        if how == "new":
+            name = self._unique_sheet_name(sheet_name)
+            book._check_new_sheet_name(name)
+            return None, lambda: book.add_worksheet(name), True
+        raise ValueError(
+            f"'{how}' is not valid for if_sheet_exists. "
+            "Valid options are 'error', 'new', 'replace' and 'overlay'."
+        )
+
+    def _replace_sheet(self, old: str, new: str):
+        """Put a new empty sheet named ``new`` in place of sheet ``old``. The new sheet
+        is added, last, before the old one is removed, so this works on a workbook's
+        only sheet too."""
+        book = self._book
+        aside = self._unique_sheet_name("replaced")
+        book.rename_worksheet(old, aside)
+        ws = book.add_worksheet(new)
+        book.remove_worksheet(aside)
+        return ws
 
     def _style_kwargs(self) -> dict[str, Any]:
         return {
@@ -210,6 +288,43 @@ class XlsxeditWriter(ExcelWriter):
             "column_styles": self._column_styles,
             "string_columns": self._string_columns,
         }
+
+    def _layout(self, cells, startrow: int, startcol: int) -> _Block:
+        """The cells pandas formatted, as rows of values from their top-left cell."""
+        by_row: dict[int, dict[int, Any]] = defaultdict(dict)
+        formats: dict[tuple[int, int], str] = {}
+        merges: list[CellRange] = []
+        for cell in cells:
+            val, fmt = self._value_with_fmt(cell.val)
+            if isinstance(val, str) and not val:
+                # pandas writes NaN, NaT and NA as na_rep, "" by default; the openpyxl
+                # and XlsxWriter engines write "" as an empty cell too.
+                val = None
+            abs_row = startrow + cell.row + 1
+            abs_col = startcol + cell.col  # 0-based
+            by_row[abs_row][abs_col] = val
+            if fmt is not None:
+                formats[(abs_row, abs_col)] = fmt
+            if cell.mergestart is not None and cell.mergeend is not None:
+                # Match openpyxl ExcelWriter coordinates.
+                area = CellRange.from_bounds(
+                    abs_col + 1,
+                    abs_row,
+                    startcol + cell.mergeend + 1,
+                    startrow + cell.mergestart + 1,
+                )
+                if not area.is_cell:
+                    merges.append(area)
+        if not by_row:
+            return _Block([], 0, 0, formats, merges)
+        min_row, max_row = min(by_row), max(by_row)
+        min_col = min(min(cols) for cols in by_row.values())
+        max_col = max(max(cols) for cols in by_row.values())
+        rows = [
+            tuple(by_row.get(r, {}).get(c) for c in range(min_col, max_col + 1))
+            for r in range(min_row, max_row + 1)
+        ]
+        return _Block(rows, min_row, min_col, formats, merges)
 
     def _write_cells(
         self,
@@ -220,76 +335,69 @@ class XlsxeditWriter(ExcelWriter):
         freeze_panes: tuple[int, int] | None = None,
         autofilter_range: str | None = None,
     ) -> None:
+        """Write one ``to_excel`` call. Every value, merge, number format and sheet
+        name is checked before the workbook changes, because pandas saves the
+        workbook even when ``to_excel`` raises."""
         # freeze_panes / autofilter_range deferred (v1 no-op).
         _ = freeze_panes, autofilter_range
 
         sheet_name = self._get_sheet_name(sheet_name)
-        ws = self._resolve_sheet(sheet_name)
+        block = self._layout(cells, startrow, startcol)
+        target, make_sheet, changes = self._plan_sheet(sheet_name)
+        inserting = self._write_mode == "insert"
+        clear_range = None if inserting else self._clear_range
+        style_kwargs = self._style_kwargs()
 
-        clear_range = self._clear_range if self._write_mode == "overwrite" else None
+        validate_style_sources(
+            template_rows=style_kwargs["template_rows"], row_styles=style_kwargs["row_styles"]
+        )
+        check_style_specs(style_kwargs["row_styles"], style_kwargs["column_styles"])
+        for fmt in set(block.formats.values()):
+            check_style_text({"num_format": fmt})
+        if clear_range is not None:
+            parse_range(clear_range)
+        held = [] if inserting or target is None else [area for area, _ in target._merge_index.areas]
+        merges = _merges_to_add(held, block.merges)  # an insert checks its own against the sheet's
+        rows = block.rows
+        if rows and changes:  # otherwise the write checks its rows before changing anything
+            width = max(len(row) for row in rows)
+            check_block_in_grid("to_excel", block.start_row, block.start_col_idx, len(rows), width)
+            rows = check_values_writable(
+                "to_excel",
+                rows,
+                start_col_idx=block.start_col_idx,
+                string_columns=style_kwargs["string_columns"],
+            )
 
-        # Buffer pandas cells → dense row grid (values only; ignore formatter styles).
-        by_row: dict[int, dict[int, Any]] = defaultdict(dict)
-        formats: dict[tuple[int, int], str] = {}
-        merges: list[tuple[int, int, int, int]] = []
-        for cell in cells:
-            val, fmt = self._value_with_fmt(cell.val)
-            abs_row = startrow + cell.row + 1
-            abs_col = startcol + cell.col  # 0-based
-            by_row[abs_row][abs_col] = val
-            if fmt is not None:
-                formats[(abs_row, abs_col)] = fmt
-            if cell.mergestart is not None and cell.mergeend is not None:
-                # Match openpyxl ExcelWriter coordinates.
-                merges.append(
-                    (
-                        abs_row,
-                        abs_col,
-                        startrow + cell.mergestart + 1,
-                        startcol + cell.mergeend,
-                    )
-                )
-
-        if not by_row:
+        ws = make_sheet()
+        if not rows:
             if clear_range is not None:
                 ws.clear_range(clear_range)
             return
-
-        min_row = min(by_row)
-        max_row = max(by_row)
-        min_col = min(min(cols) for cols in by_row.values())
-        max_col = max(max(cols) for cols in by_row.values())
-
-        row_list = []
-        for r in range(min_row, max_row + 1):
-            cols = by_row.get(r, {})
-            row_list.append(tuple(cols.get(c) for c in range(min_col, max_col + 1)))
-
-        style_kwargs = self._style_kwargs()
-        if self._write_mode == "insert":
+        if inserting:
             ws.insert_rows(
-                row_list,
-                at_cell=join_address(index_to_col(min_col), min_row),
+                rows,
+                at_cell=join_address(index_to_col(block.start_col_idx), block.start_row),
                 shift_drawings=self._shift_drawings,
+                _merges=merges,
                 **style_kwargs,
             )
         else:
             ws._write_rows_at(
-                row_list,
-                start_row=min_row,
-                start_col_idx=min_col,
+                rows,
+                start_row=block.start_row,
+                start_col_idx=block.start_col_idx,
                 clear_range=clear_range,
                 method="to_excel",
                 **style_kwargs,
             )
-
-        for (row, col_idx), fmt in formats.items():
+        for (row, col_idx), fmt in block.formats.items():
             ws[join_address(index_to_col(col_idx), row)].apply_number_format(fmt)
-
-        for r1, c1, r2, c2 in merges:
-            ws.merge_cells(
-                f"{join_address(index_to_col(c1), r1)}:{join_address(index_to_col(c2), r2)}"
-            )
+        if merges and not inserting:
+            append_merges(ws._part.element, merges)
+            ws._part.mark_dirty()
+            ws._invalidate_merge_map()
+            ws._invalidate_bulk_indexes()
 
     def _save(self) -> None:
         handle = self._handles.handle

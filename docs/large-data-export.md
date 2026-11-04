@@ -54,7 +54,7 @@ A value aimed at a cell that a merged range covers is not written there. It goes
 
 ## NaN and infinity
 
-Excel has no NaN and no infinite numbers, and it repairs a workbook whose cells store either. So xlsxedit treats NaN as a missing value: `cell.value = float("nan")`, `write_rows`, `write_dataframe`, `insert_rows` and `insert_columns` write an empty cell for it, as they do for `None`, including in a column of `string_columns`. Like `None`, a NaN aimed at a merged cell is not sent to the merge's top-left cell. An infinite number raises `ValueError` before anything changes, except in a column of `string_columns`, which writes it as the text `inf` or `-inf`. Refusing NaN would break most DataFrame exports, since pandas marks missing numbers with it; infinity has no such use.
+Excel has no NaN and no infinite numbers, and it repairs a workbook whose cells store either. So xlsxedit treats NaN as a missing value: `cell.value = float("nan")`, `write_rows`, `write_dataframe`, `insert_rows` and `insert_columns` write an empty cell for it, as they do for `None`, including in a column of `string_columns`. Like `None`, a NaN aimed at a merged cell is not sent to the merge's top-left cell. An infinite number raises `ValueError` before anything changes, except in a column of `string_columns`, which writes it as the text `inf` or `-inf`. Refusing NaN would break most DataFrame exports, since pandas marks missing numbers with it; infinity has no such use. The pandas engine never receives either: pandas replaces them with `na_rep` and `inf_rep` first (see [pandas.md](pandas.md#refused-writes)).
 
 ## Tables in the slot
 

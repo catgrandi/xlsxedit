@@ -1117,6 +1117,7 @@ class Worksheet:
         column_styles: list[dict[str, Any]] | None = None,
         string_columns: set[int] | None = None,
         shift_drawings: bool = True,
+        _merges: Iterable[CellRange] = (),
     ) -> int:
         """Insert rows at ``at_row``, shifting existing content down.
 
@@ -1124,6 +1125,8 @@ class Worksheet:
         change, is described under "Inserting rows and columns" in
         ``docs/features.md``; ``shift_drawings=False`` leaves the drawing
         anchors where they are. Returns the number of rows inserted.
+        ``_merges``, the pandas engine's, lie in the new rows and are merged
+        with the ``template_rows`` merges, checked against the sheet's first.
         """
         if at_cell is not None:
             start_col, at_row = split_address(at_cell)
@@ -1158,6 +1161,9 @@ class Worksheet:
             self.merged_ranges, normalize_template_rows(template_rows), at_row, count
         )
         check_merges_disjoint(plan.merges, new_merges)
+        extra_merges = list(_merges)
+        check_merges_disjoint(plan.merges + new_merges, extra_merges)
+        new_merges += extra_merges
         check_merge_anchors_writable(
             self,
             plan.merges + new_merges,
