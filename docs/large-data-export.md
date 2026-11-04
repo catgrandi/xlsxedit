@@ -44,7 +44,7 @@ wb.write_dataframe(
 wb.write_dataframe(df, at_cell="A5", header=False, mode="insert")
 ```
 
-An overwrite checks the whole write before it changes anything: values of a type it cannot write, text XML cannot hold, strings in a workbook without a shared strings part, cells past row 1,048,576 or column XFD (`GridOverflowError`), invalid inline styles, and a write to the anchor of a multi-cell array or data-table formula (`FormulaGroupError`). A refused write, including its `clear_range`, leaves the sheet as it was.
+An overwrite checks the whole write before it changes anything: values of a type it cannot write, text XML cannot hold, cells past row 1,048,576 or column XFD (`GridOverflowError`), invalid inline styles, and a write to the anchor of a multi-cell array or data-table formula (`FormulaGroupError`). A refused write, including its `clear_range`, leaves the sheet as it was.
 
 `write_dataframe` only overwrites cells it writes. It does **not** clear extra cells outside the new data rectangle. Use `clear_range` when re-filling a slot with **fewer** rows than a previous export.
 

@@ -9,7 +9,7 @@ from lxml import etree
 
 from xlsxedit.cell import _F, _clear_cell_content, _ensure_v, _refuse_range_formula_edit
 from xlsxedit.opc.constants import SML_NS
-from xlsxedit.styles import datetime_to_serial
+from xlsxedit.styles import _XML_ILLEGAL, datetime_to_serial
 
 if TYPE_CHECKING:
     from xlsxedit.shared_strings import SharedStringTable
@@ -31,15 +31,15 @@ def write_cell_value(
 
     A value the cell cannot hold, or, given a ``worksheet``, a cell that
     anchors a multi-cell array or data-table formula, raises before anything
-    changes.
+    changes. ``sst`` is ``None`` for a workbook without a shared strings part;
+    a string then adds the part through ``worksheet``, once nothing can refuse
+    the write.
     """
     t: str | None = None
     text: str | None = None
     if value is None:
         pass
     elif force_string or isinstance(value, str):
-        if sst is None:
-            raise ValueError("workbook has no shared strings part")
         t, text = "s", str(value)
     elif isinstance(value, bool):
         t, text = "b", "1" if value else "0"
@@ -58,6 +58,10 @@ def write_cell_value(
     if f_elm is not None:
         _refuse_range_formula_edit(c_elm.get("r", ""), f_elm)
     if t == "s":
+        if sst is None:
+            if _XML_ILLEGAL.search(text):  # what sst.add refuses, refused before the part exists
+                raise ValueError(f"{text!r} holds characters XML cannot store")
+            sst = worksheet._workbook._ensure_shared_strings()
         text = str(_string_index(text, sst, sst_cache))
     if f_elm is not None:
         worksheet._workbook._on_formula_removed(worksheet, c_elm)

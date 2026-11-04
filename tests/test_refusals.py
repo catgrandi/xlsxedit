@@ -58,19 +58,6 @@ def test_refused_bulk_cell_value_on_a_formula_cell_changes_nothing(bad: str):
     assert_preserved(before, read_pkg(wb))
 
 
-@pytest.mark.parametrize("write", ["cell", "bulk"])
-def test_string_without_a_shared_strings_part_changes_nothing(write: str):
-    wb, ws = _simple()
-    wb._shared_strings = None
-    before = read_pkg(wb)
-    with pytest.raises(ValueError, match="no shared strings part"):
-        if write == "cell":
-            ws["C4"].value = "text"
-        else:
-            write_cell_value(ws._find_cell_element("C4"), "text", None, {}, worksheet=ws)
-    assert_preserved(before, read_pkg(wb))
-
-
 @pytest.mark.parametrize("index", ["-1", "99", "x"])
 def test_string_over_a_corrupt_shared_string_index_adds_a_string(index: str):
     wb = Workbook.create()
@@ -208,10 +195,6 @@ BULK_REFUSALS = {
     "aware datetime": (
         lambda ws: ws.write_rows([[1, datetime(2024, 1, 1, tzinfo=timezone.utc)]], at_cell="H1"),
         TypeError,
-    ),
-    "string without a shared strings part": (
-        lambda ws: (setattr(ws._workbook, "_shared_strings", None), ws.write_rows([[1, "a"]], at_cell="H1")),
-        ValueError,
     ),
     "integer too long for str() in a later row": (
         lambda ws: ws.write_rows([[1, 2], [10**5000]], at_cell="H1"),

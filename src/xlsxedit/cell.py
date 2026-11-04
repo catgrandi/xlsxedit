@@ -517,7 +517,6 @@ class Cell:
             ((new_value,),),
             start_col_idx=0,
             string_columns=None,
-            has_shared_strings=self._worksheet.shared_strings is not None,
         )
         if self.has_formula:
             self._worksheet._workbook._on_formula_removed(self._worksheet, self._element)
@@ -563,10 +562,7 @@ class Cell:
         self._set_string_value(new_value)
 
     def _set_string_value(self, new_value: str) -> None:
-        sst = self._worksheet.shared_strings
-        if sst is None:
-            raise ValueError("workbook has no shared strings part")
-
+        sst = self._worksheet._workbook._ensure_shared_strings()
         t = self.data_type
         if t == "s":
             # An index that names no shared string is replaced like any other value.

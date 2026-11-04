@@ -43,7 +43,14 @@ from xlsxedit.oxml.address import (
     split_address,
 )
 from xlsxedit.oxml.parser import parse_template_xml
-from xlsxedit.parts import ChartPart, TablePart, WorkbookPart, WorksheetPart, register_part_types
+from xlsxedit.parts import (
+    ChartPart,
+    SharedStringsPart,
+    TablePart,
+    WorkbookPart,
+    WorksheetPart,
+    register_part_types,
+)
 from xlsxedit.shared_strings import SharedStringTable
 from xlsxedit.styles import Styles, datetime_to_serial
 from xlsxedit.cell import Cell, _F, _refuse_range_formula_edit
@@ -284,6 +291,26 @@ class Workbook:
 
     @property
     def shared_strings(self) -> SharedStringTable | None:
+        return self._shared_strings
+
+    def _ensure_shared_strings(self) -> SharedStringTable:
+        """The shared strings table, adding the part first when the workbook has none.
+
+        Excel writes no ``xl/sharedStrings.xml`` for a workbook without text. The
+        part added holds an empty ``sst`` and comes with its workbook relationship
+        and content type; it takes that name unless another part, orphans
+        included, already has it. Call this only once a string write can no longer
+        be refused, so a refused write leaves no part behind.
+        """
+        if self._shared_strings is None:
+            element = etree.Element(f"{{{SML_NS}}}sst", nsmap={None: SML_NS})
+            element.set("count", "0")
+            element.set("uniqueCount", "0")
+            partname = self._package.next_partname("/xl/sharedStrings%d.xml", unnumbered=True)
+            part = SharedStringsPart(partname, CT.SHARED_STRINGS, element, self._package)
+            self._package._add_part(part)
+            self._workbook_part.relate_to(part, RT.SHARED_STRINGS)
+            self._shared_strings = SharedStringTable(element, part=part)
         return self._shared_strings
 
     @property
@@ -955,8 +982,6 @@ class Workbook:
                 for offset in range(len(columns))
             ]
             # What the cell setter below would refuse, checked before the first write.
-            if ws.shared_strings is None:
-                raise ValueError("workbook has no shared strings part")
             for address in addresses:
                 c_elm = ws._find_cell_element(address)
                 f_elm = None if c_elm is None else c_elm.find(_F)

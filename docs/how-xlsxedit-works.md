@@ -92,7 +92,7 @@ flowchart LR
    - drawing / chart / table → `XmlPart` subclass that keeps its bytes unparsed until an API first reads it
    - **everything else** → base `Part` (keeps original bytes)
 5. Wire relationship objects so `rId`s point at real part instances.
-6. `Workbook` wraps the workbook part, builds one `Worksheet` proxy per sheet, and attaches the shared string table if present. Each proxy lives as long as its sheet: adding, copying, renaming or removing other sheets keeps it, so a proxy a caller holds and `wb[name]` share one row and cell index.
+6. `Workbook` wraps the workbook part, builds one `Worksheet` proxy per sheet, and attaches the shared string table if present; a workbook without one gets it from the first string written (see `wb.shared_strings` in [features.md](features.md#workbook)). Each proxy lives as long as its sheet: adding, copying, renaming or removing other sheets keeps it, so a proxy a caller holds and `wb[name]` share one row and cell index.
 
 ### Save path
 
