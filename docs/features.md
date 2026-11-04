@@ -22,9 +22,9 @@ Docs: [xlsxedit.jonasruilong.com](https://xlsxedit.jonasruilong.com)
 | `wb[sheet_name]` | Get worksheet by name | `KeyError` if missing. The same `Worksheet` for a sheet on every call, before and after sheets are added, copied, renamed or removed |
 | `wb.sheetnames` | List of sheet names | |
 | `wb.worksheets` | List of `Worksheet` objects | |
-| `wb.add_worksheet(name)` | Add a sheet | Blank template |
-| `wb.copy_worksheet(name, new_name)` | Duplicate an existing sheet | Cells, styles, merges, drawings/tables; images shared; the copy's charts and the defined names scoped to it refer to the copy where the source's referred to the source, though a chartEx chart, which reads its data through workbook-level names, still plots the source; its drawing objects get fresh `a16:creationId`s and keep their `cNvPr` ids; drops `calcChain.xml`. A copy that fails changes nothing |
-| `wb.rename_worksheet(old, new)` | Rename a sheet | Returns the sheet's `Worksheet`, whose `name` changes in place |
+| `wb.add_worksheet(name)` | Add a sheet | Blank template; a name Excel rejects raises before anything changes ([Sheet names](#sheet-names)) |
+| `wb.copy_worksheet(name, new_name)` | Duplicate an existing sheet | Cells, styles, merges, drawings/tables; images shared; the copy's charts and the defined names scoped to it refer to the copy where the source's referred to the source, though a chartEx chart, which reads its data through workbook-level names, still plots the source; its drawing objects get fresh `a16:creationId`s and keep their `cNvPr` ids; drops `calcChain.xml`. A copy that fails, or a `new_name` Excel rejects ([Sheet names](#sheet-names)), changes nothing |
+| `wb.rename_worksheet(old, new)` | Rename a sheet | Returns the sheet's `Worksheet`, whose `name` changes in place; a name Excel rejects raises before anything changes ([Sheet names](#sheet-names)), but a sheet may take its own name in another case. Formulas and defined names that name the sheet are not rewritten |
 | `wb.remove_worksheet(name, *, keep_unreachable=False)` | Remove a sheet | Cannot remove last sheet; also drops `calcChain.xml`, the sheet's own defined names and the parts only that sheet reached (drawings, charts, tables) unless `keep_unreachable=True`; renumbers later `localSheetId`s and the workbook view's `activeTab`/`firstSheet`. The removed sheet's `Worksheet`, and writes through its cells, raise `WorksheetNotFoundError` |
 | `wb.replace(old, new, *, value_type=None)` | SAR on all sheets | Substring or whole-cell typed; sets `fullCalcOnLoad` when any cell changes |
 | `wb.set_full_calc_on_load()` | Request Excel full recalc on open | Sets `calcPr/@fullCalcOnLoad`; `replace`, `cell.formula`, `insert_rows` and `insert_columns` already set it |
@@ -38,6 +38,17 @@ Docs: [xlsxedit.jonasruilong.com](https://xlsxedit.jonasruilong.com)
 | `wb.orphan_partnames` | ZIP members not on relationship graph | Advanced |
 | `wb.shared_strings` | Shared string table (advanced) | `None` while the workbook has no `xl/sharedStrings.xml`, which Excel leaves out of a workbook without text. The first string a write stores adds the part, with its workbook relationship and content type; a refused write adds none |
 | `wb.styles` | Styles part (advanced) | `effective_xf_index(ws, address)` returns the `cellXfs` index that formats a cell |
+
+### Sheet names
+
+`add_worksheet`, `copy_worksheet` and `rename_worksheet` refuse, before anything changes, a sheet name Excel refuses, with `ValueError`:
+
+- an empty name, or one longer than 31 characters, counted as Excel counts them, in UTF-16 code units, so an emoji counts twice;
+- a name holding `:` `\` `/` `?` `*` `[` or `]`, or beginning or ending with an apostrophe (`'`);
+- `History` in any case, which Excel reserves;
+- a name holding characters XML cannot store.
+
+Excel repairs a workbook holding any of these but `History`. A name that another sheet has, ignoring case, raises `DuplicateWorksheetError`, a `ValueError`. Excel ignores case letter by letter, without folding width, kana or accents, and without turning one letter into several: `Data` and `DATA`, or `Éx` and `éx`, name the same sheet, while `Straße` and `STRASSE` name two. A name that is not a `str` raises `TypeError`.
 
 `.xlsm` (macro-enabled) and `.xltx` / `.xltm` (template) workbooks open, edit, and save too — the workbook content type is preserved and VBA parts round-trip untouched (no macro inspection or signing).
 
@@ -372,7 +383,7 @@ All library errors derive from `XlsxeditError`, so you can catch everything with
 |-----------|--------|-------------|
 | `XlsxeditError` | `Exception` | Base class for all xlsxedit errors |
 | `WorksheetNotFoundError` | `KeyError` | A worksheet name is not present |
-| `DuplicateWorksheetError` | `ValueError` | Adding/renaming to an existing sheet name |
+| `DuplicateWorksheetError` | `ValueError` | Adding, copying or renaming to an existing sheet name, ignoring case as Excel does ([Sheet names](#sheet-names)) |
 | `InvalidRangeError` | `ValueError` | Malformed cell address or range (e.g. `"A1:C3"`), or a drawing anchor whose corner names no cell when an insert moves it |
 | `GridOverflowError` | `InvalidRangeError` | An insert or bulk write would put cells, or an insert a drawing object, past row 1,048,576 or column XFD ([details](#inserting-rows-and-columns)), or `ws[address]` names a cell past them |
 | `InvalidColorError` | `ValueError` | Invalid color value |

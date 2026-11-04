@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import mimetypes
+import re
 from copy import deepcopy
 from datetime import date, datetime
 from pathlib import Path
@@ -52,7 +53,7 @@ from xlsxedit.parts import (
     register_part_types,
 )
 from xlsxedit.shared_strings import SharedStringTable
-from xlsxedit.styles import Styles, datetime_to_serial
+from xlsxedit.styles import _XML_ILLEGAL, Styles, datetime_to_serial
 from xlsxedit.cell import Cell, _F, _refuse_range_formula_edit
 from xlsxedit.table import (
     Table,
@@ -92,6 +93,59 @@ def _coerce_date(value) -> datetime | date:
     if isinstance(value, str):
         return datetime.fromisoformat(value)
     raise TypeError(f"date value must be datetime, date, or ISO string; got {type(value)!r}")
+
+
+_MAX_SHEET_NAME = 31  # UTF-16 code units, as Excel counts them
+_SHEET_NAME_CHARS = re.compile(r"[\\/?*\[\]:]")
+
+
+def _fold_letter(letter: str) -> str:
+    lower = letter.lower()
+    if len(lower) != 1:
+        lower = letter
+    upper = lower.upper()
+    if len(upper) != 1 or (upper.isascii() and not lower.isascii()):
+        return lower
+    return upper
+
+
+def _sheet_name_key(name: str) -> str:
+    """``name`` as Excel compares sheet names: equal keys name the same sheet.
+
+    Excel ignores case letter by letter, without expanding a letter into
+    several or folding width, kana or accents: "Ax" and "ax", "Éx" and "éx",
+    "ςx" and "Σx", or U+212A (the Kelvin sign) and "k" clash, while "Straße" and
+    "STRASSE", "ſx" and "Sx", "ıx" and "Ix", or "Ａx" and "Ax" do not
+    (recorded with Excel 16 on 2026-11-04). That is each letter's lower-case
+    form, upper-cased again unless that would turn a non-ASCII letter into an
+    ASCII one.
+    """
+    return "".join(_fold_letter(letter) for letter in name)
+
+
+def _sheet_name_problem(name: str) -> str | None:
+    """Why Excel would refuse ``name`` for a sheet, or ``None`` if it would not.
+
+    Excel's rename refuses an empty name, one longer than 31 characters (in
+    UTF-16 code units, so an emoji counts twice), one holding ``: \\ / ? * [ ]``
+    or beginning or ending with an apostrophe, and "History" in any case, which
+    it reserves; it repairs a file that holds any of these but "History"
+    (recorded with Excel 16 on 2026-11-04). Characters XML cannot store are
+    refused too.
+    """
+    if not name:
+        return "it is empty"
+    if _XML_ILLEGAL.search(name):
+        return "it holds characters XML cannot store"
+    if len(name.encode("utf-16-le")) // 2 > _MAX_SHEET_NAME:
+        return f"it is longer than {_MAX_SHEET_NAME} characters"
+    if _SHEET_NAME_CHARS.search(name):
+        return "it holds one of : \\ / ? * [ ]"
+    if name.startswith("'") or name.endswith("'"):
+        return "it begins or ends with an apostrophe"
+    if _sheet_name_key(name) == _sheet_name_key("History"):
+        return "Excel reserves the name History"
+    return None
 
 
 def _sheet_prefix(sheet_name: str) -> str:
@@ -609,9 +663,37 @@ class Workbook:
                 total += cell.replace(old, new)
         return total
 
+    def _existing_sheet_name(self, name: str) -> str | None:
+        """The name of the sheet ``name`` names, ignoring case as Excel does; ``None``
+        if there is none."""
+        if name in self._sheets_by_name:
+            return name
+        key = _sheet_name_key(name)
+        return next((other for other in self._sheets_by_name if _sheet_name_key(other) == key), None)
+
+    def _check_new_sheet_name(self, name: str, *, replacing: str | None = None) -> None:
+        """Refuse, before anything changes, ``name`` for a sheet Excel would not give it.
+
+        ``TypeError`` for a name that is not a ``str``, ``ValueError`` for one Excel
+        rejects (see ``_sheet_name_problem``), and ``DuplicateWorksheetError`` when
+        another sheet has it, ignoring case as Excel does (``_sheet_name_key``).
+        ``replacing`` names the sheet that gives the name up.
+        """
+        if not isinstance(name, str):
+            raise TypeError(f"a sheet name must be a str, got {type(name)!r}")
+        problem = _sheet_name_problem(name)
+        if problem is not None:
+            raise ValueError(f"invalid sheet name {name!r}: {problem}")
+        key = _sheet_name_key(name)
+        for other in self._sheets_by_name:
+            if other != replacing and _sheet_name_key(other) == key:
+                taken = "" if other == name else f" as {other!r}"
+                raise DuplicateWorksheetError(f"worksheet {name!r} already exists{taken}")
+
     def rename_worksheet(self, old_name: str, new_name: str) -> Worksheet:
-        if new_name in self._sheets_by_name:
-            raise DuplicateWorksheetError(f"worksheet {new_name!r} already exists")
+        """Rename a sheet. A name Excel rejects, or another sheet's name in any case,
+        raises before anything changes (see ``docs/features.md``)."""
+        self._check_new_sheet_name(new_name, replacing=old_name)
         if old_name not in self._sheets_by_name:
             raise WorksheetNotFoundError(f"worksheet {old_name!r} not found")
         for sheet_elm in self._workbook_part.sheet_elements:
@@ -672,9 +754,12 @@ class Workbook:
         self._refresh_sheets()
 
     def add_worksheet(self, name: str) -> Worksheet:
-        """Add a new empty worksheet from the bundled worksheet template."""
-        if name in self._sheets_by_name:
-            raise DuplicateWorksheetError(f"worksheet {name!r} already exists")
+        """Add a new empty worksheet from the bundled worksheet template.
+
+        A name Excel rejects, or another sheet's name in any case, raises before
+        anything changes (see ``docs/features.md``).
+        """
+        self._check_new_sheet_name(name)
 
         template_path = _default_xlsx_path().parent / "default-worksheet.xml"
         element = parse_template_xml(template_path.read_bytes())
@@ -695,7 +780,8 @@ class Workbook:
         The copy's charts and its own defined names refer to the copy where the
         source's referred to the source (see ``docs/features.md``). The copy is
         built before the workbook refers to it: if building it raises, the parts
-        added so far are removed and nothing has changed.
+        added so far are removed and nothing has changed. ``new_name`` is checked
+        as :meth:`add_worksheet` checks a name.
         """
         from xlsxedit.sheet_clone import (
             append_defined_names,
@@ -704,8 +790,7 @@ class Workbook:
             refresh_cloned_drawings,
         )
 
-        if new_name in self._sheets_by_name:
-            raise DuplicateWorksheetError(f"worksheet {new_name!r} already exists")
+        self._check_new_sheet_name(new_name)
         if name not in self._sheets_by_name:
             raise WorksheetNotFoundError(f"worksheet {name!r} not found")
 
