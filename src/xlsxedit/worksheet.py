@@ -119,6 +119,16 @@ def _column_key(address: str) -> tuple[int, str]:
     return len(letters), letters
 
 
+def _in_dimension_place(dim: etree._Element) -> bool:
+    """Whether ``<dimension>`` sits where the schema puts it: after ``sheetPr``, if
+    any, and before every other element of the worksheet."""
+
+    def names(siblings) -> set[str]:
+        return {etree.QName(elm).localname for elm in siblings if isinstance(elm.tag, str)}
+
+    return names(dim.itersiblings(preceding=True)) <= {"sheetPr"} and "sheetPr" not in names(dim.itersiblings())
+
+
 def _row_values(values) -> tuple | list:
     """A bulk write's values for one row: a sequence, or one value for one cell."""
     return values if isinstance(values, (list, tuple)) else (values,)
@@ -1471,6 +1481,8 @@ class Worksheet:
         root = self._part.element
         insert_at = 0
         for i, child in enumerate(root):
+            if not isinstance(child.tag, str):
+                continue  # a comment or processing instruction
             local = etree.QName(child).localname
             if local == "sheetPr":
                 insert_at = i + 1
@@ -1517,19 +1529,23 @@ class Worksheet:
         )
 
     def _update_dimension_to(self, top_left: str, bottom_right: str) -> None:
+        """Set ``<dimension ref>``; a ``<dimension>`` out of its place moves into it,
+        after ``sheetPr``, and one in its place stays there."""
         ref = top_left if top_left == bottom_right else f"{top_left}:{bottom_right}"
         root = self._part.element
         dim = root.find(_DIMENSION)
+        if dim is not None and _in_dimension_place(dim):
+            if dim.get("ref") != ref:
+                dim.set("ref", ref)
+                self._part.mark_dirty()
+            return
         if dim is None:
-            dim, old = etree.Element(_DIMENSION), None
+            dim = etree.Element(_DIMENSION)
         else:
-            old = (dim.get("ref"), root.index(dim))
             root.remove(dim)
         dim.set("ref", ref)
-        at = self._dimension_insert_index()
-        root.insert(at, dim)
-        if old != (ref, at):
-            self._part.mark_dirty()
+        root.insert(self._dimension_insert_index(), dim)
+        self._part.mark_dirty()
 
     def expand_conditional_formatting(self, end_row: int) -> int:
         """Extend single-column CF ranges down to ``end_row``. Returns blocks updated."""

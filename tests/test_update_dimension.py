@@ -147,6 +147,41 @@ def test_a_bulk_write_keeps_the_one_cell_it_does_not_find_by_its_address():
     assert _dimension(ws) == "A2:B5"
 
 
+@pytest.mark.parametrize("before", [True, False], ids=["before", "after"])
+def test_a_dimension_in_its_place_stays_there(before: bool):
+    """A comment next to ``<dimension>`` is not a reason to move it."""
+    ws = _sheet_with('<row r="1"><c r="A1"/></row><row r="2"><c r="B2"/></row>', "A1:B2")
+    root = ws._part.element
+    dim = root.find(f"{{{SML_NS}}}dimension")
+    (dim.addprevious if before else dim.addnext)(etree.Comment(" generated "))
+    order = [etree.QName(child).localname if isinstance(child.tag, str) else "#" for child in root]
+    ws.update_dimension()
+    ws.write_rows([[5]], at_cell="A2")
+    assert [etree.QName(c).localname if isinstance(c.tag, str) else "#" for c in root] == order
+    assert _dimension(ws) == "A1:B2"
+
+
+def test_a_dimension_out_of_its_place_moves_into_it():
+    ws = _sheet_with('<row r="1"><c r="A1"/></row>')
+    root = ws._part.element
+    root.insert(0, etree.Element(f"{{{SML_NS}}}sheetPr"))
+    root.append(etree.Element(f"{{{SML_NS}}}dimension", ref="A1"))
+    ws.update_dimension()
+    names = [etree.QName(child).localname for child in root]
+    assert names.index("dimension") == names.index("sheetPr") + 1
+
+
+@pytest.mark.parametrize("node", ["<!-- a comment -->", "<?generator x?>"])
+@pytest.mark.parametrize("write", _INSERTS.values(), ids=_INSERTS)
+def test_a_comment_in_the_worksheet_root_leaves_the_dimension_its_place(node: str, write):
+    ws = _sheet_with('<row r="1"><c r="A1"/></row><row r="2"><c r="B2"/></row>', "A1:B2")
+    ws._part.element.insert(0, etree.fromstring(f"<w>{node}</w>")[0])
+    write(ws)
+    names = [etree.QName(child).localname for child in ws._part.element if isinstance(child.tag, str)]
+    assert names.index("dimension") < names.index("sheetData")
+    assert _dimension(ws) == _rescanned(ws)
+
+
 def test_a_bulk_write_covers_the_merge_anchors_it_writes():
     ws = _sheet_with("")
     ws.merge_cells("A1:C3")
