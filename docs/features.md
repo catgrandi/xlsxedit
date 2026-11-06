@@ -2,8 +2,6 @@
 
 Supported public API for **xlsxedit** — surgical `.xlsx` editing that preserves formatting.
 
-Docs: [xlsxedit.jonasruilong.com](https://xlsxedit.jonasruilong.com)
-
 **Tutorials:** `tutorial/pandas_tutorial.py` (pandas engine), `tutorial/run_tutorial.py` (full API walkthrough), `tutorial/export_pandas_example.py` (advanced bulk export), `tutorial/bench_large_export.py` (performance)
 
 **Architecture:** [How xlsxedit works](how-xlsxedit-works.md)
@@ -373,7 +371,7 @@ Image SAR: `wb.replace_image(name, path)`, `wb.insert_image_at_placeholder("{log
 
 Full guide: [large-data-export.md](large-data-export.md)
 
-Pandas ExcelWriter / reader engine: [pandas.md](pandas.md) (`pip install xlsxedit[pandas]` then `xlsxedit.pandas_io.register()`).
+Pandas ExcelWriter / reader engine: [pandas.md](pandas.md) (install pandas, then call `xlsxedit.pandas_io.register()`).
 
 ---
 

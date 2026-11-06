@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-Several changes below are breaking, so the next release is a major one.
+Changes since 1.0.2, the last upstream release. Several are breaking, so the next release is a major one.
 
 ### Breaking
 
@@ -35,7 +35,7 @@ Several changes below are breaking, so the next release is a major one.
 
 ### Added
 
-- **Workbook** — `copy_worksheet(name, new_name)`, which changes nothing when the copy fails. `remove_worksheet(name, keep_unreachable=True)` keeps the parts only that sheet reached.
+- **Workbook** — `remove_worksheet(name, keep_unreachable=True)` keeps the parts only that sheet reached.
 - **Exceptions** — `GridOverflowError`, `FormulaGroupError`, `DTDForbiddenError`, `TableError` and `DataValidationError`.
 - **Formulas** — `Cell.formula_type`: `"normal"`, `"shared"`, `"array"`, `"dataTable"` or `None`.
 - **Drawings** — `ws.drawing_objects` lists every object of a sheet's drawing as a `DrawingObject`: pictures, charts, shapes, connectors, groups and their members, slicers, timelines and other graphic frames.
@@ -49,6 +49,7 @@ Several changes below are breaking, so the next release is a major one.
 
 ### Changed
 
+- **Distribution** — this fork's releases are GitHub releases of catgrandi/xlsxedit; it is not published to PyPI, where `xlsxedit` is the upstream package. Install a release with `pip install "xlsxedit @ git+https://github.com/catgrandi/xlsxedit@<tag>"`.
 - **Inserts** — `insert_rows` and `insert_columns` plan the whole move before changing anything, and now also move shared, array and data-table formula ranges, x14 conditional formats, validations and sparklines, internal hyperlinks, `autoFilter` and sort state, page breaks, sheet views, protected ranges, ignored errors, cell watches, scenarios, `<cols>` and row `spans`, and rewrite defined names reference by reference. Both drop `calcChain.xml` and set `fullCalcOnLoad`.
 - **Inserts** — `template_rows` name rows as they are before the insert. `insert_columns` inside a table adds table columns, named after the text it writes into their header cells, or `ColumnN`, which it then writes there.
 - **Tables** — `ws.tables` returns the same `Table` for a table on every call, over the live table part, so a table you hold follows `insert_rows` and `insert_columns`. A table part no edit changes keeps its exact bytes, including after `resize` to the range it already has.
@@ -62,12 +63,12 @@ Several changes below are breaking, so the next release is a major one.
 - **Saving** — parts, `.rels` items and `[Content_Types].xml` that an edit does not change keep their exact bytes, so saving an unedited workbook changes no member. Rewritten parts use Excel's XML declaration. The source's `Default` content types are kept.
 - **Saving** — cell, bulk-write, merge, `clear_range`, row-height, column-width, shared-string, hyperlink, conditional-formatting, table and data-validation edits mark the parts they change, and so do inserts, for the sheet and the drawings, tables, defined names, charts and other sheets that follow it, so saving them no longer parses their source a second time (a quarter less time for the save after a one-row insert into a 50,000-row sheet with a chart), and a changed part releases its source bytes. A part an edit changed is rewritten even if a later edit restores it.
 - **Bulk writes** — the cells of rows a bulk write appends join the cell index only when a single-cell access reaches their row, which cuts peak memory for writing 100,000 × 8 cells by about a fifth.
-- **Search and replace** — `replace` sets `fullCalcOnLoad` when it changes a cell.
 - **Performance** — repeated `ws[...]` access no longer rescans the sheet.
 - **Ranges** — `SheetRangeSet.shift` with a `span` splits an area that crosses the span's edge, as Excel splits the range of a conditional format or validation, instead of leaving the area where it was.
 
 ### Fixed
 
+- **pandas engine** — the error raised when pandas is missing says to install pandas, instead of `pip install xlsxedit[pandas]`, which would replace this fork with the upstream package from PyPI.
 - **Inserts** — `insert_rows` and `insert_columns` rewrite the formulas of conditional formats and data validations, x14 formulas that hold several references, the series, titles and labels of charts, and the references to the sheet in other sheets' formats and validations. A conditional format comparing `$B10` keeps testing its own row after rows are inserted above it.
 - **Inserts** — `insert_rows` and `insert_columns` no longer raise `AttributeError` in a workbook that has a chartsheet.
 - **Cells** — writing one row through both the cell API and a bulk API no longer saves duplicate `<row>` elements, and cells stay in column order. `ws["a6"]` reaches the same cell as `ws["A6"]`. A value `cell.value` or a bulk write cannot hold raises before the cell's formula is touched, so it no longer drops `calcChain.xml` or detaches shared-formula followers first, and text XML cannot hold no longer leaves an empty shared string behind. A string written over a cell whose shared-string index names no string replaces it, where it used to raise or, for a negative index, overwrite another string; `add_table(write_header=True)` writes such header cells too. A NumPy `float64` is written as a number instead of `np.float64(...)`, and other NumPy integers, booleans and floats, such as a nullable `Int64` or `boolean` pandas column holds, as the Python values they hold instead of raising `TypeError`, and a `count` on `sharedStrings.xml` that is not a number is rewritten instead of raising.
@@ -76,6 +77,7 @@ Several changes below are breaking, so the next release is a major one.
 - **Cells** — writing text into a workbook without `xl/sharedStrings.xml`, which Excel leaves out of a workbook without text, adds the part instead of raising `ValueError`. That holds for `cell.value`, `write_rows`, `write_dataframe`, the pandas engine, the values `insert_rows` and `insert_columns` write, and the header cells of `add_table(write_header=True)`, `Table.resize` and `insert_columns`. A refused write adds no part.
 - **Formulas** — `Cell.formula` drops the stale cached value and cell type, sets `fullCalcOnLoad`, and turns a shared-formula follower into a standalone formula.
 - **Tables** — `write_dataframe` no longer moves or resizes a table it did not write into. `add_table` and `copy_worksheet` give tables unique ids and names.
+- **Workbook** — a `copy_worksheet` that fails changes nothing.
 - **Workbook** — the charts of a sheet `copy_worksheet` copies, and the defined names scoped to it, refer to the copy, as in Excel, instead of to the source sheet, and its drawing objects get fresh `a16:creationId`s.
 - **Tables** — `Table.resize`, `insert_rows` and `insert_columns` keep a table's totals row out of its `autoFilter`, and move the table's sort state; `resize` removes the `autoFilter` of a table without a header row.
 - **Styles** — exports with `template_rows` and `column_styles` allocate one cell format per template row and styled column instead of one per cell. `font_size` reads fractional sizes, and `<b val="0"/>` no longer reads as bold. A `num_format`, `font_name` or alignment the stylesheet cannot hold raises `TypeError` or `ValueError` before anything changes, instead of leaving an incomplete `numFmt` or an invalid alignment in `styles.xml`. `apply_style` accepts the `Color` that `font_color` returns, and a colour that is not six or eight hex digits raises `InvalidColorError` before any font or fill is added.
@@ -96,6 +98,26 @@ Several changes below are breaking, so the next release is a major one.
 ### Security
 
 - **XML parsing** — entities are never expanded and nothing is fetched from the network, which closes an XXE hole on lxml < 5.
+
+## [1.0.2] - 2026-09-14
+
+Released by the upstream project, jonas-kupferschmid/xlsxedit. This fork's code holds all of it; its notes are reproduced as upstream wrote them.
+
+### Added
+
+- **Worksheets** — `Workbook.copy_worksheet(name, new_name)` duplicates a sheet (cells, styles, merges, sheet-owned parts; images shared).
+- **Recalc** — `Workbook.set_full_calc_on_load()`; successful `replace()` on workbook or sheet sets `calcPr/@fullCalcOnLoad` so Excel recalculates on open.
+- **AI agents** — installable skill at `skills/xlsxedit/SKILL.md` (`npx skills add jonas-kupferschmid/xlsxedit --skill xlsxedit`).
+
+### Fixed
+
+- **API typing** — `Workbook.open` / `Workbook` / `save` accept binary file-like objects (e.g. `BytesIO`) in type hints and docs (#1).
+- **`insert_rows`** — shifts workbook `definedNames`, hyperlink `ref`, and `dataValidation` `sqref` with the moved cells (#3, #5, #7).
+- **`insert_rows(..., template_rows=...)`** — copies single-row merged ranges from the template row onto inserted rows (#6).
+
+### Changed
+
+- README formatting and AI-agent skill install note.
 
 ## [1.0.1] - 2026-07-27
 
@@ -152,5 +174,6 @@ First public release.
   `InvalidImageError`, and `MissingPartError` (each also subclasses the builtin
   it replaces).
 
+[1.0.2]: https://github.com/jonas-kupferschmid/xlsxedit/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/jonas-kupferschmid/xlsxedit/compare/v1.0.0...v1.0.1
 [1.0.0]: https://xlsxedit.jonasruilong.com/changelog

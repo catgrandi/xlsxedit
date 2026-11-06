@@ -7,7 +7,7 @@ Shows how to use engine="xlsxedit" with pandas ExcelWriter and read_excel.
 Run from the project folder:
     python tutorial/pandas_tutorial.py
 
-Requires: pip install xlsxedit[pandas]
+Requires: pandas (pip install pandas)
 Creates:  tutorial/output/pandas_tutorial.xlsx
 """
 
@@ -38,13 +38,13 @@ def main() -> None:
     # -------------------------------------------------------------------------
     section("Install")
 
-    print("Need: pip install xlsxedit[pandas]")
+    print("Need: pandas (pip install pandas)")
     try:
         import pandas as pd
     except ImportError:
         raise SystemExit(
             "pandas is not installed.\n"
-            "  pip install xlsxedit[pandas]\n"
+            "  pip install pandas\n"
             "Then run this script again."
         )
     print(f"pandas {pd.__version__} OK")

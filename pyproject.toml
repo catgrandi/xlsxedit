@@ -12,6 +12,10 @@ license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_LICENSES"]
 authors = [
     { name = "Jonas Ruilong Kupferschmid" },
+    { name = "Cat Grandi" },
+]
+maintainers = [
+    { name = "Cat Grandi" },
 ]
 keywords = ["excel", "xlsx", "openxml", "template", "spreadsheet", "lxml"]
 classifiers = [
@@ -32,12 +36,12 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://xlsxedit.jonasruilong.com"
-Repository = "https://github.com/jonas-kupferschmid/xlsxedit"
-Documentation = "https://xlsxedit.jonasruilong.com/docs"
-Issues = "https://github.com/jonas-kupferschmid/xlsxedit/issues"
-Changelog = "https://xlsxedit.jonasruilong.com/changelog"
-Funding = "https://xlsxedit.jonasruilong.com/sponsor"
+Homepage = "https://github.com/catgrandi/xlsxedit"
+Repository = "https://github.com/catgrandi/xlsxedit"
+Documentation = "https://github.com/catgrandi/xlsxedit/tree/main/docs"
+Issues = "https://github.com/catgrandi/xlsxedit/issues"
+Changelog = "https://github.com/catgrandi/xlsxedit/blob/main/CHANGELOG.md"
+Upstream = "https://github.com/jonas-kupferschmid/xlsxedit"
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]

@@ -6,13 +6,10 @@ xlsxedit works with pandas in three ways:
 2. **Excel reader engine** — `pd.read_excel(..., engine="xlsxedit")`
 3. **Direct API** — `wb.write_dataframe(df, …)` (no engine registration)
 
-Docs: [xlsxedit.jonasruilong.com/docs/pandas](https://xlsxedit.jonasruilong.com/docs/pandas)
-
 ## Install
 
 ```bash
-pip install xlsxedit[pandas]
-# or: pip install pandas
+pip install pandas   # with xlsxedit installed from this fork's releases (see the README)
 ```
 
 Core xlsxedit only requires `lxml`. Pandas is optional.

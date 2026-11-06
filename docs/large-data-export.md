@@ -2,8 +2,6 @@
 
 Bulk APIs for exporting many rows with **xlsxedit**. Normal `ws["A1"]` surgical edits are unchanged.
 
-Docs: [xlsxedit.jonasruilong.com/docs/large-data-export](https://xlsxedit.jonasruilong.com/docs/large-data-export)
-
 **Tutorials:**
 
 - `python tutorial/pandas_tutorial.py` → beginner pandas engine (write + read)

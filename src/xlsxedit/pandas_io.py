@@ -53,7 +53,7 @@ def register() -> None:
     if register_writer is None or ExcelFile is None:
         raise ImportError(
             "pandas is required for the xlsxedit Excel engine. "
-            "Install with: pip install xlsxedit[pandas]"
+            "Install pandas: pip install pandas"
         )
     register_writer(XlsxeditWriter)
     engines = dict(ExcelFile._engines)
@@ -156,7 +156,7 @@ class XlsxeditWriter(ExcelWriter):
         if ExcelWriter is object:
             raise ImportError(
                 "pandas is required for the xlsxedit ExcelWriter engine. "
-                "Install with: pip install xlsxedit[pandas]"
+                "Install pandas: pip install pandas"
             )
 
         engine_kwargs = dict(engine_kwargs or {})

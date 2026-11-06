@@ -12,9 +12,9 @@ description: >-
 
 Edit existing Excel files by patching the OPC package in place. Only changed XML is rewritten — layout, charts, images, and other parts you do not touch stay intact.
 
-Docs: https://xlsxedit.jonasruilong.com/docs  
-PyPI: https://pypi.org/project/xlsxedit/  
-GitHub: https://github.com/jonas-kupferschmid/xlsxedit
+Docs: [docs/](../../../docs/) in this repository  
+Releases: https://github.com/catgrandi/xlsxedit/releases (this fork; `pip install xlsxedit` installs the upstream package from PyPI)  
+Upstream: https://github.com/jonas-kupferschmid/xlsxedit
 
 ## When to use
 
@@ -30,8 +30,8 @@ Prefer other tools only when:
 ## Install
 
 ```bash
-pip install xlsxedit
-pip install xlsxedit[pandas]   # optional pandas engine
+pip install "xlsxedit @ git+https://github.com/catgrandi/xlsxedit@<tag>"           # <tag>: a release of this fork
+pip install "xlsxedit[pandas] @ git+https://github.com/catgrandi/xlsxedit@<tag>"   # with the optional pandas engine
 ```
 
 ## Core pattern
@@ -102,8 +102,8 @@ pd.ExcelWriter("out.xlsx", engine="xlsxedit")
 
 ## More detail
 
-- Features: https://xlsxedit.jonasruilong.com/docs/features (in this repository: [docs/features.md](../../../docs/features.md))
-- Demo project: https://github.com/jonas-kupferschmid/xlsx-sar-test
+- Features: [docs/features.md](../../../docs/features.md)
+- Demo project, by the upstream author: https://github.com/jonas-kupferschmid/xlsx-sar-test
 - Unpack XML for debugging: https://github.com/jonas-kupferschmid/xlsx-inspect
 - Raw OOXML, when debugging xlsxedit itself: [docs/ooxml-schema-notes.md](../../../docs/ooxml-schema-notes.md) (namespaces, extension URIs, element order); compare two saved files with `python scripts/inspect_workbook.py A.xlsx --semantic --compare B.xlsx`
 - Contributing to xlsxedit itself: start at the repository's [AGENTS.md](../../../AGENTS.md)
