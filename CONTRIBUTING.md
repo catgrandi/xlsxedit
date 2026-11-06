@@ -8,7 +8,14 @@ welcome: bug reports, documentation, tests, and code.
 This repository is a fork of
 [jonas-kupferschmid/xlsxedit](https://github.com/jonas-kupferschmid/xlsxedit).
 It does not send anything upstream: no pull requests, issues, or pushes to the
-upstream repository. Changes land here only.
+upstream repository. Changes land here only, and its releases are releases of
+this repository (see [Releases](#releases)).
+
+Before a wave of work starts, check upstream for new commits with
+`git fetch upstream` and `git log --oneline main..upstream/main`. A change worth
+having comes in through a pull request here that keeps its author. An upstream
+release whose code this fork already holds is recorded in `CHANGELOG.md`, as
+1.0.2 is.
 
 ## Contributor License Agreement
 
@@ -73,6 +80,43 @@ That skill is the authoritative statement of the rules.
 
 Keep history linear. Merge pull requests with **rebase** or **squash** only;
 never create a merge commit.
+
+## Releases
+
+This fork releases on GitHub only, as releases of this repository. It never
+publishes to PyPI, where `xlsxedit` is the upstream project's package.
+
+- **Version.** `__version__` in `src/xlsxedit/__init__.py` is the one place the
+  version lives; `pyproject.toml` reads it. Between releases, `main` carries the
+  next release's version with `.dev0`, such as `2.0.0.dev0`, or `2.0.0a2.dev0`
+  after `2.0.0a1`. No release uses a `.dev0` version.
+- **Numbers.** Versions follow [Semantic Versioning](https://semver.org/),
+  read from the commit types since the last release: a breaking change (`!` or
+  `BREAKING CHANGE`) raises the major number, a `feat` the minor number, and a
+  `fix` the patch number. 1.0.2 was the last upstream release, and the next
+  release of this fork is 2.0.0.
+- **Pre-releases.** Until 2.0.0, a completed wave of the roadmap may end with a
+  pre-release: `2.0.0a1`, `2.0.0a2` and so on, then `2.0.0rc1`.
+
+To cut a release:
+
+1. In a pull request, set `__version__` to the release's version and turn
+   `## Unreleased` in `CHANGELOG.md` into `## [<version>] - <date>`, with a link
+   to its release page. Merge it once CI passes.
+2. Publish a GitHub release on that merge commit, tagged `v` followed by the
+   version exactly (`v2.0.0a1`), with that changelog section as its notes. Mark
+   an `a`, `b` or `rc` version as a pre-release. The
+   [release workflow](.github/workflows/release.yml) builds the wheel and sdist
+   from the tag, refuses a build whose version differs from the tag, and
+   attaches them to the release.
+3. Check the release as a user gets it: install it from its tag in a clean
+   environment and confirm `xlsxedit.__version__`.
+4. In a pull request, set `__version__` to the next `.dev0` version and start a
+   new `## Unreleased` section.
+
+A published version never changes: its tag never moves and its files are
+never replaced. A mistake is fixed in a new version. Only the latest release
+receives fixes.
 
 ## Guidelines
 
