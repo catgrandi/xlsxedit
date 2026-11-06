@@ -6,8 +6,6 @@ xlsxedit works with pandas in three ways:
 2. **Excel reader engine** — `pd.read_excel(..., engine="xlsxedit")`
 3. **Direct API** — `wb.write_dataframe(df, …)` (no engine registration)
 
-Docs: [xlsxedit.jonasruilong.com/docs/pandas](https://xlsxedit.jonasruilong.com/docs/pandas)
-
 ## Install
 
 ```bash

@@ -10,3 +10,7 @@ MIT License (Copyright (c) 2013 Steve Canny).
 
 The full text of that MIT License is reproduced in the THIRD_PARTY_LICENSES
 file distributed with this project.
+
+This repository, https://github.com/catgrandi/xlsxedit, is a modified version of xlsxedit,
+maintained by Cat Grandi separately from the upstream project.
+Modifications copyright 2026 Cat Grandi. CHANGELOG.md lists the changes.

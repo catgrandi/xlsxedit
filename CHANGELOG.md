@@ -49,6 +49,7 @@ Changes since 1.0.2, the last upstream release. Several are breaking, so the nex
 
 ### Changed
 
+- **Distribution** — this fork's releases are GitHub releases of catgrandi/xlsxedit; it is not published to PyPI, where `xlsxedit` is the upstream package. Install a release with `pip install "xlsxedit @ git+https://github.com/catgrandi/xlsxedit@<tag>"`.
 - **Inserts** — `insert_rows` and `insert_columns` plan the whole move before changing anything, and now also move shared, array and data-table formula ranges, x14 conditional formats, validations and sparklines, internal hyperlinks, `autoFilter` and sort state, page breaks, sheet views, protected ranges, ignored errors, cell watches, scenarios, `<cols>` and row `spans`, and rewrite defined names reference by reference. Both drop `calcChain.xml` and set `fullCalcOnLoad`.
 - **Inserts** — `template_rows` name rows as they are before the insert. `insert_columns` inside a table adds table columns, named after the text it writes into their header cells, or `ColumnN`, which it then writes there.
 - **Tables** — `ws.tables` returns the same `Table` for a table on every call, over the live table part, so a table you hold follows `insert_rows` and `insert_columns`. A table part no edit changes keeps its exact bytes, including after `resize` to the range it already has.
