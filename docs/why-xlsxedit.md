@@ -12,8 +12,6 @@ These libraries **rebuild** the workbook from an object model. Anything they do 
 
 **xlsxedit** keeps the file as an OPC package, patches only the XML you change, and writes it back — layout, formatting, and the rest of the design survive.
 
-Docs: [xlsxedit.jonasruilong.com](https://xlsxedit.jonasruilong.com)
-
 ---
 
 ## Use cases

@@ -1,16 +1,14 @@
 # xlsxedit
 
-[![PyPI version](https://img.shields.io/pypi/v/xlsxedit)](https://pypi.org/project/xlsxedit/)
-[![Python](https://img.shields.io/pypi/pyversions/xlsxedit)](https://pypi.org/project/xlsxedit/)
-[![License](https://img.shields.io/pypi/l/xlsxedit)](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/LICENSE)
+> **This is an independent fork** of [jonas-kupferschmid/xlsxedit](https://github.com/jonas-kupferschmid/xlsxedit), the library Jonas Ruilong Kupferschmid created. It is maintained separately by Cat Grandi and is not affiliated with the upstream project. Its releases are only on [this repository's Releases page](https://github.com/catgrandi/xlsxedit/releases); `pip install xlsxedit` installs the upstream package from PyPI instead. Report problems with this fork in [its issues](https://github.com/catgrandi/xlsxedit/issues), not upstream. [CHANGELOG.md](CHANGELOG.md) lists what it changes.
 
 Edit Excel files from Python **without breaking layout**, **formatting**, or **file compatibility**.
 
 Loads the `.xlsx` as an OPC package and **surgically** patches XML with lxml — **only what you change gets rewritten**.
 
-![Weekly Download Report — template and filled output](https://raw.githubusercontent.com/jonas-kupferschmid/xlsxedit/main/assets/XlsxEdit-Demo.jpg)
+![Weekly Download Report — template and filled output](assets/XlsxEdit-Demo.jpg)
 
-**Website:** [xlsxedit.jonasruilong.com](https://xlsxedit.jonasruilong.com)
+**Upstream project:** [jonas-kupferschmid/xlsxedit](https://github.com/jonas-kupferschmid/xlsxedit); its website, [xlsxedit.jonasruilong.com](https://xlsxedit.jonasruilong.com), documents the upstream releases.
 
 ## The problem
 
@@ -58,7 +56,7 @@ These libraries **rebuild** the workbook from an object model. Anything they do 
 
 **Fidelity** — round-trip tested on real fixtures: images, charts, tables, conditional formatting, merges, hyperlinks, custom sizes
 
-**[Full feature reference →](https://xlsxedit.jonasruilong.com/docs/features)**
+**[Full feature reference →](docs/features.md)**
 
 ## Compared to other libraries
 
@@ -70,22 +68,20 @@ These libraries **rebuild** the workbook from an object model. Anything they do 
 | Typical speed | Fast direct I/O | Moderate | Fast (create) | **Slow** (Excel startup + COM) |
 | Excel app required | No | No | No | **Yes** |
 
-[Full comparison →](https://xlsxedit.jonasruilong.com/docs/why)
+[Full comparison →](docs/why-xlsxedit.md)
 
 ## Install
 
-```bash
-pip install xlsxedit
-pip install xlsxedit[pandas]   # optional: ExcelWriter / read_excel engine
-```
-
-**AI coding agents** — installable skill (Cursor / compatible agents):
+Install a release of this fork from GitHub, replacing `<tag>` with a tag from the [Releases page](https://github.com/catgrandi/xlsxedit/releases):
 
 ```bash
-npx skills add jonas-kupferschmid/xlsxedit --skill xlsxedit
+pip install "xlsxedit @ git+https://github.com/catgrandi/xlsxedit@<tag>"
+pip install "xlsxedit[pandas] @ git+https://github.com/catgrandi/xlsxedit@<tag>"   # with the optional ExcelWriter / read_excel engine
 ```
 
-Source in this repository: [`.agents/skills/xlsxedit/SKILL.md`](.agents/skills/xlsxedit/SKILL.md)
+Each release also carries the built wheel and sdist, which `pip install` takes as a file or URL. `pip install xlsxedit` installs the upstream package from PyPI, not this fork.
+
+**AI coding agents** — the skill for agents that use this library is [`.agents/skills/xlsxedit/`](.agents/skills/xlsxedit/SKILL.md); copy that folder into your agent's skills folder.
 
 Development:
 
@@ -190,7 +186,7 @@ with pd.ExcelWriter("out.xlsx", engine="xlsxedit") as writer:
 got = pd.read_excel("out.xlsx", engine="xlsxedit")
 ```
 
-Opt-in engine today (`register()`); a future pandas PR may add official reader registration. Full docs: [Pandas engine](https://xlsxedit.jonasruilong.com/docs/pandas). Tutorial: [`tutorial/pandas_tutorial.py`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/tutorial/pandas_tutorial.py).
+Opt-in engine today (`register()`); a future pandas PR may add official reader registration. Full docs: [Pandas engine](docs/pandas.md). Tutorial: [`tutorial/pandas_tutorial.py`](tutorial/pandas_tutorial.py).
 
 ## When to use / when not
 
@@ -206,46 +202,34 @@ Opt-in engine today (`register()`); a future pandas PR may add official reader r
 - You only create new workbooks from scratch → **xlsxwriter**
 - You need pivot editing or every openpyxl feature today → **openpyxl** (xlsxedit API is still growing)
 
-**Missing something?** [Open an issue](https://github.com/jonas-kupferschmid/xlsxedit/issues) — the API grows from real use cases. 
+**Missing something?** [Open an issue on this fork](https://github.com/catgrandi/xlsxedit/issues). Please don't report this fork's behaviour to the upstream project.
 
-I made this library for my use cases, I didn't need to create new charts or conditional formatting from scratch, so that area stayed minimal. It should still work with existing charts and conditional formatting in the template. Excel has many features and it would be too much to implement all of them, but if you need something that is not supported, please open an issue and I can implement it. 
+## Credits
 
-If you every come across a bug or if it says file is corrupted, please let me know and I will fix it as well.
-
-## Support & sponsorship
-
-xlsxedit is free and open source under the Apache License 2.0 — you can use it anywhere, including in commercial and closed-source products, at no cost.
-
-If xlsxedit saves you or your company real time, consider sponsoring it — it's what keeps the project maintained and improving. There's no fixed price: pay what it's worth to you. Bigger companies more, smaller ones less.
-
-- Sponsor: [xlsxedit.jonasruilong.com/sponsor](https://xlsxedit.jonasruilong.com/sponsor)
-
-**Or, even better — give me a job.** I'm Jonas, the person behind xlsxedit. I'll be honest: I'm a little desperate — not for money, but to hopefully live in the same city as the person I love, instead of continents away.
+xlsxedit was created by [Jonas Ruilong Kupferschmid](https://github.com/jonas-kupferschmid), who maintains the upstream project. This fork is maintained by Cat Grandi; [CHANGELOG.md](CHANGELOG.md) lists what it adds. To support the original author, see his [sponsorship page](https://xlsxedit.jonasruilong.com/sponsor).
 
 ## Acknowledgments
 
 xlsxedit owes a lot to [Steve Canny (scanny)](https://github.com/scanny) and [python-docx](https://github.com/python-docx/python-docx). I loved his idea of editing Word documents surgically — patch the package, leave the design intact — and wanted the same thing for Excel. (When I started to use python-docx, I researched it extensively to understand how it works) That inspiration is why xlsxedit exists.
 
-The OPC package layer (`src/xlsxedit/opc/**` and `src/xlsxedit/oxml/parser.py`) is adapted from python-docx and [python-pptx](https://github.com/python-pptx/python-pptx) (MIT licensed, Copyright (c) 2013 Steve Canny). That notice is in [`NOTICE`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/NOTICE) and [`THIRD_PARTY_LICENSES`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/THIRD_PARTY_LICENSES). xlsxedit is independent and not affiliated with those projects — but thank you, Steve, for the foundation.
+The OPC package layer (`src/xlsxedit/opc/**` and `src/xlsxedit/oxml/parser.py`) is adapted from python-docx and [python-pptx](https://github.com/python-pptx/python-pptx) (MIT licensed, Copyright (c) 2013 Steve Canny). That notice is in [`NOTICE`](NOTICE) and [`THIRD_PARTY_LICENSES`](THIRD_PARTY_LICENSES). xlsxedit is independent and not affiliated with those projects — but thank you, Steve, for the foundation.
 
 ## License
 
-xlsxedit is licensed under the [Apache License 2.0](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/LICENSE). Portions adapted from python-docx / python-pptx remain under their original MIT license; see [`NOTICE`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/NOTICE) and [`THIRD_PARTY_LICENSES`](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/THIRD_PARTY_LICENSES). Contributions to the upstream project are accepted under its [Contributor License Agreement](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/CLA.md). For how contributions to this fork are handled, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+xlsxedit is licensed under the [Apache License 2.0](LICENSE). Portions adapted from python-docx / python-pptx remain under their original MIT license; see [`NOTICE`](NOTICE) and [`THIRD_PARTY_LICENSES`](THIRD_PARTY_LICENSES). Contributions to the upstream project are accepted under its [Contributor License Agreement](https://github.com/jonas-kupferschmid/xlsxedit/blob/main/CLA.md). For how contributions to this fork are handled, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Example projects
 
-Small companion repos for common workflows:
+Small companion repos by the upstream author, written against the upstream releases:
 
 - **[xlsx-sar-test](https://github.com/jonas-kupferschmid/xlsx-sar-test)** — **Weekly Download Report** hero demo: `build_template.py` builds a styled template (logo, table, chart, CF); `run_demo.py` fills header/KPI placeholders from `sar.yaml` and bulk-inserts the daily table from CSV — chart and layout survive. SAR-only: `apply_sar.py`
 - **[xlsx-inspect](https://github.com/jonas-kupferschmid/xlsx-inspect)** — unpack `.xlsx` files into pretty-printed XML folders and pack them back; useful to see what is inside a workbook on disk
 
 ## Documentation
 
-- [Features](https://xlsxedit.jonasruilong.com/docs/features)
-- [Why xlsxedit?](https://xlsxedit.jonasruilong.com/docs/why)
-- [How it works](https://xlsxedit.jonasruilong.com/docs/how-it-works)
-- [Large data export](https://xlsxedit.jonasruilong.com/docs/large-data-export)
-- [Pandas engine](https://xlsxedit.jonasruilong.com/docs/pandas)
-- [Excel `.xlsx` structure](https://xlsxedit.jonasruilong.com/docs/excel-structure)
-
-In-repo copies: [`docs/`](https://github.com/jonas-kupferschmid/xlsxedit/tree/main/docs)
+- [Features](docs/features.md)
+- [Why xlsxedit?](docs/why-xlsxedit.md)
+- [How it works](docs/how-xlsxedit-works.md)
+- [Large data export](docs/large-data-export.md)
+- [Pandas engine](docs/pandas.md)
+- [Excel `.xlsx` structure](docs/excel-xlsx-structure.md)
