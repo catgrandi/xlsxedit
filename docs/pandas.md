@@ -9,8 +9,7 @@ xlsxedit works with pandas in three ways:
 ## Install
 
 ```bash
-pip install xlsxedit[pandas]
-# or: pip install pandas
+pip install pandas   # with xlsxedit installed from this fork's releases (see the README)
 ```
 
 Core xlsxedit only requires `lxml`. Pandas is optional.

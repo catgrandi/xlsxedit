@@ -371,7 +371,7 @@ Image SAR: `wb.replace_image(name, path)`, `wb.insert_image_at_placeholder("{log
 
 Full guide: [large-data-export.md](large-data-export.md)
 
-Pandas ExcelWriter / reader engine: [pandas.md](pandas.md) (`pip install xlsxedit[pandas]` then `xlsxedit.pandas_io.register()`).
+Pandas ExcelWriter / reader engine: [pandas.md](pandas.md) (install pandas, then call `xlsxedit.pandas_io.register()`).
 
 ---
 
